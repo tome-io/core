@@ -1,11 +1,20 @@
 import { Image } from 'expo-image';
 import { Pressable, Text, View } from 'react-native';
 
-import type { Book } from '@/lib/zlib';
+export interface CardBook {
+  id: string;
+  title: string;
+  author: string;
+  cover: string;
+  format?: string;
+  year?: string | number;
+}
+
+
 
 interface Props {
-  book: Book;
-  onPress: (book: Book) => void;
+  book: CardBook;
+  onPress: (book: CardBook) => void;
   width: number;
 }
 

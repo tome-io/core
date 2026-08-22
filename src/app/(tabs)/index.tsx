@@ -1,10 +1,10 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BookGrid, GridLoadingMore } from '@/components/book-grid';
-import { searchBooks, type Book } from '@/lib/zlib';
+import { fetchEbooks, type ExternalBook } from '@/lib/books-api';
 
 interface Category {
   label: string;
@@ -13,54 +13,46 @@ interface Category {
 
 const CATEGORIES: Category[] = [
   { label: 'Popular now', query: 'bestseller' },
-  { label: 'Fiction', query: 'fiction novel' },
+  { label: 'Fiction', query: 'fiction' },
   { label: 'Sci-Fi & Fantasy', query: 'science fiction fantasy' },
   { label: 'Mystery & Thriller', query: 'mystery thriller' },
-  { label: 'Self-improvement', query: 'self improvement habits' },
-  { label: 'Business', query: 'business entrepreneurship' },
-  { label: 'Science', query: 'science physics biology' },
-  { label: 'History', query: 'history biography' },
+  { label: 'Romance', query: 'romance' },
+  { label: 'Self-improvement', query: 'self help' },
+  { label: 'Business', query: 'business' },
+  { label: 'Science', query: 'science' },
+  { label: 'History', query: 'history' },
   { label: 'Philosophy', query: 'philosophy' },
-  { label: 'Psychology', query: 'psychology mind' },
-  { label: 'Programming', query: 'programming computer science' },
-  { label: 'Cooking', query: 'cookbook recipes' },
+  { label: 'Psychology', query: 'psychology' },
+  { label: 'Programming', query: 'programming' },
 ];
+
+const PAGE_SIZE = 20;
 
 export default function DiscoverScreen() {
   const router = useRouter();
   const [category, setCategory] = useState<Category>(CATEGORIES[0]);
-  const [books, setBooks] = useState<Book[]>([]);
-  const [page, setPage] = useState(1);
+  const [books, setBooks] = useState<ExternalBook[]>([]);
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchPage = useCallback(
-    async (cat: Category, pageNum: number): Promise<Book[]> =>
-      searchBooks(cat.query, pageNum, '', 'popular'),
-    []
-  );
-
-  const load = useCallback(
-    async (cat: Category) => {
-      setLoading(true);
-      setError(null);
-      setPage(1);
-      setHasMore(true);
-      try {
-        const results = await fetchPage(cat, 1);
-        setBooks(results);
-        if (results.length === 0) setHasMore(false);
-      } catch (err: any) {
-        setError(err.message || String(err));
-        setBooks([]);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [fetchPage]
-  );
+  const load = useCallback(async (cat: Category) => {
+    setLoading(true);
+    setError(null);
+    try {
+      // Apple's API has no pagination — one generous fetch, revealed in pages
+      const results = await fetchEbooks(cat.query, 60);
+      setBooks(results);
+      setVisibleCount(Math.min(PAGE_SIZE, results.length));
+      setHasMore(results.length > PAGE_SIZE);
+    } catch (err: any) {
+      setError(err.message || String(err));
+      setBooks([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     load(CATEGORIES[0]);
@@ -75,25 +67,21 @@ export default function DiscoverScreen() {
     [books.length, category.label, load]
   );
 
-  const loadMore = useCallback(async () => {
-    if (loading || loadingMore || !hasMore || error) return;
-    setLoadingMore(true);
-    try {
-      const next = page + 1;
-      const results = await fetchPage(category, next);
-      setPage(next);
-      setBooks((prev) => [...prev, ...results]);
-      if (results.length === 0) setHasMore(false);
-    } catch {
-      /* transient failure; user can keep scrolling to retry */
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [category, error, fetchPage, hasMore, loading, loadingMore, page]);
+  const loadMore = useCallback(() => {
+    if (loading || !hasMore) return;
+    const next = Math.min(visibleCount + PAGE_SIZE, books.length);
+    setVisibleCount(next);
+    if (next >= books.length) setHasMore(false);
+  }, [books.length, hasMore, loading, visibleCount]);
+
+  const visibleBooks = useMemo(() => books.slice(0, visibleCount), [books, visibleCount]);
 
   const openBook = useCallback(
-    (book: Book) => {
-      router.push({ pathname: '/book/[id]', params: { id: book.id, item: JSON.stringify(book) } });
+    (book: ExternalBook) => {
+      router.push({
+        pathname: '/book/[id]',
+        params: { id: book.id, ext: JSON.stringify(book) },
+      });
     },
     [router]
   );
@@ -127,7 +115,7 @@ export default function DiscoverScreen() {
 
       <View className="flex-row items-center justify-between px-4 mt-4 mb-3">
         <Text className="text-lg font-bold text-neutral-900 dark:text-neutral-50">{category.label}</Text>
-        <Text className="text-xs text-neutral-400">from Z-Library</Text>
+        <Text className="text-xs text-neutral-400">Apple Books</Text>
       </View>
 
       {loading ? (
@@ -144,12 +132,12 @@ export default function DiscoverScreen() {
         </View>
       ) : (
         <BookGrid
-          books={books}
+          books={visibleBooks as any}
           onPressBook={openBook}
           onEndReached={loadMore}
           onRefresh={() => load(category)}
           refreshing={loading}
-          ListFooterComponent={loadingMore ? <GridLoadingMore /> : null}
+          ListFooterComponent={hasMore ? <GridLoadingMore /> : null}
           ListEmptyComponent={
             <Text className="text-sm text-neutral-400 text-center mt-12">Nothing here yet.</Text>
           }

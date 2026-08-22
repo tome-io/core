@@ -302,6 +302,55 @@ test('search responses with embedded HTML descriptions are NOT mirror problems',
   assert.equal(results[0].title, 'Bestseller');
 });
 
+// ── Apple Books discovery ──
+
+test('fetchEbooks maps iTunes results and upscales artwork', async () => {
+  const payload = {
+    results: [
+      {
+        trackId: 6747972884,
+        trackName: 'The Bestseller',
+        artistName: 'Jane <b>Doe</b>',
+        artworkUrl100: 'https://example.com/a100/cover100x100bb.jpg',
+        releaseDate: '2026-06-18T07:00:00Z',
+        description: '<i>Great</i> &amp; thrilling book',
+        genres: ['Mysteries & Thrillers', 'Books'],
+      },
+      { trackName: 'no id — skipped' },
+      { trackId: 6747972884, trackName: 'duplicate — skipped' },
+    ],
+  };
+  const deps = makeStubDeps({
+    fetchFn: async (url) => {
+      assert.match(String(url), /media=ebook/);
+      assert.match(String(url), /limit=60/);
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    },
+  });
+  const { fetchEbooks } = await import('../src/lib/books-api.ts');
+  const books = await fetchEbooks('bestseller', 60, { fetchFn: deps.fetchFn });
+  assert.equal(books.length, 1);
+  assert.equal(books[0].id, '6747972884');
+  assert.equal(books[0].title, 'The Bestseller');
+  assert.equal(books[0].author, 'Jane Doe');
+  assert.match(books[0].cover, /600x600bb\.jpg$/);
+  assert.equal(books[0].description, 'Great & thrilling book');
+  assert.equal(books[0].year, '2026');
+  assert.equal(books[0].genre, 'Mysteries & Thrillers');
+});
+
+test('live: Apple Books returns real recommendations without credentials', async () => {
+  const { fetchEbooks } = await import('../src/lib/books-api.ts');
+  const books = await fetchEbooks('bestseller fiction', 20);
+  assert.ok(Array.isArray(books));
+  assert.ok(books.length >= 5, `expected several results, got ${books.length}`);
+  assert.ok(books[0].title.length > 0 && books[0].author.length > 0);
+  assert.match(books[0].cover, /^https:\/\/.+600x600bb\.jpg$/);
+});
+
 // ── Live tests ──
 
 const hasCreds = Boolean(EMAIL && PASSWORD);

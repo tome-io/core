@@ -1,16 +1,16 @@
 import { ActivityIndicator, FlatList, RefreshControl, useWindowDimensions, View } from 'react-native';
 import type { ReactElement } from 'react';
 
-import { BookCard } from './book-card';
-import type { Book } from '@/lib/zlib';
+import { BookCard, type CardBook } from './book-card';
+
 
 const COLUMNS = 4;
 const COLUMN_GAP = 12;
 const ROW_GAP = 16;
 
-interface BookGridProps {
-  books: Book[];
-  onPressBook: (book: Book) => void;
+interface BookGridProps<T extends CardBook> {
+  books: T[];
+  onPressBook: (book: T) => void;
   onEndReached?: () => void;
   onRefresh?: () => void;
   refreshing?: boolean;
@@ -22,7 +22,7 @@ interface BookGridProps {
  * Edge-to-edge 4-column cover grid. Cards touch both screen edges; spacing
  * only exists *between* cards.
  */
-export function BookGrid({
+export function BookGrid<T extends CardBook>({
   books,
   onPressBook,
   onEndReached,
@@ -30,14 +30,14 @@ export function BookGrid({
   refreshing = false,
   ListFooterComponent,
   ListEmptyComponent,
-}: BookGridProps) {
+}: BookGridProps<T>) {
   const { width } = useWindowDimensions();
   const cardWidth = (width - COLUMN_GAP * (COLUMNS - 1)) / COLUMNS;
 
   return (
-    <FlatList
+    <FlatList<T>
       data={books}
-      keyExtractor={(b, i) => `${b.id}-${b.hash}-${i}`}
+      keyExtractor={(b, i) => `${b.id}-${(b as any).hash ?? ''}-${i}`}
       numColumns={COLUMNS}
       columnWrapperStyle={{ gap: COLUMN_GAP }}
       contentContainerStyle={{ gap: ROW_GAP, paddingBottom: 32 }}
@@ -48,7 +48,13 @@ export function BookGrid({
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#e11d48" colors={['#e11d48']} />
         ) : undefined
       }
-      renderItem={({ item }) => <BookCard book={item} width={cardWidth} onPress={onPressBook} />}
+      renderItem={({ item }) => (
+        <BookCard
+          book={item}
+          width={cardWidth}
+          onPress={() => onPressBook(item)}
+        />
+      )}
       ListEmptyComponent={ListEmptyComponent}
       ListFooterComponent={ListFooterComponent ?? null}
     />
