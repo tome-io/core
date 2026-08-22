@@ -1,19 +1,19 @@
 import '../global.css';
 
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
-import { Stack } from 'expo-router';
+import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useColorScheme } from 'nativewind';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
 
+import { Sidebar } from '@/components/sidebar';
 import { SettingsContext } from '@/context/settings-context';
 import { loadSettings, saveSettings } from '@/lib/settings';
 import type { Settings } from '@/lib/settings';
 import { DEFAULT_SETTINGS } from '@/lib/settings';
 
+const BG = '#0b0b0f';
+
 export default function RootLayout() {
-  const { colorScheme } = useColorScheme();
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [ready, setReady] = useState(false);
 
@@ -34,30 +34,28 @@ export default function RootLayout() {
 
   const value = useMemo(() => ({ settings, ready, update }), [settings, ready, update]);
 
-  const navTheme = useMemo(
-    () =>
-      colorScheme === 'dark'
-        ? { ...DarkTheme, colors: { ...DarkTheme.colors, primary: '#e11d48' } }
-        : { ...DefaultTheme, colors: { ...DefaultTheme.colors, primary: '#e11d48' } },
-    [colorScheme]
+  // Stremio is a dark-first product; we go dark-only and drop light/dark mixing
+  const theme = useMemo(
+    () => ({
+      ...DarkTheme,
+      colors: {
+        ...DarkTheme.colors,
+        background: BG,
+        card: BG,
+        primary: '#8b7cf6',
+      },
+    }),
+    []
   );
 
   return (
-    <ThemeProvider value={navTheme}>
-      {/* Activates NativeWind's dark: variants under class strategy */}
-      <View className={`flex-1 ${colorScheme === 'dark' ? 'dark' : ''}`}>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
-        <Stack
-          screenOptions={{
-            headerShadowVisible: false,
-          }}
-        >
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen
-            name="book/[id]"
-            options={{ title: '', headerBackTitle: 'Back', headerTransparent: true }}
-          />
-        </Stack>
+    <ThemeProvider value={theme}>
+      <StatusBar style="light" />
+      <View className="flex-1 flex-row">
+        <Sidebar />
+        <View className="flex-1" style={{ backgroundColor: BG }}>
+          <Stack screenOptions={{ headerShown: false }} />
+        </View>
       </View>
     </ThemeProvider>
   );

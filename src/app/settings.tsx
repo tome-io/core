@@ -38,7 +38,12 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   return (
     <View className="mb-6">
       <Text className="text-xs font-bold uppercase tracking-widest text-neutral-400 mb-2">{title}</Text>
-      <View className="rounded-2xl bg-neutral-100 dark:bg-neutral-900 px-4 py-4 gap-4">{children}</View>
+      <View
+        className="rounded-2xl px-4 py-4 gap-4"
+        style={{ backgroundColor: '#141419' }}
+      >
+        {children}
+      </View>
     </View>
   );
 }
@@ -96,7 +101,7 @@ export default function SettingsScreen() {
         : settings.downloadLocation;
 
   return (
-    <SafeAreaView className="flex-1 bg-white dark:bg-neutral-950" edges={['top']}>
+    <SafeAreaView className="flex-1" edges={[]} style={{ backgroundColor: '#0b0b0f' }}>
       <ScrollView contentContainerClassName="px-4 py-5">
         <Section title="Z-Library Account">
           <View>
@@ -109,7 +114,7 @@ export default function SettingsScreen() {
               keyboardType="email-address"
               placeholder="you@example.com"
               placeholderTextColor="#a3a3a3"
-              className="h-11 px-3.5 rounded-xl bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 border border-neutral-200 dark:border-neutral-700"
+              className="h-11 px-3.5 rounded-xl text-white border border-neutral-800" style={{ backgroundColor: '#17171c' }}
             />
           </View>
           <View>
@@ -120,7 +125,7 @@ export default function SettingsScreen() {
               secureTextEntry
               placeholder="Your password"
               placeholderTextColor="#a3a3a3"
-              className="h-11 px-3.5 rounded-xl bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 border border-neutral-200 dark:border-neutral-700"
+              className="h-11 px-3.5 rounded-xl text-white border border-neutral-800" style={{ backgroundColor: '#17171c' }}
             />
           </View>
           <Text className="text-xs text-neutral-400 leading-4">
@@ -136,7 +141,7 @@ export default function SettingsScreen() {
               autoCapitalize="none"
               placeholder="e.g. 1234567"
               placeholderTextColor="#a3a3a3"
-              className="h-11 px-3.5 rounded-xl bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 border border-neutral-200 dark:border-neutral-700"
+              className="h-11 px-3.5 rounded-xl text-white border border-neutral-800" style={{ backgroundColor: '#17171c' }}
             />
             <Text className="text-sm text-neutral-500">Remix User Key (optional)</Text>
             <TextInput
@@ -146,14 +151,14 @@ export default function SettingsScreen() {
               autoCapitalize="none"
               placeholder="remix_userkey cookie value"
               placeholderTextColor="#a3a3a3"
-              className="h-11 px-3.5 rounded-xl bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 border border-neutral-200 dark:border-neutral-700"
+              className="h-11 px-3.5 rounded-xl text-white border border-neutral-800" style={{ backgroundColor: '#17171c' }}
             />
           </View>
 
           <Pressable
             onPress={saveAccount}
             disabled={saving}
-            className="h-11 rounded-xl bg-rose-600 items-center justify-center active:bg-rose-700 disabled:opacity-60"
+            className="h-11 rounded-xl items-center justify-center active:opacity-80 disabled:opacity-60" style={{ backgroundColor: '#8b7cf6' }}
           >
             {saving ? (
               <ActivityIndicator color="#fff" />
@@ -172,16 +177,16 @@ export default function SettingsScreen() {
           <View className="flex-row gap-2">
             <Pressable
               onPress={chooseFolder}
-              className="flex-1 h-11 rounded-xl bg-neutral-900 dark:bg-white items-center justify-center active:opacity-80"
+              className="flex-1 h-11 rounded-xl items-center justify-center active:opacity-80" style={{ backgroundColor: '#8b7cf6' }}
             >
-              <Text className="font-semibold text-white dark:text-neutral-900">Choose folder…</Text>
+              <Text className="font-semibold text-white">Choose folder…</Text>
             </Pressable>
             {settings.downloadLocation && (
               <Pressable
                 onPress={resetFolder}
-                className="h-11 px-4 rounded-xl bg-neutral-200 dark:bg-neutral-800 items-center justify-center active:opacity-80"
+                className="h-11 px-4 rounded-xl items-center justify-center active:opacity-80" style={{ backgroundColor: '#17171c' }}
               >
-                <Text className="font-medium text-neutral-600 dark:text-neutral-300">Reset</Text>
+                <Text className="font-medium text-neutral-300">Reset</Text>
               </Pressable>
             )}
           </View>
@@ -200,11 +205,12 @@ export default function SettingsScreen() {
                   onPress={() => update({ domain: d.value })}
                   className={
                     active
-                      ? 'px-3 py-2 rounded-full bg-rose-600'
-                      : 'px-3 py-2 rounded-full bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700'
+                      ? 'px-3 py-2 rounded-full'
+                      : 'px-3 py-2 rounded-full border border-neutral-800'
                   }
+                  style={active ? { backgroundColor: '#8b7cf6' } : undefined}
                 >
-                  <Text className={active ? 'text-xs font-semibold text-white' : 'text-xs font-medium text-neutral-600 dark:text-neutral-300'}>
+                  <Text className={active ? 'text-xs font-semibold text-white' : 'text-xs font-medium text-neutral-400'}>
                     {d.label}
                   </Text>
                 </Pressable>
@@ -226,11 +232,12 @@ export default function SettingsScreen() {
                   onPress={() => update({ preferredFormat: f.value })}
                   className={
                     active
-                      ? 'px-3 py-2 rounded-full bg-rose-600'
-                      : 'px-3 py-2 rounded-full bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700'
+                      ? 'px-3 py-2 rounded-full'
+                      : 'px-3 py-2 rounded-full border border-neutral-800'
                   }
+                  style={active ? { backgroundColor: '#8b7cf6' } : undefined}
                 >
-                  <Text className={active ? 'text-xs font-semibold text-white' : 'text-xs font-medium text-neutral-600 dark:text-neutral-300'}>
+                  <Text className={active ? 'text-xs font-semibold text-white' : 'text-xs font-medium text-neutral-400'}>
                     {f.label}
                   </Text>
                 </Pressable>
@@ -242,7 +249,7 @@ export default function SettingsScreen() {
           </Text>
         </Section>
 
-        <Text onPress={() => router.push('/')} className="text-center text-xs text-neutral-400 mt-2 mb-8">
+        <Text onPress={() => router.push('/home')} className="text-center text-xs text-neutral-400 mt-2 mb-8">
           Reader · powered by Z-Library eapi
         </Text>
       </ScrollView>

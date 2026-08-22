@@ -127,10 +127,10 @@ export default function BookDetailScreen() {
 
   if (!zlibBook && !extBook) {
     return (
-      <View className="flex-1 bg-white dark:bg-neutral-950 items-center justify-center gap-3">
+      <View className="flex-1 items-center justify-center gap-3" style={{ backgroundColor: '#0b0b0f' }}>
         <Text className="text-sm text-neutral-400">Book details unavailable.</Text>
         <Pressable onPress={() => router.back()}>
-          <Text className="text-sm font-semibold text-rose-600">Go back</Text>
+          <Text className="text-sm font-semibold text-[#8b7cf6]">Go back</Text>
         </Pressable>
       </View>
     );
@@ -143,9 +143,16 @@ export default function BookDetailScreen() {
       : [extBook!.genre, extBook!.year].filter(Boolean);
 
   return (
-    <ScrollView className="flex-1 bg-white dark:bg-neutral-950" contentContainerClassName="pb-12">
-      <View className="px-6 pt-24 flex-row gap-5">
-        <View style={{ width: 128, height: 192 }} className="rounded-xl overflow-hidden bg-neutral-200 dark:bg-neutral-800">
+    <ScrollView className="flex-1" style={{ backgroundColor: '#0b0b0f' }} contentContainerClassName="pb-12">
+      <Pressable
+        onPress={() => router.back()}
+        className="mx-4 mt-4 h-10 w-10 rounded-full items-center justify-center"
+        style={{ backgroundColor: '#17171c' }}
+      >
+        <Text className="text-neutral-300 text-xl leading-9">‹</Text>
+      </Pressable>
+      <View className="px-6 pt-6 flex-row gap-5">
+        <View style={{ width: 128, height: 192 }} className="rounded-xl overflow-hidden bg-[#232329]">
           {header.cover ? (
             <Image source={{ uri: header.cover }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
           ) : (
@@ -186,7 +193,7 @@ export default function BookDetailScreen() {
 
           {options === null && !optError && (
             <View className="flex-row items-center gap-3 py-4">
-              <ActivityIndicator color="#e11d48" size="small" />
+              <ActivityIndicator color="#8b7cf6" size="small" />
               <Text className="text-sm text-neutral-400">Searching Z-Library…</Text>
             </View>
           )}
@@ -227,7 +234,7 @@ export default function BookDetailScreen() {
           <Text className="text-xs font-bold uppercase tracking-widest text-neutral-400 mb-2">
             Description
           </Text>
-          <Text className="text-sm text-neutral-700 dark:text-neutral-300 leading-5" numberOfLines={14}>
+          <Text className="text-sm text-neutral-300 leading-5" numberOfLines={14}>
             {header.description.replace(/<[^>]*>/g, '').trim()}
           </Text>
         </View>
@@ -249,12 +256,14 @@ export default function BookDetailScreen() {
           ? Math.min(100, Math.round((phase.progress.bytesWritten / phase.progress.totalBytes) * 100))
           : null;
       return (
-        <View className="h-12 rounded-xl bg-neutral-100 dark:bg-neutral-800 items-center justify-center overflow-hidden">
+        <View
+        className="h-12 rounded-xl items-center justify-center overflow-hidden"
+        style={{ backgroundColor: '#17171c' }}>
           <View
-            className="absolute left-0 top-0 bottom-0 bg-rose-600/30"
+            className="absolute left-0 top-0 bottom-0 bg-[#8b7cf6]/30"
             style={{ width: pct != null ? `${pct}%` : '40%' }}
           />
-          <Text className="text-sm font-semibold text-rose-600 dark:text-rose-300">
+          <Text className="text-sm font-semibold text-[#8b7cf6] dark:text-rose-300">
             {pct != null ? `${pct}%` : 'Downloading…'}
           </Text>
         </View>
@@ -264,7 +273,8 @@ export default function BookDetailScreen() {
       <Pressable
         onPress={download}
         disabled={phase.kind === 'resolving'}
-        className="h-12 rounded-xl bg-rose-600 items-center justify-center flex-row gap-2 active:bg-rose-700 disabled:opacity-60"
+        style={{ backgroundColor: '#8b7cf6' }}
+        className="h-12 rounded-xl items-center justify-center flex-row gap-2 active:opacity-80 disabled:opacity-60"
       >
         {phase.kind === 'resolving' ? (
           <>
@@ -318,13 +328,13 @@ function OptionRow({
       {phase.kind === 'done' ? (
         <Text className="text-emerald-600 dark:text-emerald-400 font-semibold text-sm px-2">✓</Text>
       ) : phase.kind === 'downloading' ? (
-        <ActivityIndicator color="#e11d48" size="small" />
+        <ActivityIndicator color="#8b7cf6" size="small" />
       ) : phase.kind === 'resolving' ? (
         <ActivityIndicator color="#9ca3af" size="small" />
       ) : (
         <Pressable
           onPress={onDownload}
-          className="px-3.5 h-9 rounded-lg bg-rose-600 items-center justify-center active:bg-rose-700"
+          className="px-3.5 h-9 rounded-lg items-center justify-center active:opacity-80"
         >
           <Text className="text-white text-xs font-semibold">Get</Text>
         </Pressable>

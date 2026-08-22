@@ -80,7 +80,7 @@ export default function SearchScreen() {
   );
 
   return (
-    <SafeAreaView className="flex-1 bg-white dark:bg-neutral-950" edges={['top']}>
+    <View className="flex-1" style={{ backgroundColor: '#0b0b0f' }}>
       <View className="px-4 pt-2 gap-3">
         <View className="flex-row items-center gap-2">
           <TextInput
@@ -89,12 +89,12 @@ export default function SearchScreen() {
             onSubmitEditing={() => runSearch(query, format)}
             returnKeyType="search"
             placeholder="Search Z-Library…"
-            placeholderTextColor="#a3a3a3"
-            className="flex-1 h-11 px-4 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100"
+            placeholderTextColor="#6b6b76"
+            className="flex-1 h-11 px-4 rounded-xl text-white" style={{ backgroundColor: '#17171c' }}
           />
           <Pressable
             onPress={() => runSearch(query, format)}
-            className="h-11 px-4 rounded-xl bg-rose-600 items-center justify-center active:bg-rose-700"
+            className="h-11 px-4 rounded-xl items-center justify-center active:opacity-80" style={{ backgroundColor: '#8b7cf6' }}
           >
             <Text className="text-white font-semibold">Search</Text>
           </Pressable>
@@ -111,17 +111,14 @@ export default function SearchScreen() {
             return (
               <Pressable
                 onPress={() => setFormat(item.value)}
-                className={
-                  active
-                    ? 'px-3 py-1.5 rounded-full bg-neutral-900 dark:bg-white'
-                    : 'px-3 py-1.5 rounded-full bg-neutral-100 dark:bg-neutral-800'
-                }
+                className="px-3 py-1.5 rounded-full"
+                style={active ? { backgroundColor: '#8b7cf6' } : { backgroundColor: '#17171c' }}
               >
                 <Text
                   className={
                     active
-                      ? 'text-xs font-semibold text-white dark:text-neutral-900'
-                      : 'text-xs font-medium text-neutral-600 dark:text-neutral-300'
+                      ? 'text-xs font-semibold text-white'
+                      : 'text-xs font-medium text-neutral-400'
                   }
                 >
                   {item.label}
@@ -158,6 +155,6 @@ export default function SearchScreen() {
           }
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 }

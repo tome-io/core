@@ -351,6 +351,50 @@ test('live: Apple Books returns real recommendations without credentials', async
   assert.match(books[0].cover, /^https:\/\/.+600x600bb\.jpg$/);
 });
 
+// ── Open Library feeds ──
+
+test('getTrending maps works with covers and authors', async () => {
+  const payload = {
+    works: [
+      {
+        key: '/works/OL17930368W',
+        title: 'Atomic Habits',
+        author_name: ['James Clear'],
+        cover_i: 12539702,
+        first_publish_year: 2016,
+      },
+      { key: '/works/OLX', title: '' }, // filtered out
+    ],
+  };
+  const { getTrending } = await import('../src/lib/openlibrary.ts');
+  const books = await getTrending('daily', 10, {
+    fetchFn: async () =>
+      new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+  });
+  assert.equal(books.length, 1);
+  assert.equal(books[0].id, '/works/OL17930368W');
+  assert.equal(books[0].title, 'Atomic Habits');
+  assert.equal(books[0].author, 'James Clear');
+  assert.equal(books[0].cover, 'https://covers.openlibrary.org/b/id/12539702-L.jpg');
+  assert.equal(books[0].year, 2016);
+});
+
+test('live: Open Library trending returns real popular books (no credentials)', async () => {
+  const { getTrending } = await import('../src/lib/openlibrary.ts');
+  const books = await getTrending('daily', 20);
+  assert.ok(books.length >= 5, `expected several trending books, got ${books.length}`);
+  assert.ok(books.some((b) => b.cover), 'expected at least some covers');
+});
+
+test('live: Open Library subject feed works', async () => {
+  const { getSubject } = await import('../src/lib/openlibrary.ts');
+  const books = await getSubject('science-fiction', 10);
+  assert.ok(books.length >= 3, `expected subject results, got ${books.length}`);
+});
+
 // ── Live tests ──
 
 const hasCreds = Boolean(EMAIL && PASSWORD);
