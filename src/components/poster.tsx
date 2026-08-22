@@ -1,31 +1,34 @@
 import { Image } from 'expo-image';
-import { FlatList, Pressable, Text, View } from 'react-native';
+import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
 
-import type { FeedBook } from '@/lib/openlibrary';
-import type { ExternalBook } from '@/lib/books-api';
+import type { DiscoveryBook, FeedBook } from '@/lib/openlibrary';
+import { RatingChip } from './rating-chip';
 
 const PANEL = '#17171c';
 const ACCENT = '#8b7cf6';
+const PLACEHOLDER = '#1b1b22';
 
-export function toExternalBook(b: FeedBook): ExternalBook {
+export function toDiscoveryBook(b: FeedBook, genre = 'Open Library'): DiscoveryBook {
   return {
     id: b.id,
     title: b.title,
     author: b.author,
     cover: b.cover,
-    description: '',
+    description: b.description,
     year: String(b.year ?? ''),
-    genre: 'Open Library',
+    genre,
+    rating: b.rating,
+    ratingsCount: b.ratingsCount,
   };
 }
 
-export function PosterCard({
+export function PosterCard<T extends FeedBook>({
   book,
   onPress,
   width = 124,
 }: {
-  book: FeedBook;
-  onPress: (book: FeedBook) => void;
+  book: T;
+  onPress: (book: T) => void;
   width?: number;
 }) {
   return (
@@ -52,30 +55,57 @@ export function PosterCard({
             </Text>
           </View>
         )}
+        <RatingChip rating={book.rating} />
       </View>
       <Text numberOfLines={1} className="text-[11px] font-medium text-neutral-200">
         {book.title}
       </Text>
-      <Text numberOfLines={1} className="text-[10px] text-neutral-500">
+      <Text numberOfLines={1} className="text-[10px] text-neutral-500 mt-0.5">
         {book.author}
       </Text>
     </Pressable>
   );
 }
 
+export function PosterSkeleton({ width = 124 }: { width?: number }) {
+  return (
+    <View style={{ width }}>
+      <View
+        style={{ width, height: Math.round(width * 1.5), backgroundColor: PLACEHOLDER }}
+        className="rounded-lg mb-2"
+      />
+      <View
+        className="h-2.5 rounded-full mb-2"
+        style={{ width: '72%', backgroundColor: PLACEHOLDER }}
+      />
+      <View
+        className="h-2 rounded-full"
+        style={{ width: '48%', backgroundColor: PLACEHOLDER }}
+      />
+    </View>
+  );
+}
+
 /** Stremio-style horizontal rail with a section title. */
-export function Rail({
+export function Rail<T extends FeedBook>({
   title,
   books,
+  loading = false,
+  error,
   onPressBook,
   onSeeAll,
+  onRetry,
+  emptyLabel = 'No books available.',
 }: {
   title: string;
-  books: FeedBook[];
-  onPressBook: (book: FeedBook) => void;
+  books: T[];
+  loading?: boolean;
+  error?: string | null;
+  onPressBook: (book: T) => void;
   onSeeAll?: () => void;
+  onRetry?: () => void;
+  emptyLabel?: string;
 }) {
-  if (books.length === 0) return null;
   return (
     <View className="mb-8">
       <View className="flex-row items-center justify-between px-6 mb-3">
@@ -83,19 +113,55 @@ export function Rail({
           {title}
         </Text>
         {onSeeAll && (
-          <Text onPress={onSeeAll} style={{ color: ACCENT }} className="text-xs">
-            See all ›
-          </Text>
+          <Pressable
+            onPress={onSeeAll}
+            accessibilityRole="button"
+            className="h-8 px-2 flex-row items-center justify-center rounded-full active:bg-[#17171c]"
+          >
+            <Text style={{ color: ACCENT }} className="text-xs font-medium">
+              See all ›
+            </Text>
+          </Pressable>
         )}
       </View>
-      <FlatList
-        data={books}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 24, gap: 16 }}
-        keyExtractor={(b) => b.id}
-        renderItem={({ item }) => <PosterCard book={item} onPress={onPressBook} />}
-      />
+      {loading ? (
+        <ScrollView
+          horizontal
+          scrollEnabled={false}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 24, gap: 16 }}
+        >
+          {Array.from({ length: 8 }, (_, index) => (
+            <PosterSkeleton key={index} />
+          ))}
+        </ScrollView>
+      ) : error ? (
+        <View className="px-6 h-20 justify-center items-start gap-1">
+          <Text numberOfLines={2} className="text-xs text-red-400">
+            {error}
+          </Text>
+          {onRetry && (
+            <Pressable onPress={onRetry}>
+              <Text className="text-xs font-semibold" style={{ color: ACCENT }}>
+                Retry
+              </Text>
+            </Pressable>
+          )}
+        </View>
+      ) : books.length ? (
+        <FlatList
+          data={books}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 24, gap: 16 }}
+          keyExtractor={(b) => b.id}
+          renderItem={({ item }) => <PosterCard book={item} onPress={onPressBook} />}
+        />
+      ) : (
+        <View className="px-6 h-20 justify-center">
+          <Text className="text-xs text-neutral-500">{emptyLabel}</Text>
+        </View>
+      )}
     </View>
   );
 }

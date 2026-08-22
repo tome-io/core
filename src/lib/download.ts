@@ -94,9 +94,13 @@ export function isSafLocation(location: string | null | undefined): boolean {
   return !!location && location.startsWith('content:');
 }
 
-export async function pickDownloadFolder(): Promise<{ uri: string } | null> {
+export async function pickDownloadFolder(
+  initialDirectoryUri?: string | null
+): Promise<{ uri: string } | null> {
   const { StorageAccessFramework } = FileSystem;
-  const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync();
+  const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync(
+    initialDirectoryUri ?? null
+  );
   if (!permissions.granted) return null;
   return { uri: permissions.directoryUri };
 }

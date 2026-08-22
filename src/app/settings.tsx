@@ -10,7 +10,6 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { clearZlibSession, useSettings } from '@/context/settings-context';
 import { isSafLocation, pickDownloadFolder } from '@/lib/download';
@@ -56,7 +55,6 @@ export default function SettingsScreen() {
   const [password, setPassword] = useState(settings.password);
   const [remixUserId, setRemixUserId] = useState(settings.remixUserId);
   const [remixUserKey, setRemixUserKey] = useState(settings.remixUserKey);
-  const [googleKey, setGoogleKey] = useState(settings.googleBooksKey);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
@@ -65,7 +63,7 @@ export default function SettingsScreen() {
     try {
       // Credentials changed -> drop cached session so next request re-logins
       await clearZlibSession();
-      await update({ email: email.trim(), password, remixUserId: remixUserId.trim(), remixUserKey: remixUserKey.trim(), googleBooksKey: googleKey.trim() });
+      await update({ email: email.trim(), password, remixUserId: remixUserId.trim(), remixUserKey: remixUserKey.trim() });
       setSavedAt(Date.now());
       setTimeout(() => setSavedAt(null), 2500);
     } finally {
@@ -82,7 +80,9 @@ export default function SettingsScreen() {
       return;
     }
     try {
-      const picked = await pickDownloadFolder();
+      const picked = await pickDownloadFolder(
+        isSafLocation(settings.downloadLocation) ? settings.downloadLocation : null
+      );
       if (!picked) return; // cancelled
       await update({ downloadLocation: picked.uri });
     } catch (err: any) {
@@ -96,13 +96,13 @@ export default function SettingsScreen() {
 
   const locationLabel =
     !settings.downloadLocation
-      ? 'App documents / downloads'
+      ? 'App-private Documents/downloads'
       : isSafLocation(settings.downloadLocation)
         ? decodeURIComponent(settings.downloadLocation.split('/').pop() || settings.downloadLocation)
         : settings.downloadLocation;
 
   return (
-    <SafeAreaView className="flex-1" edges={[]} style={{ backgroundColor: '#0b0b0f' }}>
+    <View className="flex-1" style={{ backgroundColor: '#0b0b0f' }}>
       <ScrollView contentContainerClassName="px-4 py-5">
         <Section title="Z-Library Account">
           <View>
@@ -156,19 +156,6 @@ export default function SettingsScreen() {
             />
           </View>
 
-          <View className="gap-2">
-            <Text className="text-sm text-neutral-400">Google Books API key (optional — enables ★ ratings)</Text>
-            <TextInput
-              value={googleKey}
-              onChangeText={setGoogleKey}
-              autoCapitalize="none"
-              secureTextEntry
-              placeholder="AIza…"
-              placeholderTextColor="#6b6b76"
-              className="h-11 px-3.5 rounded-xl text-white border border-neutral-800" style={{ backgroundColor: '#17171c' }}
-            />
-          </View>
-
           <Pressable
             onPress={saveAccount}
             disabled={saving}
@@ -184,7 +171,7 @@ export default function SettingsScreen() {
           </Pressable>
         </Section>
 
-        <Section title="Download Location">
+        <Section title="Storage Folder">
           <Text numberOfLines={2} className="text-sm text-neutral-700 dark:text-neutral-200">
             {locationLabel}
           </Text>
@@ -193,7 +180,7 @@ export default function SettingsScreen() {
               onPress={chooseFolder}
               className="flex-1 h-11 rounded-xl items-center justify-center active:opacity-80" style={{ backgroundColor: '#8b7cf6' }}
             >
-              <Text className="font-semibold text-white">Choose folder…</Text>
+              <Text className="font-semibold text-white">Choose shared folder…</Text>
             </Pressable>
             {settings.downloadLocation && (
               <Pressable
@@ -205,7 +192,9 @@ export default function SettingsScreen() {
             )}
           </View>
           <Text className="text-xs text-neutral-400 leading-4">
-            Books are downloaded to this folder without being opened in-app.
+            On Android, the system picker can grant access to any selectable shared folder,
+            including an existing e-reader folder. Android does not allow access to storage
+            roots or another app&apos;s Android/data folder.
           </Text>
         </Section>
 
@@ -263,10 +252,10 @@ export default function SettingsScreen() {
           </Text>
         </Section>
 
-        <Text onPress={() => router.push('/home')} className="text-center text-xs text-neutral-400 mt-2 mb-8">
+        <Text onPress={() => router.replace('/home')} className="text-center text-xs text-neutral-400 mt-2 mb-8">
           Reader · powered by Z-Library eapi
         </Text>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }

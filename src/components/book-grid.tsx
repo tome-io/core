@@ -1,12 +1,44 @@
-import { ActivityIndicator, FlatList, RefreshControl, useWindowDimensions, View } from 'react-native';
 import type { ReactElement } from 'react';
+import { useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  type LayoutChangeEvent,
+  RefreshControl,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
 import { BookCard, type CardBook } from './book-card';
 
+const SIDEBAR_WIDTH = 76;
+const IDEAL_CARD_WIDTH = 112;
+const HORIZONTAL_PADDING = 24;
+const COLUMN_GAP = 16;
+const ROW_GAP = 24;
+const MIN_COLUMNS = 2;
 
-const COLUMNS = 4;
-const COLUMN_GAP = 12;
-const ROW_GAP = 16;
+function getGridMetrics(width: number) {
+  const innerWidth = Math.max(0, width - HORIZONTAL_PADDING * 2);
+  const columns = Math.max(
+    MIN_COLUMNS,
+    Math.floor((innerWidth + COLUMN_GAP) / (IDEAL_CARD_WIDTH + COLUMN_GAP))
+  );
+  const cardWidth = (innerWidth - COLUMN_GAP * (columns - 1)) / columns;
+  return { columns, cardWidth };
+}
+
+function useGridMetrics() {
+  const { width: windowWidth } = useWindowDimensions();
+  const [measuredWidth, setMeasuredWidth] = useState(0);
+  const width = measuredWidth || Math.max(0, windowWidth - SIDEBAR_WIDTH);
+  const metrics = useMemo(() => getGridMetrics(width), [width]);
+  const onLayout = (event: LayoutChangeEvent) => {
+    const nextWidth = Math.round(event.nativeEvent.layout.width);
+    if (nextWidth > 0 && nextWidth !== measuredWidth) setMeasuredWidth(nextWidth);
+  };
+  return { ...metrics, onLayout };
+}
 
 interface BookGridProps<T extends CardBook> {
   books: T[];
@@ -18,10 +50,6 @@ interface BookGridProps<T extends CardBook> {
   ListEmptyComponent?: ReactElement;
 }
 
-/**
- * Edge-to-edge 4-column cover grid. Cards touch both screen edges; spacing
- * only exists *between* cards.
- */
 export function BookGrid<T extends CardBook>({
   books,
   onPressBook,
@@ -31,29 +59,37 @@ export function BookGrid<T extends CardBook>({
   ListFooterComponent,
   ListEmptyComponent,
 }: BookGridProps<T>) {
-  const { width } = useWindowDimensions();
-  const cardWidth = (width - COLUMN_GAP * (COLUMNS - 1)) / COLUMNS;
+  const { columns, cardWidth, onLayout } = useGridMetrics();
 
   return (
     <FlatList<T>
+      key={`book-grid-${columns}`}
       data={books}
-      keyExtractor={(b, i) => `${b.id}-${(b as any).hash ?? ''}-${i}`}
-      numColumns={COLUMNS}
+      onLayout={onLayout}
+      keyExtractor={(book, index) => `${book.id}-${(book as any).hash ?? ''}-${index}`}
+      numColumns={columns}
       columnWrapperStyle={{ gap: COLUMN_GAP }}
-      contentContainerStyle={{ gap: ROW_GAP, paddingBottom: 32 }}
+      contentContainerStyle={{
+        gap: ROW_GAP,
+        paddingHorizontal: HORIZONTAL_PADDING,
+        paddingTop: 20,
+        paddingBottom: 40,
+      }}
       onEndReached={onEndReached}
-      onEndReachedThreshold={0.5}
+      onEndReachedThreshold={0.7}
+      showsVerticalScrollIndicator={false}
       refreshControl={
         onRefresh ? (
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#e11d48" colors={['#e11d48']} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#8b7cf6"
+            colors={['#8b7cf6']}
+          />
         ) : undefined
       }
       renderItem={({ item }) => (
-        <BookCard
-          book={item}
-          width={cardWidth}
-          onPress={() => onPressBook(item)}
-        />
+        <BookCard book={item} width={cardWidth} onPress={() => onPressBook(item)} />
       )}
       ListEmptyComponent={ListEmptyComponent}
       ListFooterComponent={ListFooterComponent ?? null}
@@ -61,10 +97,48 @@ export function BookGrid<T extends CardBook>({
   );
 }
 
+export function BookGridSkeleton({ count = 18 }: { count?: number }) {
+  const { columns, cardWidth, onLayout } = useGridMetrics();
+  const rows = Math.ceil(count / columns);
+
+  return (
+    <View
+      className="flex-1"
+      onLayout={onLayout}
+      style={{ paddingHorizontal: HORIZONTAL_PADDING, paddingTop: 20, gap: ROW_GAP }}
+    >
+      {Array.from({ length: rows }, (_, row) => (
+        <View key={row} className="flex-row" style={{ gap: COLUMN_GAP }}>
+          {Array.from({ length: columns }, (_, column) => (
+            <View key={column} style={{ width: cardWidth }}>
+              <View
+                className="rounded-lg mb-2"
+                style={{
+                  width: cardWidth,
+                  height: Math.round(cardWidth * 1.5),
+                  backgroundColor: '#1b1b22',
+                }}
+              />
+              <View
+                className="h-2.5 rounded-full mb-2"
+                style={{ width: '72%', backgroundColor: '#1b1b22' }}
+              />
+              <View
+                className="h-2 rounded-full"
+                style={{ width: '48%', backgroundColor: '#1b1b22' }}
+              />
+            </View>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export function GridLoadingMore() {
   return (
-    <View style={{ paddingVertical: 16, alignItems: 'center' }}>
-      <ActivityIndicator color="#e11d48" />
+    <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+      <ActivityIndicator color="#8b7cf6" />
     </View>
   );
 }
