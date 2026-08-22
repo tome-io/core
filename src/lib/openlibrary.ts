@@ -68,6 +68,27 @@ export async function getTrending(
   return works.map(mapWork).filter((b: FeedBook) => b.title);
 }
 
+export async function getWorkDetails(
+  workKey: string,
+  opts?: FetchOpts
+): Promise<{ description: string; subjects: string[] } | null> {
+  // workKey looks like '/works/OL17930368W'
+  try {
+    const data = await getJson(`https://openlibrary.org${workKey}.json`, opts);
+    const raw = data.description;
+    const text =
+      typeof raw === 'string' ? raw : typeof raw?.value === 'string' ? raw.value : '';
+    return {
+      description: text.trim(),
+      subjects: Array.isArray(data.subjects)
+        ? data.subjects.filter((x: any) => typeof x === 'string').slice(0, 8)
+        : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function getSubject(
   subjectKey: string,
   limit = 40,

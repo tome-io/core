@@ -56,6 +56,7 @@ export default function SettingsScreen() {
   const [password, setPassword] = useState(settings.password);
   const [remixUserId, setRemixUserId] = useState(settings.remixUserId);
   const [remixUserKey, setRemixUserKey] = useState(settings.remixUserKey);
+  const [googleKey, setGoogleKey] = useState(settings.googleBooksKey);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
@@ -64,7 +65,7 @@ export default function SettingsScreen() {
     try {
       // Credentials changed -> drop cached session so next request re-logins
       await clearZlibSession();
-      await update({ email: email.trim(), password, remixUserId: remixUserId.trim(), remixUserKey: remixUserKey.trim() });
+      await update({ email: email.trim(), password, remixUserId: remixUserId.trim(), remixUserKey: remixUserKey.trim(), googleBooksKey: googleKey.trim() });
       setSavedAt(Date.now());
       setTimeout(() => setSavedAt(null), 2500);
     } finally {
@@ -151,6 +152,19 @@ export default function SettingsScreen() {
               autoCapitalize="none"
               placeholder="remix_userkey cookie value"
               placeholderTextColor="#a3a3a3"
+              className="h-11 px-3.5 rounded-xl text-white border border-neutral-800" style={{ backgroundColor: '#17171c' }}
+            />
+          </View>
+
+          <View className="gap-2">
+            <Text className="text-sm text-neutral-400">Google Books API key (optional — enables ★ ratings)</Text>
+            <TextInput
+              value={googleKey}
+              onChangeText={setGoogleKey}
+              autoCapitalize="none"
+              secureTextEntry
+              placeholder="AIza…"
+              placeholderTextColor="#6b6b76"
               className="h-11 px-3.5 rounded-xl text-white border border-neutral-800" style={{ backgroundColor: '#17171c' }}
             />
           </View>

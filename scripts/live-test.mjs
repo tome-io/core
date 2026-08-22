@@ -180,6 +180,25 @@ test('pasted remix keys are used without any login request', async () => {
   assert.equal(s.userKey, 'PK');
 });
 
+test('rankZlibMatches buries workbooks/summaries and ranks title+author overlap', async () => {
+  const { rankZlibMatches } = await import('../src/lib/match.ts');
+  const ranked = rankZlibMatches(
+    [
+      { title: 'Atomic Habits Workbook', author: 'Some Publisher' },
+      { title: 'Summary & Analysis of Atomic Habits', author: 'QuickRead' },
+      { title: 'Atomic Habits: Tiny Changes, Remarkable Results', author: 'James Clear' },
+      { title: 'Totally Different Book', author: 'Nobody' },
+    ],
+    'Atomic Habits',
+    'James Clear'
+  );
+  assert.equal(ranked[0].author, 'James Clear');
+  assert.ok(
+    ranked.findIndex((b) => /workbook|summary/i.test(b.title)) > ranked.findIndex((b) => b.title.startsWith('Atomic Habits')),
+    'real book must outrank workbook/summary spam'
+  );
+});
+
 test('web mode sends cookies via X-Zlib-Cookie, native via Cookie', async () => {
   const seen = {};
   const makeDeps = (isWeb) =>

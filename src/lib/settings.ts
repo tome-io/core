@@ -8,6 +8,7 @@ export interface Settings {
   remixUserKey: string;
   domain: string; // '' = auto
   preferredFormat: string; // '' = any
+  googleBooksKey: string; // optional, enables ratings on detail screen
   downloadLocation: string | null; // SAF directory URI (Android), null = app documents dir
 }
 
@@ -18,12 +19,13 @@ export const DEFAULT_SETTINGS: Settings = {
   remixUserKey: '',
   domain: '',
   preferredFormat: '',
+  googleBooksKey: '',
   downloadLocation: null,
 };
 
 const SETTINGS_KEY = 'app_settings_v1';
 // Fields stored outside AsyncStorage, in the device Keychain
-export const SECURE_FIELDS = ['email', 'password', 'remixUserId', 'remixUserKey'] as const;
+export const SECURE_FIELDS = ['email', 'password', 'remixUserId', 'remixUserKey', 'googleBooksKey'] as const;
 export type SecureField = (typeof SECURE_FIELDS)[number];
 
 const SECURE_KEYS: Record<SecureField, string> = {
@@ -31,6 +33,7 @@ const SECURE_KEYS: Record<SecureField, string> = {
   password: 'zlib_password',
   remixUserId: 'remix_userid_paste',
   remixUserKey: 'remix_userkey_paste',
+  googleBooksKey: 'google_books_key',
 };
 
 export async function loadSettings(): Promise<Settings> {

@@ -96,3 +96,31 @@ export async function fetchEbooks(
   }
   return books;
 }
+
+export interface BookRating {
+  averageRating?: number;
+  ratingsCount?: number;
+}
+
+/** Google Books requires a free API key (Google Cloud Console -> Books API). */
+export async function getGoogleRating(
+  title: string,
+  author: string,
+  apiKey: string,
+  fetchFn?: typeof fetch
+): Promise<BookRating | null> {
+  if (!apiKey) return null;
+  const doFetch = fetchFn ?? fetch;
+  const q = `intitle:${title} inauthor:${author}`;
+  const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&key=${apiKey}&maxResults=1`;
+  try {
+    const resp = await doFetch(url);
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const v = data?.items?.[0]?.volumeInfo;
+    if (!v || v.averageRating == null) return null;
+    return { averageRating: v.averageRating, ratingsCount: v.ratingsCount };
+  } catch {
+    return null;
+  }
+}

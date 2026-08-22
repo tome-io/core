@@ -2,6 +2,7 @@ import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PosterCard, Rail, toExternalBook } from '@/components/poster';
 import { getSubject, getTrending, type FeedBook } from '@/lib/openlibrary';
@@ -22,6 +23,7 @@ const RAILS: { title: string; subject: string }[] = [
 
 export default function HomeScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [trending, setTrending] = useState<FeedBook[]>([]);
   const [rails, setRails] = useState<Record<string, FeedBook[]>>({});
   const [loading, setLoading] = useState(true);
@@ -66,7 +68,7 @@ export default function HomeScreen() {
     <View className="flex-1" style={{ backgroundColor: BG }}>
       <ScrollView
         className="flex-1"
-        contentContainerStyle={{ paddingTop: 16, paddingBottom: 40 }}
+        contentContainerStyle={{ paddingTop: (insets.top || 12) + 4, paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}
       >
         {loading && (

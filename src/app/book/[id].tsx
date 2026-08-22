@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -12,6 +12,10 @@ import {
 import { useSettings } from '@/context/settings-context';
 import { bookFilename, downloadBook, type DownloadProgress } from '@/lib/download';
 import type { ExternalBook } from '@/lib/books-api';
+import { getGoogleRating } from '@/lib/books-api';
+import { getWorkDetails } from '@/lib/openlibrary';
+import { rankZlibMatches } from '@/lib/match';
+import { fetchEbooks } from '@/lib/books-api';
 import { downloadHeaders, resolveDownload, searchBooks, type Book } from '@/lib/zlib';
 
 type Phase =
@@ -60,16 +64,52 @@ export default function BookDetailScreen() {
   const [options, setOptions] = useState<Book[] | null>(null);
   const [optError, setOptError] = useState<string | null>(null);
   const [phases, setPhases] = useState<Record<string, Phase>>({});
+  const [description, setDescription] = useState('');
+  const [genreLabel, setGenreLabel] = useState('');
+  const [rating, setRating] = useState<{ averageRating?: number; ratingsCount?: number } | null>(null);
+  const descRef = useRef(false);
 
   useEffect(() => {
     if (!isExt || !extBook) return;
     let cancelled = false;
-    setOptions(null);
-    setOptError(null);
-    const query = `${extBook.title} ${extBook.author}`.slice(0, 100);
+
+    // Z-Library is a string search engine (no ISBN lookup in eapi), so we
+    // query with a quoted core title + author and rank client-side.
+    const coreTitle = extBook.title.split(/[:(\u2014]/)[0].trim();
+    const lastName = extBook.author.split(' ').slice(-1)[0];
+    const query = `"${coreTitle}" ${lastName}`;
+
     searchBooks(query, 1)
-      .then((r) => !cancelled && setOptions(r))
+      .then(async (r) => {
+        if (cancelled) return;
+        setOptions(rankZlibMatches(r, extBook.title, extBook.author));
+        if (settings.googleBooksKey) {
+          const rating = await getGoogleRating(coreTitle, extBook.author, settings.googleBooksKey);
+          if (!cancelled && rating) setRating(rating);
+        }
+      })
       .catch((err) => !cancelled && setOptError(err.message || String(err)));
+
+    // Description from Open Library work record (we came from an OL work key)
+    if (extBook.id.startsWith('/works/')) {
+      getWorkDetails(extBook.id).then((d) => {
+        if (!cancelled && d?.description) {
+          setDescription(d.description.trim());
+          if (!extBook.genre || extBook.genre === 'Open Library') {
+            setGenreLabel(d.subjects.slice(0, 3).join(', '));
+          }
+        }
+      });
+    }
+    // Better description fallback via Apple, plus ratings when a key is set
+    fetchEbooks(`${coreTitle} ${extBook.author}`, 1).then((appleHits) => {
+      if (cancelled) return;
+      if (appleHits.length && appleHits[0].description && !descRef.current) {
+        descRef.current = true;
+        setDescription((prev) => prev || appleHits[0].description);
+      }
+    }).catch(() => {});
+
     return () => {
       cancelled = true;
     };
@@ -186,8 +226,23 @@ export default function BookDetailScreen() {
 
       {/* External recommendation: list of Z-Library download options */}
       {isExt && (
-        <View className="px-6 mt-8 gap-3">
-          <Text className="text-xs font-bold uppercase tracking-widest text-neutral-400 mb-1">
+        <View className="px-6 mt-6 gap-3">
+          {(description || rating) && (
+            <View className="rounded-2xl px-4 py-4 gap-3" style={{ backgroundColor: '#141419' }}>
+              {!!rating && (
+                <Text className="text-sm text-amber-400">
+                  {'★'.repeat(Math.round(rating.averageRating ?? 0))}
+                  <Text className="text-neutral-400">
+                    {' '}{rating.averageRating} · {rating.ratingsCount} ratings
+                  </Text>
+                </Text>
+              )}
+              {!!description && (
+                <Text className="text-sm text-neutral-300 leading-5">{description}</Text>
+              )}
+            </View>
+          )}
+          <Text className="text-xs font-bold uppercase tracking-widest text-neutral-400 mt-2">
             Download options on Z-Library
           </Text>
 

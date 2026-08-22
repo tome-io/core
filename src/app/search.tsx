@@ -9,7 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BookGrid, GridLoadingMore } from '@/components/book-grid';
 import { useSettings } from '@/context/settings-context';
@@ -26,6 +26,7 @@ const FORMATS = [
 export default function SearchScreen() {
   const router = useRouter();
   const { settings } = useSettings();
+  const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const [format, setFormat] = useState(settings.preferredFormat);
   const [books, setBooks] = useState<Book[]>([]);
@@ -81,7 +82,7 @@ export default function SearchScreen() {
 
   return (
     <View className="flex-1" style={{ backgroundColor: '#0b0b0f' }}>
-      <View className="px-4 pt-2 gap-3">
+      <View className="px-4 gap-3" style={{ paddingTop: (insets.top || 12) + 10 }}>
         <View className="flex-row items-center gap-2">
           <TextInput
             value={query}
