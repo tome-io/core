@@ -10,9 +10,11 @@ import {
   type LibraryBook,
   type LibraryState,
 } from '@/lib/library';
-import { scanLocalLibrary } from '@/lib/local-library';
-import { enrichLocalLibrary } from '@/lib/local-metadata';
-import { syncMoonReaderLibrary } from '@/lib/moon-reader';
+import {
+  deleteLocalCatalogBook,
+  loadLocalCatalog,
+} from '@/lib/library-db';
+import { syncLocalLibrary } from '@/lib/library-sync';
 
 interface LibraryContextValue extends LibraryState {
   ready: boolean;
@@ -73,71 +75,47 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     if (pendingScan.current?.key === key) return pendingScan.current.promise;
 
     const generation = ++scanGeneration.current;
-    if (lastScanKey.current !== key) {
-      lastScanKey.current = key;
-      setLocalBooks([]);
-    }
+    const directoryChanged = lastScanKey.current !== key;
+    lastScanKey.current = key;
     setScanning(true);
     setScanError(null);
 
     let promise: Promise<void>;
-    promise = scanLocalLibrary(settings.downloadLocation)
-      .then(async (scan) => {
-        if (scanGeneration.current !== generation) return;
-        setLocalBooks((current) => {
-          const existingByKey = new Map(current.map((book) => [book.key, book]));
-          return scan.books.map((book) => {
-            const existing = existingByKey.get(book.key);
-            const unchanged =
-              existing?.local?.size === book.local?.size &&
-              existing?.local?.modificationTime === book.local?.modificationTime;
-            return unchanged && existing
-              ? {
-                  ...existing,
-                  cover: book.cover || existing.cover,
-                  moonReader: book.moonReader || existing.moonReader,
-                }
-              : book;
-          });
-        });
-        // Folder enumeration is complete. Metadata and cover enrichment continues
-        // per-book without holding the native pull-to-refresh indicator open.
-        setScanning(false);
-
-        let books = scan.books;
-        let moonReaderWarning = '';
-        if (scan.moonReaderBackup) {
-          try {
-            const moonReader = await syncMoonReaderLibrary(books, scan.moonReaderBackup);
-            books = moonReader.books;
-            moonReaderWarning = moonReader.warning ?? '';
+    promise = (directoryChanged
+      ? loadLocalCatalog(key).then((cached) => {
+          if (scanGeneration.current === generation) setLocalBooks(cached);
+        })
+      : Promise.resolve())
+      .then(() =>
+        syncLocalLibrary({
+          directoryKey: key,
+          directoryUri: settings.downloadLocation,
+          onScanComplete: (books) => {
+            if (scanGeneration.current !== generation) return;
+            setLocalBooks(books);
+            // Folder enumeration is complete. Source enrichment continues without
+            // holding the native pull-to-refresh indicator open.
+            setScanning(false);
+          },
+          onBooksUpdated: (books) => {
             if (scanGeneration.current === generation) setLocalBooks(books);
-          } catch (err: any) {
-            moonReaderWarning = `Moon+ Reader sync failed: ${err.message || String(err)}`;
-          }
-          if (scanGeneration.current === generation && moonReaderWarning) {
-            setScanError(moonReaderWarning);
-          }
-        }
-
-        const warnings = await enrichLocalLibrary(books, (enriched) => {
-          if (scanGeneration.current !== generation) return;
-          setLocalBooks((current) =>
-            current.map((book) => (book.key === enriched.key ? enriched : book))
-          );
-        });
-        if (scanGeneration.current === generation && (moonReaderWarning || warnings.length)) {
-          const metadataWarning = warnings.length
-            ? `Could not load complete metadata for ${warnings.length} local ${
-                warnings.length === 1 ? 'book' : 'books'
-              }. ${warnings[0].filename}: ${warnings[0].message}`
-            : '';
-          setScanError([moonReaderWarning, metadataWarning].filter(Boolean).join(' '));
-        }
+          },
+          onBookUpdated: (enriched) => {
+            if (scanGeneration.current !== generation) return;
+            setLocalBooks((current) =>
+              current.map((book) => (book.key === enriched.key ? enriched : book))
+            );
+          },
+        })
+      )
+      .then((result) => {
+        if (scanGeneration.current !== generation) return;
+        setLocalBooks(result.books);
+        setScanError(result.warnings.length ? result.warnings.join(' ') : null);
       })
       .catch((err) => {
         if (scanGeneration.current === generation) {
-          setScanError(`Could not read the selected library folder: ${err.message || String(err)}`);
+          setScanError(`Library synchronization failed: ${err.message || String(err)}`);
         }
       })
       .finally(() => {
@@ -203,8 +181,8 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
   );
 
   const recordDownload = useCallback(
-    (book: LibraryBook, fileUri: string) =>
-      commit((current) => {
+    async (book: LibraryBook, fileUri: string) => {
+      await commit((current) => {
         const downloaded = {
           ...book,
           fileUri,
@@ -217,8 +195,10 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
             ...current.downloaded.filter((item) => item.key !== downloaded.key),
           ],
         };
-      }),
-    [commit]
+      });
+      await refreshLocalBooks();
+    },
+    [commit, refreshLocalBooks]
   );
 
   const deleteLocalBook = useCallback(
@@ -234,6 +214,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
 
       setLocalBooks((current) => current.filter((item) => item.key !== book.key));
       try {
+        await deleteLocalCatalogBook(book.local.uri);
         await commit((current) => ({
           downloaded: current.downloaded.filter(
             (item) => item.key !== book.key && item.fileUri !== book.local?.uri

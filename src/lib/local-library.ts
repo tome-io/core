@@ -35,6 +35,10 @@ interface ScanArtifacts {
   backup: MoonReaderBackupFile | null;
 }
 
+function finiteNumber(value: number | null | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
 async function inspectUris(uris: string[]) {
   const entries: {
     childUri: string;
@@ -120,8 +124,10 @@ async function scanSafDirectory(
       await scanSafDirectory(childUri, visited, files, artifacts);
       continue;
     }
-    inspectMoonReaderFile(childUri, info.size, info.modificationTime, artifacts);
-    const book = toLocalFile(childUri, info.size, info.modificationTime);
+    const size = finiteNumber(info.size);
+    const modificationTime = finiteNumber(info.modificationTime);
+    inspectMoonReaderFile(childUri, size, modificationTime, artifacts);
+    const book = toLocalFile(childUri, size, modificationTime);
     if (book) files.push(book);
   }
 }
@@ -145,8 +151,10 @@ async function scanFileDirectory(
       await scanFileDirectory(childUri, visited, files, artifacts);
       continue;
     }
-    inspectMoonReaderFile(childUri, info.size, info.modificationTime, artifacts);
-    const book = toLocalFile(childUri, info.size, info.modificationTime);
+    const size = finiteNumber(info.size);
+    const modificationTime = finiteNumber(info.modificationTime);
+    inspectMoonReaderFile(childUri, size, modificationTime, artifacts);
+    const book = toLocalFile(childUri, size, modificationTime);
     if (book) files.push(book);
   }
 }

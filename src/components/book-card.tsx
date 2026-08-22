@@ -41,6 +41,7 @@ export function BookCard({ book, onPress, width }: Props) {
             source={{ uri: book.cover }}
             style={{ width: '100%', height: '100%' }}
             contentFit="contain"
+            cachePolicy="memory-disk"
             recyclingKey={book.cover}
             onError={(e) => {
               if (__DEV__) console.log('[image] failed:', book.cover, e.error ?? '');

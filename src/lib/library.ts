@@ -1,6 +1,5 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
 import type { DiscoveryBook, FeedBook } from './openlibrary';
+import { loadPersistedLibrary, savePersistedLibrary } from './library-db';
 import type { Book } from './zlib';
 
 export interface LibraryBook extends FeedBook {
@@ -15,6 +14,7 @@ export interface LibraryBook extends FeedBook {
   zlib?: Book;
   local?: LocalFileBook;
   metadataPending?: boolean;
+  metadataUpdatedAt?: number;
   progress?: number;
   isRead?: boolean;
   readingTimeMs?: number;
@@ -45,8 +45,6 @@ export const EMPTY_LIBRARY: LibraryState = {
   downloaded: [],
   readingList: [],
 };
-
-const LIBRARY_KEY = 'reader_library_v1';
 
 function discoveryKey(book: DiscoveryBook): string {
   return `openlibrary:${book.id}`;
@@ -151,19 +149,9 @@ export function detailParams(book: LibraryBook) {
 }
 
 export async function loadLibrary(): Promise<LibraryState> {
-  const raw = await AsyncStorage.getItem(LIBRARY_KEY);
-  if (!raw) return EMPTY_LIBRARY;
-
-  const parsed = JSON.parse(raw);
-  if (!Array.isArray(parsed?.downloaded) || !Array.isArray(parsed?.readingList)) {
-    throw new Error('Stored library data is invalid.');
-  }
-  return {
-    downloaded: parsed.downloaded,
-    readingList: parsed.readingList,
-  };
+  return loadPersistedLibrary();
 }
 
 export async function saveLibrary(state: LibraryState): Promise<void> {
-  await AsyncStorage.setItem(LIBRARY_KEY, JSON.stringify(state));
+  await savePersistedLibrary(state);
 }

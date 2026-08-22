@@ -132,7 +132,11 @@ export async function findBookMetadata(
   });
   if (lookupAuthor) query.set('author', lookupAuthor);
 
-  const data = await getJson(`https://openlibrary.org/search.json?${query}`, opts);
+  const data = await getJson(
+    `https://openlibrary.org/search.json?${query}`,
+    opts,
+    DETAILS_CACHE_MS
+  );
   const docs = Array.isArray(data.docs) ? data.docs : [];
   const wantedTitle = normalizeLookup(title);
   const wantedAuthor = normalizeLookup(lookupAuthor);
@@ -192,14 +196,29 @@ async function getJson(
     if (pending) return pending;
   }
 
-  const request = doFetch(proxied(url)).then(async (resp) => {
+  const request = (async () => {
+    if (shouldCache) {
+      const { getCachedContent } = await import('./library-db');
+      const persisted = await getCachedContent<any>(`openlibrary:${url}`);
+      if (persisted != null) {
+        responseCache.set(url, {
+          expiresAt: persisted.expiresAt,
+          value: persisted.value,
+        });
+        return persisted.value;
+      }
+    }
+
+    const resp = await doFetch(proxied(url));
     if (!resp.ok) throw new Error(`Open Library request failed (${resp.status})`);
     const value = await resp.json();
     if (shouldCache) {
       responseCache.set(url, { expiresAt: Date.now() + cacheMs, value });
+      const { setCachedContent } = await import('./library-db');
+      await setCachedContent(`openlibrary:${url}`, value, cacheMs);
     }
     return value;
-  });
+  })();
 
   if (shouldCache) pendingRequests.set(url, request);
 

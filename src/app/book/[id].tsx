@@ -349,6 +349,7 @@ export default function BookDetailScreen() {
               source={{ uri: header.cover }}
               style={{ width: '100%', height: '100%' }}
               contentFit="contain"
+              cachePolicy="memory-disk"
               recyclingKey={header.cover}
             />
           ) : (
