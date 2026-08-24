@@ -43,6 +43,7 @@ function useGridMetrics() {
 interface BookGridProps<T extends CardBook> {
   books: T[];
   onPressBook: (book: T) => void;
+  onLongPressBook?: (book: T) => void;
   onEndReached?: () => void;
   onRefresh?: () => void;
   refreshing?: boolean;
@@ -53,6 +54,7 @@ interface BookGridProps<T extends CardBook> {
 export function BookGrid<T extends CardBook>({
   books,
   onPressBook,
+  onLongPressBook,
   onEndReached,
   onRefresh,
   refreshing = false,
@@ -89,7 +91,12 @@ export function BookGrid<T extends CardBook>({
         ) : undefined
       }
       renderItem={({ item }) => (
-        <BookCard book={item} width={cardWidth} onPress={() => onPressBook(item)} />
+        <BookCard
+          book={item}
+          width={cardWidth}
+          onPress={() => onPressBook(item)}
+          onLongPress={onLongPressBook ? () => onLongPressBook(item) : undefined}
+        />
       )}
       ListEmptyComponent={ListEmptyComponent}
       ListFooterComponent={ListFooterComponent ?? null}

@@ -4,6 +4,12 @@ const { withNativeWind } = require('nativewind/metro');
 let config = getDefaultConfig(__dirname);
 config = withNativeWind(config, { input: './src/global.css' });
 
+// expo-sqlite's web worker imports wa-sqlite.wasm. Metro does not include
+// wasm in its asset extensions by default.
+if (!config.resolver.assetExts.includes('wasm')) {
+  config.resolver.assetExts.push('wasm');
+}
+
 // Dev-only CORS proxy: Z-Library mirrors don't send CORS headers, so the web
 // build routes its API calls through /zlib-proxy/<encodeURIComponent(url)>.
 // Native builds talk to the mirrors directly.
@@ -16,6 +22,11 @@ config.server = {
     const PREFIX = '/zlib-proxy/';
 
     return (req, res, next) => {
+      // expo-sqlite uses SharedArrayBuffer on web. These headers are required
+      // for both the main document and its SQLite worker.
+      res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
+      res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+
       if (req.url && req.url.startsWith(PREFIX)) {
         if (req.method === 'OPTIONS') {
           res.writeHead(204, {

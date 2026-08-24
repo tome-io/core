@@ -1,11 +1,17 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Text, View } from 'react-native';
+import { Alert, Text, View } from 'react-native';
 
 import { BookGrid, BookGridSkeleton } from '@/components/book-grid';
 import { CatalogToolbar, type CatalogOption } from '@/components/catalog-toolbar';
+import { DismissibleToast } from '@/components/dismissible-toast';
+import {
+  LibraryActionsSheet,
+  type LibraryAction,
+} from '@/components/library-book-actions';
 import { useLibrary } from '@/context/library-context';
 import { detailParams, type LibraryBook } from '@/lib/library';
+import { openInMoonReader } from '@/lib/moon-reader-launcher';
 
 const BG = '#0b0b0f';
 type FormatFilter = 'all' | 'read' | 'epub' | 'pdf' | 'mobi' | 'azw3' | 'other';
@@ -33,9 +39,23 @@ const MAIN_FORMATS = new Set(['epub', 'pdf', 'mobi', 'azw3']);
 
 export default function LibraryScreen() {
   const router = useRouter();
-  const { downloaded, ready, scanning, error, refreshLocalBooks } = useLibrary();
+  const {
+    downloaded,
+    ready,
+    scanning,
+    error,
+    warning,
+    dismissWarning,
+    showWarning,
+    deleteLocalBook,
+    markAsRead,
+    refreshBookMetadata,
+    refreshLocalBooks,
+  } = useLibrary();
   const [format, setFormat] = useState<FormatFilter>('all');
   const [sort, setSort] = useState<LibrarySort>('recent');
+  const [selectedBook, setSelectedBook] = useState<LibraryBook | null>(null);
+  const [busyAction, setBusyAction] = useState<LibraryAction | null>(null);
 
   const books = useMemo(() => {
     const filtered = downloaded.filter((book) => {
@@ -61,6 +81,37 @@ export default function LibraryScreen() {
 
   const loading = !ready || (scanning && downloaded.length === 0);
 
+  const runAction = useCallback(
+    async (action: LibraryAction, operation: () => Promise<void>) => {
+      setBusyAction(action);
+      try {
+        await operation();
+        setSelectedBook(null);
+      } catch (err: any) {
+        showWarning(err.message || String(err));
+      } finally {
+        setBusyAction(null);
+      }
+    },
+    [showWarning]
+  );
+
+  const confirmDelete = useCallback(() => {
+    if (!selectedBook?.local) return;
+    Alert.alert(
+      'Delete local file?',
+      `This permanently deletes “${selectedBook.title}” from the selected storage folder.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => void runAction('delete', () => deleteLocalBook(selectedBook)),
+        },
+      ]
+    );
+  }, [deleteLocalBook, runAction, selectedBook]);
+
   return (
     <View className="flex-1" style={{ backgroundColor: BG }}>
       <CatalogToolbar
@@ -78,6 +129,7 @@ export default function LibraryScreen() {
         <BookGrid
           books={books}
           onPressBook={openBook}
+          onLongPressBook={setSelectedBook}
           onRefresh={() => void refreshLocalBooks()}
           refreshing={scanning}
           ListEmptyComponent={
@@ -89,6 +141,21 @@ export default function LibraryScreen() {
           }
         />
       )}
+      {!!selectedBook && (
+        <LibraryActionsSheet
+          book={selectedBook}
+          visible
+          busyAction={busyAction}
+          onClose={() => setSelectedBook(null)}
+          onOpen={() => void runAction('open', () => openInMoonReader(selectedBook))}
+          onDelete={confirmDelete}
+          onMarkRead={() => void runAction('read', () => markAsRead(selectedBook))}
+          onRefreshMetadata={() =>
+            void runAction('metadata', () => refreshBookMetadata(selectedBook))
+          }
+        />
+      )}
+      {!!warning && <DismissibleToast message={warning} onDismiss={dismissWarning} />}
     </View>
   );
 }

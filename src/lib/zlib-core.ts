@@ -37,11 +37,11 @@ export interface ZlibDeps {
 }
 
 const SEED_DOMAINS = [
+  'https://article.sk',
+  'https://1lib.sk',
   'https://librella.fi',
   'https://lexlib.fi',
   'https://bookabooki.fi',
-  'https://article.sk',
-  'https://1lib.sk',
 ];
 
 const DOMAINS_SOURCE =
@@ -51,6 +51,7 @@ const DOMAINS_CACHE_AT = 'zlib_domains_cached_at';
 const DOMAINS_TTL = 7 * 24 * 3600 * 1000;
 
 const MIRROR_PREF_KEY = 'zlib_domain';
+const PINNED_MIRROR_KEY = 'zlib_pinned_domain';
 export const REQUEST_TIMEOUT_MS = 10000;
 // After a mirror fails, skip it for this long within the process
 const MIRROR_COOLDOWN_MS = 5 * 60 * 1000;
@@ -167,6 +168,7 @@ function mapBook(book: any): Book {
 
 export function createZlibClient(deps: ZlibDeps) {
   const doFetch = deps.fetchFn ?? fetch;
+  let pendingSession: Promise<Session> | null = null;
 
   // Mirror -> timestamp when it may be retried again
   const cooldownUntil = new Map<string, number>();
@@ -227,6 +229,9 @@ export function createZlibClient(deps: ZlibDeps) {
   }
 
   async function candidateDomains(): Promise<string[]> {
+    const pinned = await deps.storeGet(PINNED_MIRROR_KEY);
+    if (pinned) return [pinned];
+
     const pref = await deps.storeGet(MIRROR_PREF_KEY);
     const remote = await fetchMirrorList();
 
@@ -269,9 +274,12 @@ export function createZlibClient(deps: ZlibDeps) {
     let userKey = await deps.secureGet(SESSION_KEYS.userKey);
 
     if (!userId || !userKey) {
-      const session = await acquireSession();
-      userId = session.userId;
-      userKey = session.userKey;
+      if (!pendingSession) {
+        pendingSession = acquireSession().finally(() => {
+          pendingSession = null;
+        });
+      }
+      return pendingSession;
     }
 
     return { userId, userKey };
@@ -338,7 +346,12 @@ export function createZlibClient(deps: ZlibDeps) {
         // answering {"error": "..."}, rate limits, …) fails over instead.
         if (!data.success) {
           const error = String(data.error || '');
-          if (/email|password|credentials|limit reached/i.test(error)) {
+          if (/too many logins|try again later|login.*limit|limit reached/i.test(error)) {
+            throw new Error(
+              `Z-Library login temporarily blocked: ${error || 'too many login attempts'}. Wait before retrying, or save current remix keys in Settings.`
+            );
+          }
+          if (/email|password|credentials/i.test(error)) {
             throw new Error(
               `Login failed: ${error || 'invalid credentials'}. ${describeResp(resp.status, bodyText)}`
             );
@@ -360,7 +373,9 @@ export function createZlibClient(deps: ZlibDeps) {
         dbg(`login ✓ ${baseUrl} (${Date.now() - t0}ms)`);
         return { userId, userKey };
       } catch (err: any) {
-        if (/Login failed:/.test(String(err.message))) throw err;
+        if (/^(Login failed|Z-Library login temporarily blocked):/.test(String(err.message))) {
+          throw err;
+        }
         markUnusable(baseUrl);
         mirrorErrors.push(`${baseUrl}: ${err.message}`);
         dbg(`login ✗ ${baseUrl} (${Date.now() - t0}ms, ${String(err.message).slice(0, 60)})`);
@@ -388,15 +403,16 @@ export function createZlibClient(deps: ZlibDeps) {
 
   async function authFetch(
     url: string,
-    extra?: RequestInit
+    extra?: RequestInit,
+    session?: Session
   ): Promise<{ resp: Response; text: string }> {
-    const session = await getSession();
+    const activeSession = session ?? (await getSession());
     const resp = await doFetch(proxied(url), {
       ...extra,
       headers: {
         ...browserHeaders(),
         ...(extra?.headers || {}),
-        ...authHeader(session),
+        ...authHeader(activeSession),
       },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -410,8 +426,12 @@ export function createZlibClient(deps: ZlibDeps) {
     /** When provided, the parsed JSON must pass this to count as an answer. */
     validate?: (json: any) => boolean
   ): Promise<{ resp: Response; text: string; json: any }> {
+    // Resolve authentication once per logical request. Otherwise every failed
+    // mirror can recursively start another full login crawl.
+    const session = await getSession();
     const domains = await candidateDomains();
     let last: { resp: Response; text: string; json: any } | null = null;
+    const mirrorErrors: string[] = [];
     const deadline = Date.now() + FAILOVER_DEADLINE_MS;
 
     for (const domain of domains) {
@@ -421,7 +441,7 @@ export function createZlibClient(deps: ZlibDeps) {
       }
       const t0 = Date.now();
       try {
-        const result = await authFetch(pathBuilder(domain), extra);
+        const result = await authFetch(pathBuilder(domain), extra, session);
         const json = parseJson(result.text);
         const bad =
           isMirrorProblem(result.resp, result.text) ||
@@ -430,6 +450,7 @@ export function createZlibClient(deps: ZlibDeps) {
         if (bad) {
           markUnusable(domain);
           last = { ...result, json };
+          mirrorErrors.push(`${domain}: ${describeResp(result.resp.status, result.text)}`);
           dbg(`✗ ${domain} (${Date.now() - t0}ms, status=${result.resp.status})`);
           continue;
         }
@@ -438,12 +459,17 @@ export function createZlibClient(deps: ZlibDeps) {
         return { ...result, json };
       } catch (err: any) {
         markUnusable(domain); // network error / timeout, try the next mirror
+        mirrorErrors.push(`${domain}: ${err.message || String(err)}`);
         dbg(`✗ ${domain} (${Date.now() - t0}ms, ${String(err.message).slice(0, 60)})`);
       }
     }
 
     if (last) return last;
-    throw new Error('All Z-Library mirrors are unreachable.');
+    throw new Error(
+      `All Z-Library mirrors are unreachable.${
+        mirrorErrors.length ? ` Last errors: ${mirrorErrors.slice(-3).join(' | ')}` : ''
+      }`
+    );
   }
 
   async function searchBooks(

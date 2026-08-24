@@ -1,14 +1,22 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import JSZip from 'jszip';
-import { PDFDocument } from 'pdf-lib';
+// Metro web resolves pdf-lib's ESM build through tslib@1's incompatible
+// default-export shim. The package's CommonJS entry exposes the same API and
+// avoids that interop failure on web while continuing to work on native.
+import { PDFDocument } from 'pdf-lib/cjs/index';
 
+import { metadataFromFilename } from './book-metadata';
 import type { LibraryBook } from './library';
 import { findBookMetadata, getWorkDetails, type DiscoveryBook } from './openlibrary';
 
-const COVER_DIRECTORY = `${FileSystem.cacheDirectory}library-covers`;
+const COVER_DIRECTORY = FileSystem.documentDirectory
+  ? `${FileSystem.documentDirectory}library-covers`
+  : null;
 const MAX_PARSE_SIZE = 32 * 1024 * 1024;
 const ENRICH_BATCH_SIZE = 3;
 const METADATA_REFRESH_MS = 7 * 24 * 60 * 60 * 1000;
+const METADATA_FAILURE_RETRY_MS = 15 * 60 * 1000;
+const LOCAL_METADATA_VERSION = 4;
 
 export interface EmbeddedMetadata {
   title?: string;
@@ -104,11 +112,15 @@ async function saveCover(
   mimeType: string,
   base64: string
 ): Promise<string> {
-  if (!FileSystem.cacheDirectory) return '';
+  if (!COVER_DIRECTORY) throw new Error('The app documents directory is unavailable.');
   await FileSystem.makeDirectoryAsync(COVER_DIRECTORY, { intermediates: true });
   const extension = mimeType.split('/')[1]?.replace('jpeg', 'jpg') || path.split('.').pop() || 'jpg';
   const uri = `${COVER_DIRECTORY}/${stableHash(`${book.fileUri}:${book.local?.modificationTime}`)}.${extension}`;
   await FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64 });
+  const storedCover = await FileSystem.getInfoAsync(uri);
+  if (!storedCover.exists) {
+    throw new Error(`The extracted cover was not written to ${uri}.`);
+  }
   return uri;
 }
 
@@ -183,6 +195,7 @@ function applyMetadata(book: LibraryBook, metadata: EmbeddedMetadata): LibraryBo
     ratingsCount: metadata.ratingsCount ?? book.ratingsCount,
     metadataPending: false,
     metadataUpdatedAt: Date.now(),
+    metadataVersion: LOCAL_METADATA_VERSION,
   };
 }
 
@@ -205,20 +218,40 @@ async function enrichLocalBook(
   let catalogMetadata: DiscoveryBook | null = null;
   const warningMessages: string[] = [];
   let catalogLookupFailed = false;
+  const moonReaderMetadata = book.moonReader;
+  const filenameMetadata = metadataFromFilename(book.local.filename, book.local.format);
+  const lookupAuthorCandidate = moonReaderMetadata?.author || book.author;
+  const hasNamedAuthor = !!lookupAuthorCandidate && lookupAuthorCandidate !== 'Unknown';
+  const lookupTitle =
+    book.discovery?.title ||
+    moonReaderMetadata?.title ||
+    (hasNamedAuthor ? book.title : filenameMetadata.title) ||
+    book.title;
+  const lookupAuthor =
+    book.discovery?.author ||
+    (hasNamedAuthor ? lookupAuthorCandidate : '') ||
+    filenameMetadata.author;
 
   try {
-    catalogMetadata = await findBookMetadata(book.title, book.author);
+    catalogMetadata = await findBookMetadata(lookupTitle, lookupAuthor);
   } catch (err: any) {
     catalogLookupFailed = true;
     warningMessages.push(`Catalog metadata lookup failed: ${err.message || String(err)}`);
   }
 
-  if (catalogMetadata && !catalogMetadata.description && catalogMetadata.id.startsWith('/works/')) {
+  if (
+    catalogMetadata &&
+    (!catalogMetadata.cover ||
+      !catalogMetadata.description ||
+      catalogMetadata.genre === 'Other') &&
+    catalogMetadata.id.startsWith('/works/')
+  ) {
     try {
       const details = await getWorkDetails(catalogMetadata.id);
       catalogMetadata = {
         ...catalogMetadata,
-        description: details.description,
+        cover: catalogMetadata.cover || details.cover,
+        description: catalogMetadata.description || details.description,
         genre:
           catalogMetadata.genre !== 'Other'
             ? catalogMetadata.genre
@@ -256,13 +289,16 @@ async function enrichLocalBook(
       );
       if (
         catalogMetadata &&
-        !catalogMetadata.description &&
+        (!catalogMetadata.cover ||
+          !catalogMetadata.description ||
+          catalogMetadata.genre === 'Other') &&
         catalogMetadata.id.startsWith('/works/')
       ) {
         const details = await getWorkDetails(catalogMetadata.id);
         catalogMetadata = {
           ...catalogMetadata,
-          description: details.description,
+          cover: catalogMetadata.cover || details.cover,
+          description: catalogMetadata.description || details.description,
           genre:
             catalogMetadata.genre !== 'Other'
               ? catalogMetadata.genre
@@ -275,24 +311,43 @@ async function enrichLocalBook(
   }
 
   const metadata: EmbeddedMetadata = {
-    title: catalogMetadata?.title || embedded.title || book.title,
-    author: catalogMetadata?.author || embedded.author || book.author,
-    cover: catalogMetadata?.cover || embedded.cover || book.cover,
+    title:
+      catalogMetadata?.title || moonReaderMetadata?.title || embedded.title || book.title,
+    author:
+      catalogMetadata?.author || moonReaderMetadata?.author || embedded.author || book.author,
+    cover:
+      catalogMetadata?.cover ||
+      moonReaderMetadata?.detailCoverUri ||
+      moonReaderMetadata?.coverUri ||
+      embedded.cover ||
+      book.cover,
     description:
-      catalogMetadata?.description || embedded.description || book.description,
+      catalogMetadata?.description ||
+      moonReaderMetadata?.description ||
+      embedded.description ||
+      book.description,
     year: catalogMetadata?.year || embedded.year || book.year,
     genre:
       catalogMetadata?.genre && catalogMetadata.genre !== 'Other'
         ? catalogMetadata.genre
-        : embedded.genre || (book.genre !== 'Local' ? book.genre : ''),
+        : moonReaderMetadata?.genre ||
+          embedded.genre ||
+          (book.genre !== 'Local' ? book.genre : ''),
     rating: catalogMetadata?.rating,
     ratingsCount: catalogMetadata?.ratingsCount,
   };
-  const enriched = applyMetadata(book, metadata);
+  const fallbackCover =
+    moonReaderMetadata?.detailCoverUri ||
+    moonReaderMetadata?.coverUri ||
+    embedded.cover ||
+    book.fallbackCover ||
+    (book.cover && !book.cover.startsWith('http') ? book.cover : '');
+  const enriched = {
+    ...applyMetadata(book, metadata),
+    fallbackCover: fallbackCover || undefined,
+  };
   return {
-    book: warningMessages.length
-      ? { ...enriched, metadataPending: true, metadataUpdatedAt: undefined }
-      : enriched,
+    book: catalogLookupFailed ? { ...enriched, metadataPending: true } : enriched,
     sources: { embedded, catalog: catalogMetadata },
     warning: warningMessages.length
       ? { filename: book.local.filename, message: warningMessages.join(' ') }
@@ -305,9 +360,14 @@ export async function enrichLocalLibrary(
   onBook: (book: LibraryBook, sources: LocalMetadataSources) => void | Promise<void>
 ): Promise<MetadataWarning[]> {
   const warnings: MetadataWarning[] = [];
+  const retryFailuresBefore = Date.now() - METADATA_FAILURE_RETRY_MS;
   const staleBefore = Date.now() - METADATA_REFRESH_MS;
   const candidates = books.filter(
-    (book) => book.metadataPending || !book.metadataUpdatedAt || book.metadataUpdatedAt < staleBefore
+    (book) =>
+      !book.metadataUpdatedAt ||
+      book.metadataVersion !== LOCAL_METADATA_VERSION ||
+      book.metadataUpdatedAt < staleBefore ||
+      (book.metadataPending && book.metadataUpdatedAt < retryFailuresBefore)
   );
   for (let offset = 0; offset < candidates.length; offset += ENRICH_BATCH_SIZE) {
     const batch = candidates.slice(offset, offset + ENRICH_BATCH_SIZE);
@@ -319,7 +379,12 @@ export async function enrichLocalLibrary(
         if (result.value.warning) warnings.push(result.value.warning);
       } else {
         await onBook(
-          { ...batch[index], metadataPending: true, metadataUpdatedAt: undefined },
+          {
+            ...batch[index],
+            metadataPending: true,
+            metadataUpdatedAt: Date.now(),
+            metadataVersion: LOCAL_METADATA_VERSION,
+          },
           { embedded: {}, catalog: null }
         );
         warnings.push({

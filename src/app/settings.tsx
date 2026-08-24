@@ -12,8 +12,11 @@ import {
 } from 'react-native';
 
 import { clearZlibSession, useSettings } from '@/context/settings-context';
+import { useLibrary } from '@/context/library-context';
 import { isSafLocation, pickDownloadFolder } from '@/lib/download';
-import type { Settings } from '@/lib/settings';
+import { beginFolderPicker, endFolderPicker } from '@/lib/folder-picker-lock';
+import { validateProgressFolder } from '@/lib/progress-folder-provider';
+import { forgetProgressSyncFolder } from '@/lib/progress-sync';
 
 const DOMAINS = [
   { label: 'Auto (recommended)', value: '' },
@@ -50,6 +53,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 export default function SettingsScreen() {
   const router = useRouter();
   const { settings, update } = useSettings();
+  const { cloudLastSyncedAt, cloudSyncing, syncCloudProgress } = useLibrary();
 
   const [email, setEmail] = useState(settings.email);
   const [password, setPassword] = useState(settings.password);
@@ -71,35 +75,76 @@ export default function SettingsScreen() {
     }
   };
 
-  const chooseFolder = async () => {
+  const chooseFolder = async (
+    setting:
+      | 'localLibraryLocation'
+      | 'moonReaderBackupLocation'
+      | 'progressSyncLocation'
+  ) => {
     if (Platform.OS !== 'android') {
       Alert.alert(
         'Not supported here',
-        'Choosing a custom folder needs Android Storage Access Framework. On iOS, files are saved to the app’s Documents/downloads folder (visible in the Files app).'
+        setting === 'progressSyncLocation'
+          ? 'Choosing a shared progress folder is currently available on Android.'
+          : 'Choosing a custom folder needs Android Storage Access Framework. On iOS, files are saved to the app’s Documents/downloads folder (visible in the Files app).'
       );
       return;
     }
+    beginFolderPicker();
     try {
       const picked = await pickDownloadFolder(
-        isSafLocation(settings.downloadLocation) ? settings.downloadLocation : null
+        isSafLocation(settings[setting]) ? settings[setting] : null
       );
       if (!picked) return; // cancelled
-      await update({ downloadLocation: picked.uri });
+      if (setting === 'progressSyncLocation') {
+        await validateProgressFolder(picked.uri);
+      }
+      await update({ [setting]: picked.uri });
     } catch (err: any) {
       Alert.alert('Folder picker failed', err.message || String(err));
+    } finally {
+      endFolderPicker();
     }
   };
 
-  const resetFolder = async () => {
-    await update({ downloadLocation: null });
+  const resetFolder = async (
+    setting:
+      | 'localLibraryLocation'
+      | 'moonReaderBackupLocation'
+      | 'progressSyncLocation'
+  ) => {
+    if (setting === 'progressSyncLocation' && settings.progressSyncLocation) {
+      await forgetProgressSyncFolder(settings.progressSyncLocation);
+    }
+    await update({ [setting]: null });
   };
 
-  const locationLabel =
-    !settings.downloadLocation
-      ? 'App-private Documents/downloads'
-      : isSafLocation(settings.downloadLocation)
-        ? decodeURIComponent(settings.downloadLocation.split('/').pop() || settings.downloadLocation)
-        : settings.downloadLocation;
+  const locationLabel = (location: string | null, fallback: string) =>
+    !location
+      ? fallback
+      : isSafLocation(location)
+        ? decodeURIComponent(location.split('/').pop() || location)
+        : location;
+  const localLibraryLabel = locationLabel(
+    settings.localLibraryLocation,
+    'App-private Documents/downloads'
+  );
+  const moonReaderLabel = locationLabel(
+    settings.moonReaderBackupLocation,
+    'Not configured'
+  );
+  const progressSyncLabel = locationLabel(
+    settings.progressSyncLocation,
+    'Not configured'
+  );
+
+  const syncProgressNow = async () => {
+    try {
+      await syncCloudProgress();
+    } catch (err: any) {
+      Alert.alert('Progress sync failed', err.message || String(err));
+    }
+  };
 
   return (
     <View className="flex-1" style={{ backgroundColor: '#0b0b0f' }}>
@@ -131,7 +176,9 @@ export default function SettingsScreen() {
           </View>
           <Text className="text-xs text-neutral-400 leading-4">
             Stored in the device Keychain and used only to obtain a session. Advanced alternative:
-            paste remix_userid / remix_userkey from your browser cookies instead.
+            paste remix_userid / remix_userkey from your browser cookies instead. Expo Go and an
+            installed Reader build have separate encrypted storage, so credentials must be saved
+            again after installing Reader for the first time.
           </Text>
 
           <View className="gap-2">
@@ -171,20 +218,20 @@ export default function SettingsScreen() {
           </Pressable>
         </Section>
 
-        <Section title="Storage Folder">
+        <Section title="Book Library Folder">
           <Text numberOfLines={2} className="text-sm text-neutral-700 dark:text-neutral-200">
-            {locationLabel}
+            {localLibraryLabel}
           </Text>
           <View className="flex-row gap-2">
             <Pressable
-              onPress={chooseFolder}
+              onPress={() => chooseFolder('localLibraryLocation')}
               className="flex-1 h-11 rounded-xl items-center justify-center active:opacity-80" style={{ backgroundColor: '#8b7cf6' }}
             >
               <Text className="font-semibold text-white">Choose shared folder…</Text>
             </Pressable>
-            {settings.downloadLocation && (
+            {settings.localLibraryLocation && (
               <Pressable
-                onPress={resetFolder}
+                onPress={() => resetFolder('localLibraryLocation')}
                 className="h-11 px-4 rounded-xl items-center justify-center active:opacity-80" style={{ backgroundColor: '#17171c' }}
               >
                 <Text className="font-medium text-neutral-300">Reset</Text>
@@ -192,10 +239,85 @@ export default function SettingsScreen() {
             )}
           </View>
           <Text className="text-xs text-neutral-400 leading-4">
-            On Android, the system picker can grant access to any selectable shared folder,
-            including an existing e-reader folder. Android does not allow access to storage
-            roots or another app&apos;s Android/data folder.
+            Local EPUB, PDF and ebook files are indexed from this folder. New Z-Library
+            downloads are saved here too.
           </Text>
+        </Section>
+
+        <Section title="Moon+ Reader Backup Folder">
+          <Text numberOfLines={2} className="text-sm text-neutral-700 dark:text-neutral-200">
+            {moonReaderLabel}
+          </Text>
+          <View className="flex-row gap-2">
+            <Pressable
+              onPress={() => chooseFolder('moonReaderBackupLocation')}
+              className="flex-1 h-11 rounded-xl items-center justify-center active:opacity-80"
+              style={{ backgroundColor: '#8b7cf6' }}
+            >
+              <Text className="font-semibold text-white">Choose backup folder…</Text>
+            </Pressable>
+            {settings.moonReaderBackupLocation && (
+              <Pressable
+                onPress={() => resetFolder('moonReaderBackupLocation')}
+                className="h-11 px-4 rounded-xl items-center justify-center active:opacity-80"
+                style={{ backgroundColor: '#17171c' }}
+              >
+                <Text className="font-medium text-neutral-300">Reset</Text>
+              </Pressable>
+            )}
+          </View>
+          <Text className="text-xs text-neutral-400 leading-4">
+            Select Moon+ Reader&apos;s backup folder, commonly Books/.Moon+/Backup. The newest
+            .mrpro or cloud.backup file supplies its catalog, reading progress and history;
+            ebook files are never indexed from this setting.
+          </Text>
+        </Section>
+
+        <Section title="Progress Sync Folder">
+          <Text numberOfLines={2} className="text-sm text-neutral-700 dark:text-neutral-200">
+            {progressSyncLabel}
+          </Text>
+          <View className="flex-row gap-2">
+            <Pressable
+              onPress={() => chooseFolder('progressSyncLocation')}
+              className="flex-1 h-11 rounded-xl items-center justify-center active:opacity-80"
+              style={{ backgroundColor: '#8b7cf6' }}
+            >
+              <Text className="font-semibold text-white">Choose sync folder…</Text>
+            </Pressable>
+            {settings.progressSyncLocation && (
+              <Pressable
+                onPress={() => resetFolder('progressSyncLocation')}
+                className="h-11 px-4 rounded-xl items-center justify-center active:opacity-80"
+                style={{ backgroundColor: '#17171c' }}
+              >
+                <Text className="font-medium text-neutral-300">Disable</Text>
+              </Pressable>
+            )}
+          </View>
+          {settings.progressSyncLocation && (
+            <Pressable
+              onPress={syncProgressNow}
+              disabled={cloudSyncing}
+              className="h-11 rounded-xl flex-row gap-2 items-center justify-center border border-neutral-800 active:opacity-80 disabled:opacity-60"
+            >
+              {cloudSyncing && <ActivityIndicator size="small" color="#8b7cf6" />}
+              <Text className="font-medium text-neutral-300">
+                {cloudSyncing ? 'Syncing…' : 'Sync now'}
+              </Text>
+            </Pressable>
+          )}
+          <Text className="text-xs text-neutral-400 leading-4">
+            Choose a Google Drive folder directly, or a local folder mirrored by FolderSync.
+            Reader writes one file per device and keeps the furthest reading progress when the app
+            starts, returns to the foreground, or progress changes. Direct Drive access requires
+            an installed Reader build and is unavailable in Expo Go.
+          </Text>
+          {!!cloudLastSyncedAt && (
+            <Text className="text-xs text-neutral-500">
+              Last synced {new Date(cloudLastSyncedAt).toLocaleString()}
+            </Text>
+          )}
         </Section>
 
         <Section title="API Domain">

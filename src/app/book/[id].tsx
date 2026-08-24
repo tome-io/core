@@ -9,10 +9,15 @@ import {
   Pressable,
   ScrollView,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 
 import { RatingChip } from '@/components/rating-chip';
+import {
+  LibraryBookActions,
+  type LibraryAction,
+} from '@/components/library-book-actions';
 import { useLibrary } from '@/context/library-context';
 import { useSettings } from '@/context/settings-context';
 import { bookFilename, downloadBook, type DownloadProgress } from '@/lib/download';
@@ -21,6 +26,8 @@ import {
   fromZlibBook,
   type LibraryBook,
 } from '@/lib/library';
+import { loadLocalCatalogBook } from '@/lib/library-db';
+import { openInMoonReader } from '@/lib/moon-reader-launcher';
 import { getWorkDetails, type DiscoveryBook } from '@/lib/openlibrary';
 import { rankZlibMatches } from '@/lib/match';
 import { downloadHeaders, resolveDownload, searchBooks, type Book } from '@/lib/zlib';
@@ -68,13 +75,24 @@ function plainText(value: string): string {
 
 export default function BookDetailScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ id: string; item?: string; ext?: string; local?: string }>();
+  const { width } = useWindowDimensions();
+  const compactLayout = width < 700;
+  const params = useLocalSearchParams<{
+    id: string;
+    item?: string;
+    ext?: string;
+    local?: string;
+    localUri?: string;
+    moon?: string;
+  }>();
   const { settings } = useSettings();
   const {
     deleteLocalBook,
     downloaded,
     isOnReadingList,
+    markAsRead,
     recordDownload,
+    refreshBookMetadata,
     toggleReadingList,
   } = useLibrary();
 
@@ -83,22 +101,107 @@ export default function BookDetailScreen() {
   //  - ext:  came from an external recommendation (Open Library) — we look up
   //          matching Z-Library downloads and offer one button per option.
   //  - local: indexed from the user-selected library folder.
+  //  - moon:  known by Moon+ Reader but not necessarily stored in the local folder.
   const zlibBook = useMemo(() => parseParam<Book>(params.item), [params.item]);
-  const extBook = useMemo(() => parseParam<DiscoveryBook>(params.ext), [params.ext]);
+  const parsedMoonBook = useMemo(() => parseParam<LibraryBook>(params.moon), [params.moon]);
+  const moonBookParam = useMemo(() => {
+    if (!parsedMoonBook) return null;
+    const liveBook = downloaded.find((book) => book.key === parsedMoonBook.key);
+    return liveBook
+      ? {
+          ...parsedMoonBook,
+          ...liveBook,
+          moonReader: {
+            ...parsedMoonBook.moonReader,
+            ...liveBook.moonReader,
+            syncedAt:
+              liveBook.moonReader?.syncedAt ?? parsedMoonBook.moonReader?.syncedAt ?? Date.now(),
+          },
+        }
+      : parsedMoonBook;
+  }, [downloaded, parsedMoonBook]);
+  const extBookParam = useMemo(() => parseParam<DiscoveryBook>(params.ext), [params.ext]);
+  const extBook = useMemo<DiscoveryBook | null>(() => {
+    if (extBookParam) return extBookParam;
+    if (!moonBookParam) return null;
+    return {
+      id: moonBookParam.discovery?.id ?? moonBookParam.id,
+      title: moonBookParam.title,
+      author: moonBookParam.author,
+      cover: moonBookParam.cover,
+      description: moonBookParam.description,
+      year: String(moonBookParam.year ?? ''),
+      genre: moonBookParam.genre,
+      rating: moonBookParam.rating,
+      ratingsCount: moonBookParam.ratingsCount,
+    };
+  }, [extBookParam, moonBookParam]);
   const localBookParam = useMemo(() => parseParam<LibraryBook>(params.local), [params.local]);
+  const [persistedLocalBook, setPersistedLocalBook] = useState<LibraryBook | null>(null);
+  const [localCatalogError, setLocalCatalogError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!localBookParam && !params.localUri) {
+      setPersistedLocalBook(null);
+      setLocalCatalogError(null);
+      return;
+    }
+    let active = true;
+    setLocalCatalogError(null);
+    void loadLocalCatalogBook(
+      localBookParam?.key ?? params.id ?? null,
+      params.localUri ?? localBookParam?.local?.uri ?? null
+    )
+      .then((book) => {
+        if (active) setPersistedLocalBook(book);
+      })
+      .catch((err) => {
+        if (active) {
+          setLocalCatalogError(
+            `Local catalog lookup failed: ${err.message || String(err)}`
+          );
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [localBookParam, params.id, params.localUri]);
   const localBook = useMemo(() => {
-    if (!localBookParam) return null;
-    return (
-      downloaded.find(
-        (book) =>
-          !!book.local &&
-          (book.key === params.id ||
-            book.id === params.id ||
-            book.key === localBookParam.key ||
-            book.local.uri === localBookParam.local?.uri)
-      ) ?? localBookParam
+    if (!localBookParam && !params.localUri) return null;
+    const liveBook = downloaded.find(
+      (book) =>
+        !!book.local &&
+        (book.key === params.id ||
+          book.id === params.id ||
+          book.key === localBookParam?.key ||
+          book.local.uri === params.localUri ||
+          book.local.uri === localBookParam?.local?.uri)
     );
-  }, [downloaded, localBookParam, params.id]);
+    if (!persistedLocalBook) return liveBook ?? localBookParam;
+    const moonReader =
+      persistedLocalBook.moonReader ?? liveBook?.moonReader ?? localBookParam?.moonReader;
+    return {
+      ...localBookParam,
+      ...liveBook,
+      ...persistedLocalBook,
+      cover: persistedLocalBook.cover || liveBook?.cover || localBookParam?.cover || '',
+      description:
+        persistedLocalBook.description ||
+        liveBook?.description ||
+        localBookParam?.description ||
+        '',
+      progress:
+        persistedLocalBook.progress ?? liveBook?.progress ?? localBookParam?.progress,
+      isRead: persistedLocalBook.isRead ?? liveBook?.isRead ?? localBookParam?.isRead,
+      moonReader: moonReader
+        ? {
+            ...localBookParam?.moonReader,
+            ...liveBook?.moonReader,
+            ...persistedLocalBook.moonReader,
+            syncedAt: moonReader.syncedAt,
+          }
+        : undefined,
+    };
+  }, [downloaded, localBookParam, params.id, params.localUri, persistedLocalBook]);
   const isExt = !!extBook && !zlibBook;
 
   const goBack = useCallback(() => {
@@ -110,13 +213,14 @@ export default function BookDetailScreen() {
   const [options, setOptions] = useState<Book[] | null>(null);
   const [optError, setOptError] = useState<string | null>(null);
   const [phases, setPhases] = useState<Record<string, Phase>>({});
-  const [description, setDescription] = useState('');
+  const [remoteDescription, setRemoteDescription] = useState('');
+  const [failedHeaderCovers, setFailedHeaderCovers] = useState<string[]>([]);
   const [genreLabel, setGenreLabel] = useState('');
   const [metadataError, setMetadataError] = useState<string | null>(null);
   const [libraryBusy, setLibraryBusy] = useState(false);
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const [descriptionOpen, setDescriptionOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [busyAction, setBusyAction] = useState<LibraryAction | null>(null);
 
   useEffect(() => {
     if (!isExt || !extBook) return;
@@ -147,7 +251,7 @@ export default function BookDetailScreen() {
     let cancelled = false;
 
     const suppliedDescription = plainText(extBook.description);
-    setDescription(suppliedDescription);
+    setRemoteDescription(suppliedDescription);
     setGenreLabel(extBook.genre);
     setMetadataError(null);
 
@@ -157,7 +261,7 @@ export default function BookDetailScreen() {
       if (needsDetails && extBook.id.startsWith('/works/')) {
         const details = await getWorkDetails(extBook.id);
         if (cancelled) return;
-        if (details.description) setDescription(plainText(details.description));
+        if (details.description) setRemoteDescription(plainText(details.description));
         if ((!extBook.genre || extBook.genre === 'Open Library') && details.subjects.length) {
           setGenreLabel(details.subjects.slice(0, 3).join(', '));
         }
@@ -177,17 +281,35 @@ export default function BookDetailScreen() {
     if (!extBook) return null;
     return {
       ...extBook,
-      description: description || extBook.description,
+      description: remoteDescription || extBook.description,
       genre: genreLabel || extBook.genre || 'Other',
     };
-  }, [description, extBook, genreLabel]);
+  }, [extBook, genreLabel, remoteDescription]);
 
   const readingListBook = useMemo<LibraryBook | null>(() => {
+    if (moonBookParam) {
+      return {
+        ...moonBookParam,
+        ...(currentDiscovery
+          ? {
+              title: currentDiscovery.title,
+              author: currentDiscovery.author,
+              cover: currentDiscovery.cover,
+              description: currentDiscovery.description,
+              year: currentDiscovery.year,
+              genre: currentDiscovery.genre,
+              rating: currentDiscovery.rating,
+              ratingsCount: currentDiscovery.ratingsCount,
+              discovery: currentDiscovery,
+            }
+          : {}),
+      };
+    }
     if (currentDiscovery) return fromDiscoveryBook(currentDiscovery);
     if (zlibBook) return fromZlibBook(zlibBook);
     if (localBook) return localBook;
     return null;
-  }, [currentDiscovery, localBook, zlibBook]);
+  }, [currentDiscovery, localBook, moonBookParam, zlibBook]);
 
   const onReadingList = readingListBook
     ? isOnReadingList(readingListBook.key)
@@ -210,7 +332,13 @@ export default function BookDetailScreen() {
     (book: Book): LibraryBook =>
       fromZlibBook(
         book,
-        currentDiscovery
+        moonBookParam
+          ? {
+              ...moonBookParam,
+              zlib: book,
+              discovery: currentDiscovery ?? moonBookParam.discovery,
+            }
+          : currentDiscovery
           ? {
               title: currentDiscovery.title,
               author: currentDiscovery.author,
@@ -224,7 +352,18 @@ export default function BookDetailScreen() {
             }
           : undefined
       ),
-    [currentDiscovery]
+    [currentDiscovery, moonBookParam]
+  );
+
+  const downloadFilename = useCallback(
+    (book: Book) => {
+      const sourceFilename = moonBookParam?.moonReader?.sourceFilename;
+      const sourceFormat = sourceFilename?.split('.').pop()?.toLowerCase();
+      return sourceFilename && sourceFormat === book.format?.toLowerCase()
+        ? sourceFilename
+        : bookFilename(book);
+    },
+    [moonBookParam]
   );
 
   const setPhase = useCallback((key: string, phase: Phase) => {
@@ -241,9 +380,9 @@ export default function BookDetailScreen() {
         setPhase(key, { kind: 'downloading', progress: { bytesWritten: 0, totalBytes: 0 } });
         const uri = await downloadBook(
           url,
-          bookFilename(book),
+          downloadFilename(book),
           headers,
-          settings.downloadLocation,
+          settings.localLibraryLocation,
           (progress) => setPhase(key, { kind: 'downloading', progress })
         );
         setPhase(key, { kind: 'done', uri });
@@ -256,7 +395,13 @@ export default function BookDetailScreen() {
         setPhase(key, { kind: 'error', message: err.message || String(err) });
       }
     },
-    [downloadedLibraryBook, recordDownload, setPhase, settings.downloadLocation]
+    [
+      downloadFilename,
+      downloadedLibraryBook,
+      recordDownload,
+      setPhase,
+      settings.localLibraryLocation,
+    ]
   );
 
   // ── single zlib mode ──
@@ -272,7 +417,7 @@ export default function BookDetailScreen() {
         url,
         bookFilename(zlibBook),
         headers,
-        settings.downloadLocation,
+        settings.localLibraryLocation,
         (progress) => setSinglePhase({ kind: 'downloading', progress })
       );
       setSinglePhase({ kind: 'done', uri });
@@ -284,7 +429,22 @@ export default function BookDetailScreen() {
     } catch (err: any) {
       setSinglePhase({ kind: 'error', message: err.message || String(err) });
     }
-  }, [downloadedLibraryBook, recordDownload, settings.downloadLocation, zlibBook]);
+  }, [downloadedLibraryBook, recordDownload, settings.localLibraryLocation, zlibBook]);
+
+  const runLibraryAction = useCallback(
+    async (action: LibraryAction, operation: () => Promise<void>) => {
+      setBusyAction(action);
+      setLibraryError(null);
+      try {
+        await operation();
+      } catch (err: any) {
+        setLibraryError(err.message || String(err));
+      } finally {
+        setBusyAction(null);
+      }
+    },
+    []
+  );
 
   if (!zlibBook && !extBook && !localBook) {
     return (
@@ -302,7 +462,15 @@ export default function BookDetailScreen() {
     zlibBook
       ? [zlibBook.format?.toUpperCase(), formatSize(zlibBook.size), zlibBook.year, zlibBook.language, zlibBook.publisher].filter(Boolean)
       : extBook
-        ? [genreLabel || extBook.genre, extBook.year].filter(Boolean)
+        ? [
+            genreLabel || extBook.genre,
+            extBook.year,
+            moonBookParam
+              ? moonBookParam.moonReader?.availableLocally
+                ? 'Local file'
+                : 'Not stored locally'
+              : '',
+          ].filter(Boolean)
         : [
             localBook?.format?.toUpperCase(),
             formatSize(localBook?.size ?? 0),
@@ -316,13 +484,129 @@ export default function BookDetailScreen() {
             'Local file',
           ].filter(Boolean);
   const headerDescription = isExt
-    ? description
+    ? remoteDescription
     : zlibBook?.description
       ? plainText(zlibBook.description)
       : localBook?.description
         ? plainText(localBook.description)
         : '';
-  const headerProgress = localBook?.isRead ? 100 : localBook?.progress;
+  const trackedBook = localBook ?? moonBookParam;
+  const libraryActionBook = localBook ?? moonBookParam;
+  const headerProgress = trackedBook?.isRead ? 100 : trackedBook?.progress;
+  const headerCover =
+    localBook?.moonReader?.coverUri === header.cover
+      ? localBook.moonReader.detailCoverUri || header.cover
+      : header.cover || localBook?.moonReader?.detailCoverUri;
+  const headerCoverCandidates = [
+    headerCover,
+    localBook?.fallbackCover,
+    localBook?.moonReader?.detailCoverUri,
+    localBook?.moonReader?.coverUri,
+  ].filter(
+    (cover, index, covers): cover is string => !!cover && covers.indexOf(cover) === index
+  );
+  const activeHeaderCover = headerCoverCandidates.find(
+    (cover) => !failedHeaderCovers.includes(cover)
+  );
+  const coverWidth = compactLayout ? Math.min(180, Math.max(144, width * 0.42)) : 128;
+  const coverHeight = Math.round(coverWidth * 1.5);
+
+  const cover = (
+    <View
+      style={{ width: coverWidth, height: coverHeight }}
+      className="rounded-xl overflow-hidden bg-[#232329]"
+    >
+      {activeHeaderCover ? (
+        <Image
+          source={{ uri: activeHeaderCover }}
+          style={{ width: '100%', height: '100%' }}
+          contentFit="contain"
+          cachePolicy="memory-disk"
+          recyclingKey={activeHeaderCover}
+          onError={() =>
+            setFailedHeaderCovers((current) =>
+              current.includes(activeHeaderCover)
+                ? current
+                : [...current, activeHeaderCover]
+            )
+          }
+        />
+      ) : (
+        <View className="flex-1 items-center justify-center">
+          <Text className="text-3xl">📚</Text>
+        </View>
+      )}
+      <RatingChip rating={extBook?.rating ?? trackedBook?.rating} />
+      {typeof headerProgress === 'number' && headerProgress > 0 && (
+        <View className="absolute left-2 right-2 bottom-2 h-1.5 overflow-hidden rounded-full bg-black/70">
+          <View
+            className="h-full rounded-full"
+            style={{
+              width: `${Math.max(0, Math.min(100, headerProgress))}%`,
+              backgroundColor: trackedBook?.isRead ? '#059669' : '#8b7cf6',
+            }}
+          />
+        </View>
+      )}
+    </View>
+  );
+
+  const readingListButton = (
+    <Pressable
+      onPress={toggleSaved}
+      disabled={libraryBusy}
+      accessibilityRole="button"
+      accessibilityLabel={onReadingList ? 'Remove from reading list' : 'Add to reading list'}
+      className={
+        compactLayout
+          ? 'h-11 mt-4 self-stretch rounded-lg flex-row items-center justify-center gap-2 border active:opacity-75 disabled:opacity-60'
+          : 'h-9 px-3 rounded-lg flex-row items-center justify-center gap-2 border active:opacity-75 disabled:opacity-60'
+      }
+      style={{
+        backgroundColor: onReadingList ? 'rgba(139,124,246,0.16)' : 'transparent',
+        borderColor: onReadingList ? '#8b7cf6' : '#34343d',
+      }}
+    >
+      {libraryBusy ? (
+        <ActivityIndicator color="#8b7cf6" size="small" />
+      ) : (
+        <Feather
+          name={onReadingList ? 'bookmark' : 'plus'}
+          color={onReadingList ? '#8b7cf6' : '#b4b4bf'}
+          size={15}
+        />
+      )}
+      <Text
+        className="text-xs font-semibold"
+        style={{ color: onReadingList ? '#8b7cf6' : '#d4d4d8' }}
+      >
+        {onReadingList ? 'In reading list' : 'Add to reading list'}
+      </Text>
+    </Pressable>
+  );
+
+  const descriptionPreview = !!headerDescription ? (
+    <Pressable
+      onPress={() => setDescriptionOpen(true)}
+      accessibilityRole="button"
+      accessibilityLabel="Read full description"
+      className={
+        compactLayout
+          ? 'mt-5 active:opacity-75'
+          : 'flex-1 mt-3 overflow-hidden active:opacity-75'
+      }
+    >
+      <Text numberOfLines={compactLayout ? 6 : 5} className="text-sm text-neutral-300 leading-5">
+        {headerDescription}
+      </Text>
+    </Pressable>
+  ) : isExt && !metadataError ? (
+    <View className={compactLayout ? 'mt-5 gap-2' : 'flex-1 mt-4 overflow-hidden gap-2'}>
+      <View className="h-2.5 w-full rounded-full bg-[#1b1b22]" />
+      <View className="h-2.5 w-[92%] rounded-full bg-[#1b1b22]" />
+      <View className="h-2.5 w-[68%] rounded-full bg-[#1b1b22]" />
+    </View>
+  ) : null;
 
   return (
     <>
@@ -342,92 +626,43 @@ export default function BookDetailScreen() {
           </Text>
         </View>
 
-        <View className="px-6 pt-2 flex-row gap-5">
-        <View style={{ width: 128, height: 192 }} className="rounded-xl overflow-hidden bg-[#232329]">
-          {header.cover ? (
-            <Image
-              source={{ uri: header.cover }}
-              style={{ width: '100%', height: '100%' }}
-              contentFit="contain"
-              cachePolicy="memory-disk"
-              recyclingKey={header.cover}
-            />
-          ) : (
-            <View className="flex-1 items-center justify-center">
-              <Text className="text-3xl">📚</Text>
-            </View>
-          )}
-          <RatingChip rating={extBook?.rating ?? localBook?.rating} />
-          {typeof headerProgress === 'number' && headerProgress > 0 && (
-            <View className="absolute left-2 right-2 bottom-2 h-1.5 overflow-hidden rounded-full bg-black/70">
-              <View
-                className="h-full rounded-full bg-[#8b7cf6]"
-                style={{ width: `${Math.max(0, Math.min(100, headerProgress))}%` }}
-              />
-            </View>
-          )}
-        </View>
-        <View className="flex-1 pt-1" style={{ height: 192 }}>
-          <View className="flex-row items-center justify-between gap-4">
-            <View className="flex-1">
-              <Text className="text-sm text-neutral-400">{header.author}</Text>
+        {compactLayout ? (
+          <View className="px-5 pt-2">
+            <View className="items-center">{cover}</View>
+            <View className="mt-5">
+              {!!header.author && (
+                <Text className="text-center text-sm text-neutral-400">{header.author}</Text>
+              )}
               {meta.length > 0 && (
-                <Text className="text-xs uppercase tracking-wide text-neutral-400 mt-2 leading-4">
+                <Text className="mt-2 text-center text-xs uppercase tracking-wide text-neutral-400 leading-4">
                   {meta.join(' · ')}
                 </Text>
               )}
+              {readingListButton}
+              {descriptionPreview}
             </View>
-            <Pressable
-              onPress={toggleSaved}
-              disabled={libraryBusy}
-              accessibilityRole="button"
-              accessibilityLabel={onReadingList ? 'Remove from reading list' : 'Add to reading list'}
-              className="h-9 px-3 rounded-lg flex-row items-center justify-center gap-2 border active:opacity-75 disabled:opacity-60"
-              style={{
-                backgroundColor: onReadingList ? 'rgba(139,124,246,0.16)' : 'transparent',
-                borderColor: onReadingList ? '#8b7cf6' : '#34343d',
-              }}
-            >
-              {libraryBusy ? (
-                <ActivityIndicator color="#8b7cf6" size="small" />
-              ) : (
-                <Feather
-                  name={onReadingList ? 'bookmark' : 'plus'}
-                  color={onReadingList ? '#8b7cf6' : '#b4b4bf'}
-                  size={15}
-                />
-              )}
-              <Text
-                className="text-xs font-semibold"
-                style={{ color: onReadingList ? '#8b7cf6' : '#d4d4d8' }}
-              >
-                {onReadingList ? 'In reading list' : 'Add to reading list'}
-              </Text>
-            </Pressable>
           </View>
-          {!!headerDescription && (
-            <Pressable
-              onPress={() => setDescriptionOpen(true)}
-              accessibilityRole="button"
-              accessibilityLabel="Read full description"
-              className="flex-1 mt-3 overflow-hidden active:opacity-75"
-            >
-              <Text numberOfLines={5} className="text-sm text-neutral-300 leading-5">
-                {headerDescription}
-              </Text>
-            </Pressable>
-          )}
-          {isExt && !headerDescription && !metadataError && (
-            <View className="flex-1 mt-4 gap-2 overflow-hidden">
-              <View className="h-2.5 w-full rounded-full bg-[#1b1b22]" />
-              <View className="h-2.5 w-[92%] rounded-full bg-[#1b1b22]" />
-              <View className="h-2.5 w-[68%] rounded-full bg-[#1b1b22]" />
+        ) : (
+          <View className="px-6 pt-2 flex-row gap-5">
+            {cover}
+            <View className="flex-1 pt-1" style={{ height: coverHeight }}>
+              <View className="flex-row items-center justify-between gap-4">
+                <View className="flex-1">
+                  <Text className="text-sm text-neutral-400">{header.author}</Text>
+                  {meta.length > 0 && (
+                    <Text className="text-xs uppercase tracking-wide text-neutral-400 mt-2 leading-4">
+                      {meta.join(' · ')}
+                    </Text>
+                  )}
+                </View>
+                {readingListButton}
+              </View>
+              {descriptionPreview}
             </View>
-          )}
-        </View>
-      </View>
+          </View>
+        )}
 
-      {(metadataError || libraryError) && (
+      {(metadataError || libraryError || localCatalogError) && (
         <View className="px-6 mt-3 gap-1">
           {!!metadataError && (
             <Text className="text-xs text-red-400 leading-4">
@@ -436,6 +671,9 @@ export default function BookDetailScreen() {
           )}
           {!!libraryError && (
             <Text className="text-xs text-red-400 leading-4">{libraryError}</Text>
+          )}
+          {!!localCatalogError && (
+            <Text className="text-xs text-red-400 leading-4">{localCatalogError}</Text>
           )}
         </View>
       )}
@@ -450,85 +688,91 @@ export default function BookDetailScreen() {
         </View>
       )}
 
+      {!!trackedBook?.moonReader && typeof trackedBook.progress === 'number' && (
+        <View className="px-6 mt-8 gap-2">
+          <View className="flex-row items-center justify-between gap-4">
+            <Text className="text-xs font-bold uppercase tracking-widest text-neutral-400">
+              Moon+ Reader progress
+            </Text>
+            <Text className="text-xs font-semibold text-neutral-300">
+              {trackedBook.isRead ? 'Read' : `${Math.round(trackedBook.progress)}%`}
+            </Text>
+          </View>
+          <View className="h-1.5 overflow-hidden rounded-full bg-[#232329]">
+            <View
+              className="h-full rounded-full"
+              style={{
+                width: `${Math.max(0, Math.min(100, trackedBook.progress))}%`,
+                backgroundColor: trackedBook.isRead ? '#059669' : '#8b7cf6',
+              }}
+            />
+          </View>
+          <Text className="text-xs text-neutral-500">
+            {[
+              trackedBook.readingTimeMs
+                ? `${Math.round(trackedBook.readingTimeMs / 360000) / 10} hours read`
+                : '',
+              trackedBook.wordsRead
+                ? `${trackedBook.wordsRead.toLocaleString()} words`
+                : '',
+              trackedBook.lastReadAt
+                ? `Last read ${new Date(trackedBook.lastReadAt).toLocaleDateString()}`
+                : '',
+              `Backup ${new Date(trackedBook.moonReader.syncedAt).toLocaleDateString()}`,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </Text>
+        </View>
+      )}
+
+      {!!libraryActionBook && (
+        <View className="px-6 mt-8 gap-3">
+          <Text className="text-xs font-bold uppercase tracking-widest text-neutral-400">
+            Library actions
+          </Text>
+          <LibraryBookActions
+            compact
+            book={libraryActionBook}
+            busyAction={busyAction}
+            onOpen={() =>
+              void runLibraryAction('open', () => openInMoonReader(libraryActionBook))
+            }
+            onDelete={() => {
+              if (!localBook) return;
+              Alert.alert(
+                'Delete local file?',
+                `This permanently deletes “${localBook.title}” from the selected storage folder.`,
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: () =>
+                      void runLibraryAction('delete', async () => {
+                        await deleteLocalBook(localBook);
+                        router.replace('/library');
+                      }),
+                  },
+                ]
+              );
+            }}
+            onMarkRead={() =>
+              void runLibraryAction('read', () => markAsRead(libraryActionBook))
+            }
+            onRefreshMetadata={() =>
+              void runLibraryAction('metadata', () => refreshBookMetadata(libraryActionBook))
+            }
+          />
+        </View>
+      )}
+
       {!!localBook?.fileUri && (
         <View className="px-6 mt-8 gap-5">
-          {localBook.moonReader && typeof localBook.progress === 'number' && (
-            <View className="gap-2">
-              <View className="flex-row items-center justify-between gap-4">
-                <Text className="text-xs font-bold uppercase tracking-widest text-neutral-400">
-                  Moon+ Reader progress
-                </Text>
-                <Text className="text-xs font-semibold text-neutral-300">
-                  {localBook.isRead ? 'Read' : `${Math.round(localBook.progress)}%`}
-                </Text>
-              </View>
-              <View className="h-1.5 overflow-hidden rounded-full bg-[#232329]">
-                <View
-                  className="h-full rounded-full bg-[#8b7cf6]"
-                  style={{ width: `${Math.max(0, Math.min(100, localBook.progress))}%` }}
-                />
-              </View>
-              <Text className="text-xs text-neutral-500">
-                {[
-                  localBook.readingTimeMs
-                    ? `${Math.round(localBook.readingTimeMs / 360000) / 10} hours read`
-                    : '',
-                  localBook.wordsRead ? `${localBook.wordsRead.toLocaleString()} words` : '',
-                  localBook.lastReadAt
-                    ? `Last read ${new Date(localBook.lastReadAt).toLocaleDateString()}`
-                    : '',
-                  `Backup ${new Date(localBook.moonReader.syncedAt).toLocaleDateString()}`,
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </Text>
-            </View>
-          )}
-
           <View className="gap-2">
-            <View className="flex-row items-center justify-between gap-4">
-              <Text className="text-xs font-bold uppercase tracking-widest text-neutral-400">
-                Stored locally
-              </Text>
-              <Pressable
-                onPress={() => {
-                  Alert.alert(
-                    'Delete source file?',
-                    `This permanently deletes “${localBook.title}” from the selected storage folder.`,
-                    [
-                      { text: 'Cancel', style: 'cancel' },
-                      {
-                        text: 'Delete',
-                        style: 'destructive',
-                        onPress: async () => {
-                          setDeleting(true);
-                          setLibraryError(null);
-                          try {
-                            await deleteLocalBook(localBook);
-                            router.replace('/library');
-                          } catch (err: any) {
-                            setLibraryError(err.message || String(err));
-                          } finally {
-                            setDeleting(false);
-                          }
-                        },
-                      },
-                    ]
-                  );
-                }}
-                disabled={deleting}
-                accessibilityRole="button"
-                accessibilityLabel="Delete source file"
-                className="h-9 px-3 rounded-lg flex-row items-center gap-2 border border-red-900/70 active:opacity-75 disabled:opacity-50"
-              >
-                {deleting ? (
-                  <ActivityIndicator size="small" color="#f87171" />
-                ) : (
-                  <Feather name="trash-2" size={14} color="#f87171" />
-                )}
-                <Text className="text-xs font-semibold text-red-400">Delete file</Text>
-              </Pressable>
-            </View>
+            <Text className="text-xs font-bold uppercase tracking-widest text-neutral-400">
+              Stored locally
+            </Text>
             <Text numberOfLines={2} className="text-xs leading-4 text-neutral-500">
               {localBook.fileUri}
             </Text>
@@ -554,7 +798,11 @@ export default function BookDetailScreen() {
             <View className="gap-1">
               <Text className="text-sm text-red-500">{optError}</Text>
               <Text className="text-xs text-neutral-400 leading-4">
-                Add your Z-Library account in Settings to fetch download options.
+                {!settings.email && !settings.remixUserId
+                  ? 'Add your Z-Library account in Settings to fetch download options.'
+                  : optError.includes('temporarily blocked')
+                    ? 'Z-Library has rate-limited new sessions. Wait before retrying, or save current remix keys in Settings.'
+                    : 'Check the account and API domain in Settings, then try again.'}
               </Text>
             </View>
           )}

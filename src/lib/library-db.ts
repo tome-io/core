@@ -1,7 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system/legacy';
 import { openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
 
+import { bookIdentity } from './book-metadata';
 import type { LibraryBook, LibraryState } from './library';
+import {
+  mergeProgressRecords,
+  type ProgressSyncRecord,
+} from './progress-sync-model';
 
 const DATABASE_NAME = 'reader-library.db';
 const LEGACY_LIBRARY_KEY = 'reader_library_v1';
@@ -13,15 +19,25 @@ interface CatalogRow {
   book_json: string;
 }
 
-interface LocalCatalogRow extends CatalogRow {
-  uri: string;
-  fingerprint: string;
+interface ProgressCatalogRow extends CatalogRow {
   progress: number | null;
   is_read: number | null;
   reading_time_ms: number | null;
   words_read: number | null;
   last_read_at: number | null;
   progress_synced_at: number | null;
+  moonreader_json: string | null;
+  override_is_read: number | null;
+}
+
+interface LocalCatalogRow extends ProgressCatalogRow {
+  uri: string;
+  fingerprint: string;
+}
+
+interface ProgressSnapshotRow extends ProgressCatalogRow {
+  book_key: string;
+  override_updated_at: number | null;
 }
 
 let databasePromise: Promise<SQLiteDatabase> | null = null;
@@ -34,8 +50,44 @@ function parseBook(value: string): LibraryBook {
   return parsed as LibraryBook;
 }
 
+async function withValidGeneratedCover(book: LibraryBook): Promise<LibraryBook> {
+  if (book.cover?.includes('covers.openlibrary.org/b/isbn/')) {
+    return {
+      ...book,
+      cover:
+        book.fallbackCover ||
+        book.moonReader?.detailCoverUri ||
+        book.moonReader?.coverUri ||
+        '',
+      metadataPending: true,
+      metadataUpdatedAt: undefined,
+      metadataVersion: undefined,
+    };
+  }
+  if (!book.cover?.startsWith('file:') || !book.cover.includes('/library-covers/')) return book;
+  const info = await FileSystem.getInfoAsync(book.cover);
+  if (info.exists) return book;
+  return {
+    ...book,
+    cover: book.moonReader?.coverUri ?? '',
+    metadataPending: true,
+    metadataUpdatedAt: undefined,
+  };
+}
+
 function fingerprint(book: LibraryBook): string {
   return book.local ? `${book.local.size || 0}:${book.local.modificationTime || 0}` : '';
+}
+
+function withoutMoonReaderData(book: LibraryBook): LibraryBook {
+  const cleaned = { ...book };
+  delete cleaned.moonReader;
+  delete cleaned.progress;
+  delete cleaned.isRead;
+  delete cleaned.readingTimeMs;
+  delete cleaned.wordsRead;
+  delete cleaned.lastReadAt;
+  return cleaned;
 }
 
 async function upsertBook(database: SQLiteDatabase, book: LibraryBook): Promise<void> {
@@ -140,6 +192,15 @@ async function initializeDatabase(): Promise<SQLiteDatabase> {
     );
     CREATE INDEX IF NOT EXISTS local_files_directory ON local_files(directory_key);
 
+    CREATE TABLE IF NOT EXISTS moonreader_items (
+      source_key TEXT NOT NULL,
+      filename TEXT NOT NULL,
+      book_key TEXT NOT NULL REFERENCES catalog_books(book_key) ON DELETE CASCADE,
+      sort_at INTEGER NOT NULL,
+      PRIMARY KEY (source_key, filename)
+    );
+    CREATE INDEX IF NOT EXISTS moonreader_items_source ON moonreader_items(source_key, sort_at DESC);
+
     CREATE TABLE IF NOT EXISTS metadata_sources (
       book_key TEXT NOT NULL REFERENCES catalog_books(book_key) ON DELETE CASCADE,
       source TEXT NOT NULL,
@@ -158,6 +219,12 @@ async function initializeDatabase(): Promise<SQLiteDatabase> {
       words_read INTEGER,
       last_read_at INTEGER,
       synced_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS reading_overrides (
+      book_key TEXT PRIMARY KEY NOT NULL REFERENCES catalog_books(book_key) ON DELETE CASCADE,
+      is_read INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS sync_state (
@@ -179,7 +246,7 @@ async function initializeDatabase(): Promise<SQLiteDatabase> {
       value TEXT NOT NULL
     );
 
-    PRAGMA user_version = 1;
+    PRAGMA user_version = 3;
   `);
   await migrateLegacyLibrary(database);
   await database.runAsync('DELETE FROM content_cache WHERE expires_at <= ?', Date.now());
@@ -204,7 +271,7 @@ async function loadCollection(collection: string): Promise<LibraryBook[]> {
      ORDER BY collections.sort_at DESC`,
     collection
   );
-  return rows.map((row) => parseBook(row.book_json));
+  return Promise.all(rows.map((row) => withValidGeneratedCover(parseBook(row.book_json))));
 }
 
 export async function loadPersistedLibrary(): Promise<LibraryState> {
@@ -252,24 +319,32 @@ export async function savePersistedLibrary(state: LibraryState): Promise<void> {
       DELETE FROM catalog_books
       WHERE book_key NOT IN (SELECT book_key FROM collections)
         AND book_key NOT IN (SELECT book_key FROM local_files)
+        AND book_key NOT IN (SELECT book_key FROM moonreader_items)
     `);
   });
 }
 
-function withProgress(row: LocalCatalogRow): LibraryBook {
-  const book = parseBook(row.book_json);
-  if (row.progress == null) return book;
+function withProgress(row: ProgressCatalogRow): LibraryBook {
+  const book = withoutMoonReaderData(parseBook(row.book_json));
+  const moonReader = row.moonreader_json
+    ? JSON.parse(row.moonreader_json) as LibraryBook['moonReader']
+    : undefined;
+  const manuallyRead = row.override_is_read === 1;
+  if (row.progress == null) {
+    return {
+      ...book,
+      ...(moonReader ? { moonReader } : {}),
+      ...(manuallyRead ? { isRead: true, progress: 100 } : {}),
+    };
+  }
   return {
     ...book,
-    progress: row.progress,
-    isRead: row.is_read === 1,
+    progress: manuallyRead ? 100 : row.progress,
+    isRead: manuallyRead || row.is_read === 1,
     readingTimeMs: row.reading_time_ms ?? undefined,
     wordsRead: row.words_read ?? undefined,
     lastReadAt: row.last_read_at ?? undefined,
-    moonReader: {
-      ...book.moonReader,
-      syncedAt: row.progress_synced_at ?? book.moonReader?.syncedAt ?? Date.now(),
-    },
+    moonReader: moonReader ?? { syncedAt: row.progress_synced_at ?? Date.now() },
   };
 }
 
@@ -279,32 +354,88 @@ export async function loadLocalCatalog(directoryKey: string): Promise<LibraryBoo
     `SELECT files.uri, files.fingerprint, books.book_json,
             progress.progress, progress.is_read, progress.reading_time_ms,
             progress.words_read, progress.last_read_at,
-            progress.synced_at AS progress_synced_at
+            progress.synced_at AS progress_synced_at,
+            moon.payload_json AS moonreader_json,
+            manual.is_read AS override_is_read
      FROM local_files AS files
      JOIN catalog_books AS books ON books.book_key = files.book_key
      LEFT JOIN reading_progress AS progress ON progress.book_key = files.book_key
+     LEFT JOIN metadata_sources AS moon
+       ON moon.book_key = files.book_key AND moon.source = 'moonreader'
+     LEFT JOIN reading_overrides AS manual ON manual.book_key = files.book_key
      WHERE files.directory_key = ?
      ORDER BY files.modification_time DESC`,
     directoryKey
   );
-  return rows.map(withProgress);
+  return Promise.all(rows.map((row) => withValidGeneratedCover(withProgress(row))));
+}
+
+export async function loadMoonReaderCatalog(sourceKey: string): Promise<LibraryBook[]> {
+  const database = await getLibraryDatabase();
+  const rows = await database.getAllAsync<ProgressCatalogRow>(
+    `SELECT books.book_json,
+            progress.progress, progress.is_read, progress.reading_time_ms,
+            progress.words_read, progress.last_read_at,
+            progress.synced_at AS progress_synced_at,
+            source.payload_json AS moonreader_json,
+            manual.is_read AS override_is_read
+     FROM moonreader_items AS moon
+     JOIN catalog_books AS books ON books.book_key = moon.book_key
+     LEFT JOIN reading_progress AS progress ON progress.book_key = moon.book_key
+     LEFT JOIN metadata_sources AS source
+       ON source.book_key = moon.book_key AND source.source = 'moonreader'
+     LEFT JOIN reading_overrides AS manual ON manual.book_key = moon.book_key
+     WHERE moon.source_key = ?
+     ORDER BY moon.sort_at DESC`,
+    sourceKey
+  );
+  return Promise.all(rows.map((row) => withValidGeneratedCover(withProgress(row))));
+}
+
+export async function loadLocalCatalogBook(
+  bookKey: string | null,
+  fileUri: string | null
+): Promise<LibraryBook | null> {
+  if (!bookKey && !fileUri) return null;
+  const database = await getLibraryDatabase();
+  const row = await database.getFirstAsync<LocalCatalogRow>(
+    `SELECT files.uri, files.fingerprint, books.book_json,
+            progress.progress, progress.is_read, progress.reading_time_ms,
+            progress.words_read, progress.last_read_at,
+            progress.synced_at AS progress_synced_at,
+            moon.payload_json AS moonreader_json,
+            manual.is_read AS override_is_read
+     FROM local_files AS files
+     JOIN catalog_books AS books ON books.book_key = files.book_key
+     LEFT JOIN reading_progress AS progress ON progress.book_key = files.book_key
+     LEFT JOIN metadata_sources AS moon
+       ON moon.book_key = files.book_key AND moon.source = 'moonreader'
+     LEFT JOIN reading_overrides AS manual ON manual.book_key = files.book_key
+     WHERE books.book_key = ? OR files.uri = ?
+     LIMIT 1`,
+    bookKey,
+    fileUri
+  );
+  return row ? withValidGeneratedCover(withProgress(row)) : null;
 }
 
 function mergeScannedBook(existing: LibraryBook | undefined, scanned: LibraryBook): LibraryBook {
   if (!existing) return scanned;
+  const catalogBook = withoutMoonReaderData(existing);
+  const catalogCoverIsLegacyIsbn = catalogBook.cover?.includes(
+    'covers.openlibrary.org/b/isbn/'
+  );
   return {
-    ...existing,
-    key: existing.key,
-    id: existing.id,
+    ...catalogBook,
+    key: catalogBook.key,
+    id: catalogBook.id,
     fileUri: scanned.fileUri,
     format: scanned.format,
     size: scanned.size,
     downloadedAt: scanned.downloadedAt,
     local: scanned.local,
-    cover: scanned.cover || existing.cover,
-    moonReader: scanned.moonReader
-      ? { ...existing.moonReader, ...scanned.moonReader }
-      : existing.moonReader,
+    cover: catalogCoverIsLegacyIsbn ? scanned.cover : catalogBook.cover || scanned.cover,
+    fallbackCover: scanned.fallbackCover || catalogBook.fallbackCover,
   };
 }
 
@@ -327,8 +458,29 @@ export async function reconcileLocalCatalog(
   const catalogRows = await database.getAllAsync<{ file_uri: string; book_json: string }>(
     'SELECT file_uri, book_json FROM catalog_books WHERE file_uri IS NOT NULL'
   );
-  const existingFiles = new Map(existingRows.map((row) => [row.uri, row]));
-  const existingByUri = new Map(catalogRows.map((row) => [row.file_uri, parseBook(row.book_json)]));
+  const existingFiles = new Map<string, { fingerprint: string; book: LibraryBook }>();
+  const validatedExistingRows = await Promise.all(
+    existingRows.map(async (row) => ({
+      row,
+      book: await withValidGeneratedCover(parseBook(row.book_json)),
+    }))
+  );
+  for (const { row, book } of validatedExistingRows) {
+    existingFiles.set(row.uri, {
+      fingerprint: row.fingerprint,
+      book,
+    });
+  }
+  const existingByUri = new Map<string, LibraryBook>();
+  const validatedCatalogRows = await Promise.all(
+    catalogRows.map(async (row) => ({
+      row,
+      book: await withValidGeneratedCover(parseBook(row.book_json)),
+    }))
+  );
+  for (const { row, book } of validatedCatalogRows) {
+    existingByUri.set(row.file_uri, book);
+  }
   const scannedByUri = new Map(scannedBooks.map((book) => [book.local!.uri, book]));
   const seenToken = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
 
@@ -336,7 +488,7 @@ export async function reconcileLocalCatalog(
     const uri = scanned.local!.uri;
     const existingFile = existingFiles.get(uri);
     const existing = existingFile
-      ? parseBook(existingFile.book_json)
+      ? existingFile.book
       : existingByUri.get(uri);
     const unchanged = existingFile?.fingerprint === fingerprint(scanned);
     if (!existing) return scanned;
@@ -409,7 +561,8 @@ export async function reconcileLocalCatalog(
         `DELETE FROM catalog_books
          WHERE book_key = ?
            AND book_key NOT IN (SELECT book_key FROM collections)
-           AND book_key NOT IN (SELECT book_key FROM local_files)`,
+           AND book_key NOT IN (SELECT book_key FROM local_files)
+           AND book_key NOT IN (SELECT book_key FROM moonreader_items)`,
         bookKey
       );
     }
@@ -450,6 +603,12 @@ async function persistLocalBookRecord(
     String(Date.now()),
     Date.now()
   );
+}
+
+async function persistProgressRecord(
+  database: SQLiteDatabase,
+  book: LibraryBook
+): Promise<void> {
   if (typeof book.progress === 'number') {
     await database.runAsync(
       `INSERT INTO reading_progress (
@@ -458,12 +617,33 @@ async function persistLocalBookRecord(
        ) VALUES (?, 'moonreader', ?, ?, ?, ?, ?, ?)
        ON CONFLICT(book_key) DO UPDATE SET
          source = excluded.source,
-         progress = excluded.progress,
-         is_read = excluded.is_read,
-         reading_time_ms = excluded.reading_time_ms,
-         words_read = excluded.words_read,
-         last_read_at = excluded.last_read_at,
-         synced_at = excluded.synced_at`,
+         progress = MAX(reading_progress.progress, excluded.progress),
+         is_read = MAX(reading_progress.is_read, excluded.is_read),
+         reading_time_ms = CASE
+           WHEN reading_progress.reading_time_ms IS NULL THEN excluded.reading_time_ms
+           WHEN excluded.reading_time_ms IS NULL THEN reading_progress.reading_time_ms
+           ELSE MAX(reading_progress.reading_time_ms, excluded.reading_time_ms)
+         END,
+         words_read = CASE
+           WHEN reading_progress.words_read IS NULL THEN excluded.words_read
+           WHEN excluded.words_read IS NULL THEN reading_progress.words_read
+           ELSE MAX(reading_progress.words_read, excluded.words_read)
+         END,
+         last_read_at = CASE
+           WHEN reading_progress.last_read_at IS NULL THEN excluded.last_read_at
+           WHEN excluded.last_read_at IS NULL THEN reading_progress.last_read_at
+           ELSE MAX(reading_progress.last_read_at, excluded.last_read_at)
+         END,
+         synced_at = MAX(reading_progress.synced_at, excluded.synced_at)
+       WHERE excluded.is_read > reading_progress.is_read
+          OR excluded.progress > reading_progress.progress
+          OR COALESCE(excluded.reading_time_ms, 0) > COALESCE(reading_progress.reading_time_ms, 0)
+          OR COALESCE(excluded.words_read, 0) > COALESCE(reading_progress.words_read, 0)
+          OR COALESCE(excluded.last_read_at, 0) > COALESCE(reading_progress.last_read_at, 0)
+          OR (
+            excluded.progress = reading_progress.progress
+            AND excluded.synced_at >= reading_progress.synced_at
+          )`,
       book.key,
       book.progress,
       book.isRead ? 1 : 0,
@@ -475,6 +655,91 @@ async function persistLocalBookRecord(
   } else {
     await database.runAsync('DELETE FROM reading_progress WHERE book_key = ?', book.key);
   }
+}
+
+async function clearLocalMoonReaderData(database: SQLiteDatabase): Promise<void> {
+  const rows = await database.getAllAsync<{ book_key: string; book_json: string }>(
+    `SELECT books.book_key, books.book_json
+     FROM catalog_books AS books
+     WHERE books.book_key IN (SELECT book_key FROM local_files)`
+  );
+  for (const row of rows) {
+    const book = parseBook(row.book_json);
+    if (!book.moonReader && typeof book.progress !== 'number') continue;
+    const cleaned = withoutMoonReaderData(book);
+    await database.runAsync(
+      'UPDATE catalog_books SET book_json = ?, updated_at = ? WHERE book_key = ?',
+      JSON.stringify(cleaned),
+      Date.now(),
+      row.book_key
+    );
+  }
+}
+
+export async function persistMoonReaderCatalog(
+  sourceKey: string,
+  books: LibraryBook[]
+): Promise<void> {
+  const database = await getLibraryDatabase();
+  await database.withExclusiveTransactionAsync(async (transaction) => {
+    // Settings expose one authoritative Moon+ backup source. Replacing that
+    // source must not leave a disconnected Moon+ catalog in SQLite.
+    await transaction.runAsync('DELETE FROM moonreader_items');
+    await transaction.runAsync("DELETE FROM reading_progress WHERE source = 'moonreader'");
+    await transaction.runAsync("DELETE FROM metadata_sources WHERE source = 'moonreader'");
+    await clearLocalMoonReaderData(transaction);
+    for (const book of books) {
+      const moonReader = book.moonReader;
+      const filename = moonReader?.sourceFilename;
+      if (!moonReader || !filename) {
+        throw new Error(`Moon+ Reader item ${book.key} has no source filename.`);
+      }
+      await upsertBook(transaction, withoutMoonReaderData(book));
+      await persistProgressRecord(transaction, book);
+      await transaction.runAsync(
+        `INSERT INTO moonreader_items (source_key, filename, book_key, sort_at)
+         VALUES (?, ?, ?, ?)`,
+        sourceKey,
+        filename.toLowerCase(),
+        book.key,
+        book.lastReadAt ?? book.addedAt
+      );
+      await transaction.runAsync(
+        `INSERT INTO metadata_sources (book_key, source, fingerprint, payload_json, updated_at)
+         VALUES (?, 'moonreader', ?, ?, ?)
+         ON CONFLICT(book_key, source) DO UPDATE SET
+           fingerprint = excluded.fingerprint,
+           payload_json = excluded.payload_json,
+           updated_at = excluded.updated_at`,
+        book.key,
+        String(moonReader.syncedAt),
+        JSON.stringify(moonReader),
+        Date.now()
+      );
+    }
+    await transaction.runAsync(`
+      DELETE FROM catalog_books
+      WHERE book_key NOT IN (SELECT book_key FROM collections)
+        AND book_key NOT IN (SELECT book_key FROM local_files)
+        AND book_key NOT IN (SELECT book_key FROM moonreader_items)
+    `);
+  });
+}
+
+export async function clearMoonReaderCatalog(): Promise<void> {
+  const database = await getLibraryDatabase();
+  await database.withExclusiveTransactionAsync(async (transaction) => {
+    await transaction.runAsync('DELETE FROM moonreader_items');
+    await transaction.runAsync("DELETE FROM reading_progress WHERE source = 'moonreader'");
+    await transaction.runAsync("DELETE FROM metadata_sources WHERE source = 'moonreader'");
+    await clearLocalMoonReaderData(transaction);
+    await transaction.runAsync(`
+      DELETE FROM catalog_books
+      WHERE book_key NOT IN (SELECT book_key FROM collections)
+        AND book_key NOT IN (SELECT book_key FROM local_files)
+        AND book_key NOT IN (SELECT book_key FROM moonreader_items)
+    `);
+  });
 }
 
 export async function persistLocalBook(
@@ -520,6 +785,204 @@ export async function persistMetadataSource(
   );
 }
 
+export async function persistCatalogBook(book: LibraryBook): Promise<void> {
+  const database = await getLibraryDatabase();
+  await upsertBook(database, withoutMoonReaderData(book));
+}
+
+export async function markCatalogBookRead(bookKey: string): Promise<void> {
+  const database = await getLibraryDatabase();
+  const exists = await database.getFirstAsync<{ present: number }>(
+    'SELECT 1 AS present FROM catalog_books WHERE book_key = ?',
+    bookKey
+  );
+  if (!exists) throw new Error('This book is not present in the library catalog.');
+  await database.runAsync(
+    `INSERT INTO reading_overrides (book_key, is_read, updated_at)
+     VALUES (?, 1, ?)
+     ON CONFLICT(book_key) DO UPDATE SET
+       is_read = 1,
+       updated_at = excluded.updated_at`,
+    bookKey,
+    Date.now()
+  );
+}
+
+function syncAliases(book: LibraryBook): string[] {
+  const format = book.format || book.local?.format || '';
+  return [
+    `key:${book.key}`,
+    `identity:${bookIdentity(book.title, book.author, format)}`,
+    book.discovery?.id ? `discovery:${book.discovery.id}` : '',
+    book.local?.filename ? `filename:${book.local.filename.toLowerCase()}` : '',
+    book.moonReader?.sourceFilename
+      ? `filename:${book.moonReader.sourceFilename.toLowerCase()}`
+      : '',
+  ].filter(Boolean);
+}
+
+function rowProgressRecord(row: ProgressSnapshotRow): ProgressSyncRecord | null {
+  const book = parseBook(row.book_json);
+  const isRead = row.override_is_read === 1 || row.is_read === 1;
+  if (row.progress == null && !isRead) return null;
+  const updatedAt = Math.max(
+    row.progress_synced_at ?? 0,
+    row.last_read_at ?? 0,
+    row.override_updated_at ?? 0
+  );
+  return {
+    identity: bookIdentity(book.title, book.author),
+    aliases: syncAliases(book),
+    title: book.title,
+    author: book.author,
+    format: book.format || book.local?.format || '',
+    progress: isRead ? 100 : Math.max(0, Math.min(100, row.progress ?? 0)),
+    isRead,
+    readingTimeMs: row.reading_time_ms ?? undefined,
+    wordsRead: row.words_read ?? undefined,
+    lastReadAt: row.last_read_at ?? undefined,
+    updatedAt: updatedAt || Date.now(),
+  };
+}
+
+async function progressSnapshotRows(database: SQLiteDatabase): Promise<ProgressSnapshotRow[]> {
+  return database.getAllAsync<ProgressSnapshotRow>(
+    `SELECT books.book_key, books.book_json,
+            progress.progress, progress.is_read, progress.reading_time_ms,
+            progress.words_read, progress.last_read_at,
+            progress.synced_at AS progress_synced_at,
+            manual.is_read AS override_is_read,
+            manual.updated_at AS override_updated_at,
+            NULL AS moonreader_json
+     FROM catalog_books AS books
+     LEFT JOIN reading_progress AS progress ON progress.book_key = books.book_key
+     LEFT JOIN reading_overrides AS manual ON manual.book_key = books.book_key`
+  );
+}
+
+export async function loadProgressSyncRecords(): Promise<ProgressSyncRecord[]> {
+  const database = await getLibraryDatabase();
+  const records = (await progressSnapshotRows(database))
+    .map(rowProgressRecord)
+    .filter((record): record is ProgressSyncRecord => !!record);
+  return mergeProgressRecords(records);
+}
+
+export async function applyProgressSyncRecords(
+  records: ProgressSyncRecord[]
+): Promise<number> {
+  const database = await getLibraryDatabase();
+  const rows = await progressSnapshotRows(database);
+  const rowsByAlias = new Map<string, ProgressSnapshotRow[]>();
+  for (const row of rows) {
+    const book = parseBook(row.book_json);
+    const aliases = [bookIdentity(book.title, book.author), ...syncAliases(book)];
+    for (const alias of aliases) {
+      const matches = rowsByAlias.get(alias) ?? [];
+      matches.push(row);
+      rowsByAlias.set(alias, matches);
+    }
+  }
+
+  let updated = 0;
+  await database.withExclusiveTransactionAsync(async (transaction) => {
+    for (const record of records) {
+      const matches = new Map<string, ProgressSnapshotRow>();
+      for (const alias of [record.identity, ...record.aliases]) {
+        for (const row of rowsByAlias.get(alias) ?? []) matches.set(row.book_key, row);
+      }
+      for (const row of matches.values()) {
+        const localRead = row.override_is_read === 1 || row.is_read === 1;
+        const localUpdatedAt = Math.max(
+          row.progress_synced_at ?? 0,
+          row.last_read_at ?? 0,
+          row.override_updated_at ?? 0
+        );
+        const localProgress = localRead ? 100 : Math.max(0, row.progress ?? 0);
+        const remoteProgress = record.isRead ? 100 : Math.max(0, record.progress);
+        const remoteHasMoreStats =
+          (record.readingTimeMs ?? 0) > (row.reading_time_ms ?? 0) ||
+          (record.wordsRead ?? 0) > (row.words_read ?? 0) ||
+          (record.lastReadAt ?? 0) > (row.last_read_at ?? 0);
+        const remoteWins =
+          remoteProgress > localProgress ||
+          (remoteProgress === localProgress &&
+            (remoteHasMoreStats || record.updatedAt > localUpdatedAt));
+        if (!remoteWins) continue;
+
+        await transaction.runAsync(
+          `INSERT INTO reading_progress (
+             book_key, source, progress, is_read, reading_time_ms,
+             words_read, last_read_at, synced_at
+           ) VALUES (?, 'cloud', ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(book_key) DO UPDATE SET
+             source = excluded.source,
+             progress = excluded.progress,
+             is_read = excluded.is_read,
+             reading_time_ms = excluded.reading_time_ms,
+             words_read = excluded.words_read,
+             last_read_at = excluded.last_read_at,
+             synced_at = excluded.synced_at`,
+          row.book_key,
+          record.isRead ? 100 : record.progress,
+          record.isRead ? 1 : 0,
+          record.readingTimeMs ?? null,
+          record.wordsRead ?? null,
+          record.lastReadAt ?? null,
+          record.updatedAt
+        );
+        if (record.isRead) {
+          await transaction.runAsync(
+            `INSERT INTO reading_overrides (book_key, is_read, updated_at)
+             VALUES (?, 1, ?)
+             ON CONFLICT(book_key) DO UPDATE SET
+               is_read = 1,
+               updated_at = MAX(reading_overrides.updated_at, excluded.updated_at)`,
+            row.book_key,
+            record.updatedAt
+          );
+        }
+        updated += 1;
+      }
+    }
+  });
+  return updated;
+}
+
+export async function invalidateCatalogMetadata(bookKey: string): Promise<void> {
+  const database = await getLibraryDatabase();
+  const row = await database.getFirstAsync<CatalogRow>(
+    'SELECT book_json FROM catalog_books WHERE book_key = ?',
+    bookKey
+  );
+  if (!row) throw new Error('This book is not present in the library catalog.');
+  const book = parseBook(row.book_json);
+  const invalidRemoteCover =
+    !book.local || book.cover?.includes('covers.openlibrary.org/b/isbn/');
+  const invalidated = {
+    ...book,
+    cover: invalidRemoteCover ? '' : book.cover,
+    discovery: undefined,
+    rating: undefined,
+    ratingsCount: undefined,
+    metadataPending: true,
+    metadataUpdatedAt: undefined,
+    metadataVersion: undefined,
+  };
+  await database.withExclusiveTransactionAsync(async (transaction) => {
+    await transaction.runAsync(
+      'UPDATE catalog_books SET book_json = ?, updated_at = ? WHERE book_key = ?',
+      JSON.stringify(invalidated),
+      Date.now(),
+      bookKey
+    );
+    await transaction.runAsync(
+      "DELETE FROM metadata_sources WHERE book_key = ? AND source = 'catalog'",
+      bookKey
+    );
+  });
+}
+
 export async function deleteLocalCatalogBook(uri: string): Promise<void> {
   const database = await getLibraryDatabase();
   await database.withExclusiveTransactionAsync(async (transaction) => {
@@ -533,7 +996,8 @@ export async function deleteLocalCatalogBook(uri: string): Promise<void> {
       `DELETE FROM catalog_books
        WHERE book_key = ?
          AND book_key NOT IN (SELECT book_key FROM collections)
-         AND book_key NOT IN (SELECT book_key FROM local_files)`,
+         AND book_key NOT IN (SELECT book_key FROM local_files)
+         AND book_key NOT IN (SELECT book_key FROM moonreader_items)`,
       row.book_key
     );
   });

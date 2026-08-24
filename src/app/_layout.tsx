@@ -3,7 +3,7 @@ import '../global.css';
 import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View } from 'react-native';
+import { useWindowDimensions, View } from 'react-native';
 import {
   initialWindowMetrics,
   SafeAreaProvider,
@@ -20,6 +20,8 @@ import { DEFAULT_SETTINGS } from '@/lib/settings';
 const BG = '#0b0b0f';
 
 export default function RootLayout() {
+  const { width } = useWindowDimensions();
+  const useBottomNavigation = width < 700;
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [ready, setReady] = useState(false);
   const settingsRef = useRef(settings);
@@ -71,11 +73,15 @@ export default function RootLayout() {
               edges={['top', 'right', 'bottom', 'left']}
               style={{ backgroundColor: BG }}
             >
-              <View className="flex-1 flex-row">
-                <Sidebar />
+              <View
+                className="flex-1"
+                style={{ flexDirection: useBottomNavigation ? 'column' : 'row' }}
+              >
+                {!useBottomNavigation && <Sidebar />}
                 <View className="flex-1" style={{ backgroundColor: BG }}>
                   <Stack screenOptions={{ headerShown: false }} />
                 </View>
+                {useBottomNavigation && <Sidebar compact />}
               </View>
             </SafeAreaView>
           </LibraryProvider>

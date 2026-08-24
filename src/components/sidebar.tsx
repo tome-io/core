@@ -1,6 +1,6 @@
 import { Feather } from '@expo/vector-icons';
 import { usePathname, useRouter } from 'expo-router';
-import { Pressable, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 
 const ACCENT = '#8b7cf6';
 const BG = '#0b0b0f';
@@ -14,7 +14,11 @@ const ITEMS = [
 
 const SETTINGS = { route: '/settings', label: 'Settings', icon: 'settings' as const };
 
-export function Sidebar() {
+interface SidebarProps {
+  compact?: boolean;
+}
+
+export function Sidebar({ compact = false }: SidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
 
@@ -25,18 +29,62 @@ export function Sidebar() {
         key={item.route}
         accessibilityLabel={item.label}
         accessibilityRole="button"
+        accessibilityState={{ selected: active }}
         onPress={() => {
           if (!active) router.replace(item.route as any);
         }}
-        className="h-12 w-12 items-center justify-center rounded-xl"
-        style={{
-          backgroundColor: active ? 'rgba(139,124,246,0.16)' : 'transparent',
-        }}
+        className={
+          compact
+            ? 'flex-1 h-full items-center justify-center gap-0.5 active:opacity-75'
+            : 'h-12 w-12 items-center justify-center rounded-xl'
+        }
+        style={
+          compact
+            ? undefined
+            : { backgroundColor: active ? 'rgba(139,124,246,0.16)' : 'transparent' }
+        }
       >
-        <Feather name={item.icon} size={20} color={active ? ACCENT : '#6b6b76'} />
+        <View
+          className="items-center justify-center rounded-xl"
+          style={
+            compact
+              ? {
+                  width: 42,
+                  height: 27,
+                  backgroundColor: active ? 'rgba(139,124,246,0.16)' : 'transparent',
+                }
+              : undefined
+          }
+        >
+          <Feather name={item.icon} size={compact ? 19 : 20} color={active ? ACCENT : '#6b6b76'} />
+        </View>
+        {compact && (
+          <Text
+            numberOfLines={1}
+            style={{ color: active ? ACCENT : '#777782', fontSize: 9, fontWeight: '600' }}
+          >
+            {item.label}
+          </Text>
+        )}
       </Pressable>
     );
   };
+
+  if (compact) {
+    return (
+      <View
+        className="w-full flex-row items-center"
+        style={{
+          height: 58,
+          backgroundColor: BG,
+          borderTopColor: '#202027',
+          borderTopWidth: 1,
+        }}
+      >
+        {[...ITEMS, SETTINGS].map(renderItem)}
+      </View>
+    );
+  }
 
   return (
     <View

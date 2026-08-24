@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
+import { filenameFromUri, moonReaderCoverTarget } from './book-metadata';
 import { fromLocalFile, type LibraryBook, type LocalFileBook } from './library';
 
 const BOOK_FORMATS = new Set([
@@ -14,25 +15,14 @@ const BOOK_FORMATS = new Set([
 ]);
 const METADATA_BATCH_SIZE = 24;
 
-export interface MoonReaderBackupFile {
-  uri: string;
-  size: number;
-  modificationTime: number;
-}
-
 export interface LocalLibraryScan {
   books: LibraryBook[];
-  moonReaderBackup: MoonReaderBackupFile | null;
+  warnings: string[];
 }
 
-interface MoonReaderCover {
+interface CoverCandidate {
   uri: string;
   priority: number;
-}
-
-interface ScanArtifacts {
-  covers: Map<string, MoonReaderCover>;
-  backup: MoonReaderBackupFile | null;
 }
 
 function finiteNumber(value: number | null | undefined): number {
@@ -58,38 +48,36 @@ async function inspectUris(uris: string[]) {
   return entries;
 }
 
-function filenameFromUri(uri: string): string {
-  let decoded = uri;
-  try {
-    decoded = decodeURIComponent(uri);
-  } catch {
-    // Keep the original URI when a document provider returns malformed escapes.
+function addMoonReaderCover(
+  covers: Map<string, CoverCandidate>,
+  uri: string,
+  filename: string
+) {
+  const target = moonReaderCoverTarget(filename);
+  if (!target) return;
+  const key = target.bookFilename.toLowerCase();
+  const current = covers.get(key);
+  if (!current || target.priority < current.priority) {
+    covers.set(key, { uri, priority: target.priority });
   }
-  return decoded.split(/[/?#]/).filter(Boolean).pop() ?? '';
 }
 
-function inspectMoonReaderFile(
-  uri: string,
-  size: number,
-  modificationTime: number,
-  artifacts: ScanArtifacts
+async function scanSafMoonReaderCovers(
+  directoryUri: string,
+  covers: Map<string, CoverCandidate>
 ) {
-  const filename = filenameFromUri(uri);
-  const coverMatch = filename.match(/^(.+\.(?:azw3|cbr|cbz|djvu|epub|fb2|mobi|pdf))_([123])\.png$/i);
-  if (coverMatch) {
-    const priority = coverMatch[2] === '2' ? 3 : coverMatch[2] === '3' ? 2 : 1;
-    const key = coverMatch[1].toLowerCase();
-    if (!artifacts.covers.has(key) || artifacts.covers.get(key)!.priority < priority) {
-      artifacts.covers.set(key, { uri, priority });
-    }
-  }
+  const children = await FileSystem.StorageAccessFramework.readDirectoryAsync(directoryUri);
+  children.forEach((uri) => addMoonReaderCover(covers, uri, filenameFromUri(uri)));
+}
 
-  if (filename.toLowerCase() === 'cloud.backup') {
-    const modifiedAt = modificationTime * 1000;
-    if (!artifacts.backup || artifacts.backup.modificationTime < modifiedAt) {
-      artifacts.backup = { uri, size, modificationTime: modifiedAt };
-    }
-  }
+async function scanFileMoonReaderCovers(
+  directoryUri: string,
+  covers: Map<string, CoverCandidate>
+) {
+  const filenames = await FileSystem.readDirectoryAsync(directoryUri);
+  filenames.forEach((filename) =>
+    addMoonReaderCover(covers, `${directoryUri.replace(/\/$/, '')}/${filename}`, filename)
+  );
 }
 
 function toLocalFile(uri: string, size: number, modificationTime: number): LocalFileBook | null {
@@ -111,22 +99,39 @@ async function scanSafDirectory(
   directoryUri: string,
   visited: Set<string>,
   files: LocalFileBook[],
-  artifacts: ScanArtifacts
+  covers: Map<string, CoverCandidate>,
+  warnings: string[]
 ): Promise<void> {
   if (visited.has(directoryUri)) return;
   visited.add(directoryUri);
 
   const children = await FileSystem.StorageAccessFramework.readDirectoryAsync(directoryUri);
-  const entries = await inspectUris(children);
+  const ignoredDirectories = children.filter((uri) => {
+    const name = filenameFromUri(uri).toLowerCase();
+    return name === '.moonreader' || name === '.moon+' || name === 'moonreader';
+  });
+  const moonReaderDirectory = ignoredDirectories.find((uri) => {
+    const name = filenameFromUri(uri).toLowerCase();
+    return name === '.moonreader' || name === 'moonreader';
+  });
+  if (moonReaderDirectory) {
+    try {
+      await scanSafMoonReaderCovers(moonReaderDirectory, covers);
+    } catch (err: any) {
+      warnings.push(`Moon+ Reader cover cache could not be read: ${err.message || String(err)}`);
+    }
+  }
+  const entries = await inspectUris(
+    children.filter((uri) => !ignoredDirectories.includes(uri))
+  );
   for (const { childUri, info } of entries) {
     if (!info.exists) continue;
     if (info.isDirectory) {
-      await scanSafDirectory(childUri, visited, files, artifacts);
+      await scanSafDirectory(childUri, visited, files, covers, warnings);
       continue;
     }
     const size = finiteNumber(info.size);
     const modificationTime = finiteNumber(info.modificationTime);
-    inspectMoonReaderFile(childUri, size, modificationTime, artifacts);
     const book = toLocalFile(childUri, size, modificationTime);
     if (book) files.push(book);
   }
@@ -136,24 +141,44 @@ async function scanFileDirectory(
   directoryUri: string,
   visited: Set<string>,
   files: LocalFileBook[],
-  artifacts: ScanArtifacts
+  covers: Map<string, CoverCandidate>,
+  warnings: string[]
 ): Promise<void> {
   if (visited.has(directoryUri)) return;
   visited.add(directoryUri);
 
   const children = await FileSystem.readDirectoryAsync(directoryUri);
+  const ignoredDirectories = children.filter((name) => {
+    const normalized = name.toLowerCase();
+    return normalized === '.moonreader' || normalized === '.moon+' || normalized === 'moonreader';
+  });
+  const moonReaderDirectory = ignoredDirectories.find((name) => {
+    const normalized = name.toLowerCase();
+    return normalized === '.moonreader' || normalized === 'moonreader';
+  });
+  if (moonReaderDirectory) {
+    try {
+      await scanFileMoonReaderCovers(
+        `${directoryUri.replace(/\/$/, '')}/${moonReaderDirectory}`,
+        covers
+      );
+    } catch (err: any) {
+      warnings.push(`Moon+ Reader cover cache could not be read: ${err.message || String(err)}`);
+    }
+  }
   const entries = await inspectUris(
-    children.map((childName) => `${directoryUri.replace(/\/$/, '')}/${childName}`)
+    children
+      .filter((childName) => !ignoredDirectories.includes(childName))
+      .map((childName) => `${directoryUri.replace(/\/$/, '')}/${childName}`)
   );
   for (const { childUri, info } of entries) {
     if (!info.exists) continue;
     if (info.isDirectory) {
-      await scanFileDirectory(childUri, visited, files, artifacts);
+      await scanFileDirectory(childUri, visited, files, covers, warnings);
       continue;
     }
     const size = finiteNumber(info.size);
     const modificationTime = finiteNumber(info.modificationTime);
-    inspectMoonReaderFile(childUri, size, modificationTime, artifacts);
     const book = toLocalFile(childUri, size, modificationTime);
     if (book) files.push(book);
   }
@@ -164,31 +189,26 @@ export async function scanLocalLibrary(directoryUri: string | null): Promise<Loc
   if (!root) throw new Error('The app documents directory is unavailable.');
 
   const files: LocalFileBook[] = [];
-  const artifacts: ScanArtifacts = { covers: new Map(), backup: null };
+  const covers = new Map<string, CoverCandidate>();
+  const warnings: string[] = [];
   if (root.startsWith('content:')) {
-    await scanSafDirectory(root, new Set(), files, artifacts);
+    await scanSafDirectory(root, new Set(), files, covers, warnings);
   } else {
     const info = await FileSystem.getInfoAsync(root);
-    if (!info.exists) return { books: [], moonReaderBackup: null };
+    if (!info.exists) return { books: [], warnings };
     if (!info.isDirectory) throw new Error('The selected library location is not a folder.');
-    await scanFileDirectory(root, new Set(), files, artifacts);
+    await scanFileDirectory(root, new Set(), files, covers, warnings);
   }
 
   const books = files
     .sort((a, b) => b.modificationTime - a.modificationTime)
     .map((file) => {
       const book = fromLocalFile(file);
-      const cover = artifacts.covers.get(file.filename.toLowerCase());
-      if (!cover) return book;
-      return {
-        ...book,
-        cover: cover.uri,
-        moonReader: {
-          coverUri: cover.uri,
-          syncedAt: artifacts.backup?.modificationTime ?? file.modificationTime,
-        },
-      };
+      const cachedCover = covers.get(file.filename.toLowerCase());
+      return cachedCover
+        ? { ...book, cover: cachedCover.uri, fallbackCover: cachedCover.uri }
+        : book;
     });
 
-  return { books, moonReaderBackup: artifacts.backup };
+  return { books, warnings };
 }

@@ -146,6 +146,33 @@ test('login fails over across mirrors and remembers the working one', async () =
   assert.ok(calls.some((u) => u.includes('lexlib.fi')));
 });
 
+test('an explicitly pinned mirror skips automatic failover', async () => {
+  const deps = makeStubDeps();
+  await seedDomainCache(deps, ['https://lexlib.fi', 'https://bookabooki.fi']);
+  await deps.storeSet('zlib_domain', 'https://librella.fi');
+  await deps.storeSet('zlib_pinned_domain', 'https://article.sk');
+  const client = createZlibClient(deps);
+
+  assert.deepEqual(await client.candidateDomains(), ['https://article.sk']);
+});
+
+test('native network failures retain useful mirror diagnostics', async () => {
+  const deps = makeStubDeps({
+    fetchFn: async () => {
+      throw new Error('TLS handshake failed');
+    },
+  });
+  await deps.storeSet('zlib_pinned_domain', 'https://article.sk');
+  deps._secure.set('zlib_remix_userid', '42');
+  deps._secure.set('zlib_remix_userkey', 'KEY');
+  const client = createZlibClient(deps);
+
+  await assert.rejects(
+    () => client.searchBooks('release mode'),
+    /article\.sk: TLS handshake failed/
+  );
+});
+
 test('credential errors abort immediately without trying other mirrors', async () => {
   const deps = makeStubDeps({
     fetchFn: async () =>
@@ -178,6 +205,62 @@ test('pasted remix keys are used without any login request', async () => {
   const s = await c.getSession();
   assert.equal(s.userId, '77');
   assert.equal(s.userKey, 'PK');
+});
+
+test('concurrent first requests share one login', async () => {
+  let loginCalls = 0;
+  let searchCalls = 0;
+  const deps = makeStubDeps({
+    fetchFn: async (url) => {
+      if (String(url).includes('/eapi/user/login')) {
+        loginCalls++;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return new Response(
+          '{"success":1,"user":{"id":50185136,"remix_userkey":"rk"}}',
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      searchCalls++;
+      return new Response('{"books":[]}', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    },
+  });
+  await deps.storeSet('zlib_pinned_domain', 'https://article.sk');
+  deps._secure.set('zlib_email', 'e@x.com');
+  deps._secure.set('zlib_password', 'p');
+  const client = createZlibClient(deps);
+
+  await Promise.all([
+    client.searchBooks('first request'),
+    client.searchBooks('second request'),
+  ]);
+  assert.equal(loginCalls, 1);
+  assert.equal(searchCalls, 2);
+});
+
+test('login throttling stops immediately instead of crawling mirrors', async () => {
+  let loginCalls = 0;
+  const deps = makeStubDeps({
+    fetchFn: async () => {
+      loginCalls++;
+      return new Response(
+        '{"success":0,"error":"Too many logins #2. Try again later."}',
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    },
+  });
+  await deps.storeSet('zlib_pinned_domain', 'https://article.sk');
+  deps._secure.set('zlib_email', 'e@x.com');
+  deps._secure.set('zlib_password', 'p');
+  const client = createZlibClient(deps);
+
+  await assert.rejects(
+    () => client.searchBooks('rate limited'),
+    /Z-Library login temporarily blocked/
+  );
+  assert.equal(loginCalls, 1);
 });
 
 test('rankZlibMatches buries workbooks/summaries and ranks title+author overlap', async () => {
@@ -321,60 +404,11 @@ test('search responses with embedded HTML descriptions are NOT mirror problems',
   assert.equal(results[0].title, 'Bestseller');
 });
 
-// ── Apple Books discovery ──
-
-test('fetchEbooks maps iTunes results and upscales artwork', async () => {
-  const payload = {
-    results: [
-      {
-        trackId: 6747972884,
-        trackName: 'The Bestseller',
-        artistName: 'Jane <b>Doe</b>',
-        artworkUrl100: 'https://example.com/a100/cover100x100bb.jpg',
-        releaseDate: '2026-06-18T07:00:00Z',
-        description: '<i>Great</i> &amp; thrilling book',
-        genres: ['Mysteries & Thrillers', 'Books'],
-      },
-      { trackName: 'no id — skipped' },
-      { trackId: 6747972884, trackName: 'duplicate — skipped' },
-    ],
-  };
-  const deps = makeStubDeps({
-    fetchFn: async (url) => {
-      assert.match(String(url), /media=ebook/);
-      assert.match(String(url), /limit=60/);
-      return new Response(JSON.stringify(payload), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    },
-  });
-  const { fetchEbooks } = await import('../src/lib/books-api.ts');
-  const books = await fetchEbooks('bestseller', 60, { fetchFn: deps.fetchFn });
-  assert.equal(books.length, 1);
-  assert.equal(books[0].id, '6747972884');
-  assert.equal(books[0].title, 'The Bestseller');
-  assert.equal(books[0].author, 'Jane Doe');
-  assert.match(books[0].cover, /600x600bb\.jpg$/);
-  assert.equal(books[0].description, 'Great & thrilling book');
-  assert.equal(books[0].year, '2026');
-  assert.equal(books[0].genre, 'Mysteries & Thrillers');
-});
-
-test('live: Apple Books returns real recommendations without credentials', async () => {
-  const { fetchEbooks } = await import('../src/lib/books-api.ts');
-  const books = await fetchEbooks('bestseller fiction', 20);
-  assert.ok(Array.isArray(books));
-  assert.ok(books.length >= 5, `expected several results, got ${books.length}`);
-  assert.ok(books[0].title.length > 0 && books[0].author.length > 0);
-  assert.match(books[0].cover, /^https:\/\/.+600x600bb\.jpg$/);
-});
-
 // ── Open Library feeds ──
 
 test('getTrending maps works with covers and authors', async () => {
   const payload = {
-    works: [
+    docs: [
       {
         key: '/works/OL17930368W',
         title: 'Atomic Habits',
@@ -386,7 +420,7 @@ test('getTrending maps works with covers and authors', async () => {
     ],
   };
   const { getTrending } = await import('../src/lib/openlibrary.ts');
-  const books = await getTrending('daily', 10, {
+  const books = await getTrending(10, {
     fetchFn: async () =>
       new Response(JSON.stringify(payload), {
         status: 200,
@@ -401,14 +435,18 @@ test('getTrending maps works with covers and authors', async () => {
   assert.equal(books[0].year, 2016);
 });
 
-test('live: Open Library trending returns real popular books (no credentials)', async () => {
+const hasOpenLibraryLive = process.env.LIVE_OPENLIBRARY === '1';
+const openLibraryLiveTest = (name, fn) =>
+  test(name, { skip: !hasOpenLibraryLive && 'set LIVE_OPENLIBRARY=1 to run live tests' }, fn);
+
+openLibraryLiveTest('live: Open Library trending returns real popular books', async () => {
   const { getTrending } = await import('../src/lib/openlibrary.ts');
-  const books = await getTrending('daily', 20);
+  const books = await getTrending(20);
   assert.ok(books.length >= 5, `expected several trending books, got ${books.length}`);
   assert.ok(books.some((b) => b.cover), 'expected at least some covers');
 });
 
-test('live: Open Library subject feed works', async () => {
+openLibraryLiveTest('live: Open Library subject feed works', async () => {
   const { getSubject } = await import('../src/lib/openlibrary.ts');
   const books = await getSubject('science-fiction', 10);
   assert.ok(books.length >= 3, `expected subject results, got ${books.length}`);

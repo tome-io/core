@@ -44,6 +44,7 @@ const SEARCH_FIELDS = [
   'cover_i',
   'cover_edition_key',
   'first_publish_year',
+  'publish_year',
   'description',
   'ratings_average',
   'ratings_count',
@@ -83,6 +84,25 @@ function coverUrl(coverI?: number, coverEditionKey?: string): string {
   return '';
 }
 
+function publicationYear(work: any): string | number {
+  const first = Number(work.first_publish_year);
+  const years = Array.isArray(work.publish_year)
+    ? [...new Set(work.publish_year.map(Number).filter(Number.isFinite))].sort(
+        (a: number, b: number) => a - b
+      )
+    : [];
+  if (
+    Number.isFinite(first) &&
+    years.length >= 3 &&
+    years[0] === first &&
+    years[1] - years[0] > 40 &&
+    years.filter((year: number) => year >= years[1] && year <= years[1] + 15).length >= 2
+  ) {
+    return years[1];
+  }
+  return Number.isFinite(first) ? first : '';
+}
+
 function mapWork(w: any): FeedBook {
   const author = Array.isArray(w.author_name)
     ? w.author_name[0]
@@ -98,7 +118,7 @@ function mapWork(w: any): FeedBook {
     title,
     author: normalizedAuthor,
     cover: coverUrl(w.cover_i ?? w.cover_id, w.cover_edition_key),
-    year: w.first_publish_year ?? '',
+    year: publicationYear(w),
     description:
       typeof w.description === 'string'
         ? w.description.trim()
@@ -125,59 +145,116 @@ export async function findBookMetadata(
   opts?: FetchOpts
 ): Promise<DiscoveryBook | null> {
   const lookupAuthor = author && author !== 'Unknown' ? author : '';
-  const query = new URLSearchParams({
-    title,
-    fields: SEARCH_FIELDS,
-    limit: '8',
-  });
-  if (lookupAuthor) query.set('author', lookupAuthor);
-
-  const data = await getJson(
-    `https://openlibrary.org/search.json?${query}`,
-    opts,
-    DETAILS_CACHE_MS
-  );
-  const docs = Array.isArray(data.docs) ? data.docs : [];
-  const wantedTitle = normalizeLookup(title);
   const wantedAuthor = normalizeLookup(lookupAuthor);
-  if (wantedTitle.length < 3 || ['document', 'untitled'].includes(wantedTitle)) return null;
+  const baseTitle = title.split(':')[0].trim();
+  const titleVariants = [
+    title.trim(),
+    baseTitle,
+    /^(?:a|an|the)\s+/i.test(baseTitle) ? '' : `The ${baseTitle}`,
+  ].filter(
+    (value, index, values) => value && values.indexOf(value) === index
+  );
+  let fallbackMatch: DiscoveryBook | null = null;
 
-  const ranked = docs
-    .map((doc: any) => {
-      const book = mapWork(doc);
-      const candidateTitle = normalizeLookup(book.title);
-      const candidateAuthor = normalizeLookup(book.author);
-      const titleMatches =
-        candidateTitle === wantedTitle ||
-        candidateTitle.includes(wantedTitle) ||
-        wantedTitle.includes(candidateTitle);
-      const authorMatches =
-        !wantedAuthor ||
-        candidateAuthor === wantedAuthor ||
-        candidateAuthor.includes(wantedAuthor) ||
-        wantedAuthor.includes(candidateAuthor);
-      const score =
-        (candidateTitle === wantedTitle ? 100 : titleMatches ? 60 : 0) +
-        (candidateAuthor === wantedAuthor ? 30 : authorMatches ? 15 : 0) +
-        (book.cover ? 5 : 0);
-      return { book, doc, score, titleMatches, authorMatches };
-    })
-    .filter(({ titleMatches, authorMatches }: any) => {
-      if (!titleMatches) return false;
-      return !wantedAuthor || authorMatches;
-    })
-    .sort((a: any, b: any) => b.score - a.score);
+  for (const titleVariant of titleVariants) {
+    const wantedTitle = normalizeLookup(titleVariant);
+    if (
+      wantedTitle.length < (wantedAuthor ? 2 : 3) ||
+      ['document', 'untitled'].includes(wantedTitle)
+    ) {
+      continue;
+    }
+    const query = new URLSearchParams({
+      title: titleVariant,
+      fields: SEARCH_FIELDS,
+      limit: '8',
+    });
+    if (lookupAuthor) query.set('author', lookupAuthor);
+    const data = await getJson(
+      `https://openlibrary.org/search.json?${query}`,
+      opts,
+      DETAILS_CACHE_MS
+    );
+    const docs = Array.isArray(data.docs) ? data.docs : [];
+    const ranked = docs
+      .map((doc: any) => {
+        const book = mapWork(doc);
+        const candidateTitle = normalizeLookup(book.title);
+        const candidateAuthor = normalizeLookup(book.author);
+        const titleMatches =
+          candidateTitle === wantedTitle ||
+          candidateTitle.includes(wantedTitle) ||
+          wantedTitle.includes(candidateTitle);
+        const authorMatches =
+          !wantedAuthor ||
+          candidateAuthor === wantedAuthor ||
+          candidateAuthor.includes(wantedAuthor) ||
+          wantedAuthor.includes(candidateAuthor);
+        const score =
+          (candidateTitle === wantedTitle ? 100 : titleMatches ? 60 : 0) +
+          (candidateAuthor === wantedAuthor ? 30 : authorMatches ? 15 : 0) +
+          (book.cover ? 5 : 0);
+        return { book, doc, score, titleMatches, authorMatches };
+      })
+      .filter(({ titleMatches, authorMatches }: any) => {
+        if (!titleMatches) return false;
+        return !wantedAuthor || authorMatches;
+      })
+      .sort((a: any, b: any) => b.score - a.score);
 
-  const match = ranked[0];
-  if (!match) return null;
-  const subjects = Array.isArray(match.doc.subject)
-    ? match.doc.subject.filter((value: unknown) => typeof value === 'string')
-    : [];
-  return {
-    ...match.book,
-    year: String(match.book.year ?? ''),
-    genre: subjects[0] || 'Other',
-  };
+    const match = ranked[0];
+    if (!match) continue;
+    const subjects = Array.isArray(match.doc.subject)
+      ? match.doc.subject.filter((value: unknown) => typeof value === 'string')
+      : [];
+    const result: DiscoveryBook = {
+      ...match.book,
+      year: String(match.book.year ?? ''),
+      genre: subjects[0] || 'Other',
+    };
+    if (result.cover) return result;
+    fallbackMatch ??= result;
+  }
+
+  if (fallbackMatch && lookupAuthor) {
+    const query = new URLSearchParams({
+      q: `${title} ${lookupAuthor}`,
+      fields: SEARCH_FIELDS,
+      limit: '12',
+    });
+    const data = await getJson(
+      `https://openlibrary.org/search.json?${query}`,
+      opts,
+      DETAILS_CACHE_MS
+    );
+    const docs = Array.isArray(data.docs) ? data.docs : [];
+    const coveredAlias = docs
+      .map((doc: any, index: number) => ({ book: mapWork(doc), doc, index }))
+      .filter(({ book }) => {
+        if (!book.cover) return false;
+        const candidateAuthor = normalizeLookup(book.author);
+        return (
+          candidateAuthor === wantedAuthor ||
+          candidateAuthor.includes(wantedAuthor) ||
+          wantedAuthor.includes(candidateAuthor)
+        );
+      })
+      .sort((a, b) => a.index - b.index)[0];
+    if (coveredAlias) {
+      const subjects = Array.isArray(coveredAlias.doc.subject)
+        ? coveredAlias.doc.subject.filter((value: unknown) => typeof value === 'string')
+        : [];
+      return {
+        ...coveredAlias.book,
+        title: title.trim(),
+        author: lookupAuthor,
+        year: String(coveredAlias.book.year ?? ''),
+        genre: subjects[0] || fallbackMatch.genre,
+      };
+    }
+  }
+
+  return fallbackMatch;
 }
 
 async function getJson(
@@ -236,7 +313,7 @@ export async function getTrending(limit = 40, opts?: FetchOpts): Promise<FeedBoo
 export async function getWorkDetails(
   workKey: string,
   opts?: FetchOpts
-): Promise<{ description: string; subjects: string[] }> {
+): Promise<{ description: string; subjects: string[]; cover: string }> {
   // workKey looks like '/works/OL17930368W'
   const data = await getJson(
     `https://openlibrary.org${workKey}.json`,
@@ -248,6 +325,11 @@ export async function getWorkDetails(
     typeof raw === 'string' ? raw : typeof raw?.value === 'string' ? raw.value : '';
   return {
     description: text.trim(),
+    cover: coverUrl(
+      Array.isArray(data.covers)
+        ? data.covers.find((cover: unknown) => typeof cover === 'number' && cover > 0)
+        : undefined
+    ),
     subjects: Array.isArray(data.subjects)
       ? data.subjects.filter((x: any) => typeof x === 'string').slice(0, 8)
       : [],

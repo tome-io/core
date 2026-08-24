@@ -1,10 +1,12 @@
 import type { DiscoveryBook, FeedBook } from './openlibrary';
 import { loadPersistedLibrary, savePersistedLibrary } from './library-db';
 import type { Book } from './zlib';
+import { metadataFromFilename } from './book-metadata';
 
 export interface LibraryBook extends FeedBook {
   key: string;
   genre: string;
+  fallbackCover?: string;
   format?: string;
   size?: number;
   addedAt: number;
@@ -15,6 +17,7 @@ export interface LibraryBook extends FeedBook {
   local?: LocalFileBook;
   metadataPending?: boolean;
   metadataUpdatedAt?: number;
+  metadataVersion?: number;
   progress?: number;
   isRead?: boolean;
   readingTimeMs?: number;
@@ -24,7 +27,15 @@ export interface LibraryBook extends FeedBook {
 }
 
 export interface MoonReaderBookData {
+  title?: string;
+  author?: string;
+  description?: string;
+  genre?: string;
   coverUri?: string;
+  detailCoverUri?: string;
+  sourceFilename?: string;
+  sourcePath?: string;
+  availableLocally?: boolean;
   syncedAt: number;
 }
 
@@ -55,12 +66,7 @@ function zlibKey(book: Book): string {
 }
 
 export function fromLocalFile(file: LocalFileBook): LibraryBook {
-  const stem = file.filename.slice(0, -(file.format.length + 1));
-  const separator = stem.lastIndexOf(' - ');
-  const rawTitle = separator > 0 ? stem.slice(0, separator) : stem;
-  const rawAuthor = separator > 0 ? stem.slice(separator + 3) : '';
-  const title = rawTitle.replaceAll('_', ' ').replace(/\s+/g, ' ').trim();
-  const author = rawAuthor.replaceAll('_', ' ').replace(/\s+/g, ' ').trim();
+  const { title, author } = metadataFromFilename(file.filename, file.format);
   const key = `local:${file.uri}`;
 
   return {
@@ -130,7 +136,13 @@ export function detailParams(book: LibraryBook) {
   if (book.local) {
     return {
       pathname: '/book/[id]' as const,
-      params: { id: book.key, local: JSON.stringify(book) },
+      params: { id: book.key, localUri: book.local.uri, local: JSON.stringify(book) },
+    };
+  }
+  if (book.moonReader) {
+    return {
+      pathname: '/book/[id]' as const,
+      params: { id: book.key, moon: JSON.stringify(book) },
     };
   }
   if (book.discovery) {
