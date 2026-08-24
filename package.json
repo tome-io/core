@@ -1,66 +1,22 @@
 {
-  "name": "reader-app",
-  "main": "expo-router/entry",
-  "version": "1.0.0",
-  "dependencies": {
-    "@expo/ui": "~57.0.11",
-    "@expo/vector-icons": "^15.1.1",
-    "@react-native-async-storage/async-storage": "^2.2.0",
-    "expo": "~57.0.14",
-    "expo-constants": "~57.0.12",
-    "expo-device": "~57.0.1",
-    "expo-file-system": "^57.0.4",
-    "expo-font": "~57.0.1",
-    "expo-glass-effect": "~57.0.1",
-    "expo-image": "~57.0.3",
-    "expo-intent-launcher": "~57.0.1",
-    "expo-linking": "~57.0.6",
-    "expo-router": "~57.0.14",
-    "expo-secure-store": "^57.0.1",
-    "expo-splash-screen": "~57.0.7",
-    "expo-sqlite": "~57.0.1",
-    "expo-status-bar": "~57.0.1",
-    "expo-symbols": "~57.0.2",
-    "expo-system-ui": "~57.0.2",
-    "expo-web-browser": "~57.0.2",
-    "jszip": "^3.10.1",
-    "nativewind": "^4.2.6",
-    "pdf-lib": "^1.17.1",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
-    "react-native": "0.86.2",
-    "react-native-gesture-handler": "~2.32.0",
-    "react-native-reanimated": "4.5.1",
-    "react-native-safe-area-context": "~5.7.0",
-    "react-native-screens": "~4.26.0",
-    "react-native-web": "~0.21.0",
-    "react-native-worklets": "0.10.1",
-    "tailwindcss": "^3.4.17"
-  },
-  "devDependencies": {
-    "@types/react": "~19.2.2",
-    "eslint": "^9.0.0",
-    "eslint-config-expo": "~57.0.1",
-    "tsx": "^4.23.12",
-    "typescript": "~6.0.3"
-  },
+  "name": "@readoi/workspace",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "bun@1.4.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "start": "expo start",
-    "reset-project": "node ./scripts/reset-project.js",
-    "android": "expo run:android",
-    "android:release": "expo run:android --variant release",
-    "ios": "expo run:ios",
-    "web": "expo start --web",
-    "lint": "expo lint",
-    "test": "tsx --test scripts/live-test.mjs scripts/enrichment-test.mjs",
-    "test:enrichment": "tsx --test scripts/enrichment-test.mjs",
-    "test:enrichment:live": "LIVE_OPENLIBRARY=1 tsx --test scripts/enrichment-test.mjs",
-    "test:live": "tsx --test scripts/live-test.mjs"
-  },
-  "expo": {
-    "autolinking": {
-      "nativeModulesDir": "./modules"
-    }
-  },
-  "private": true
+    "mobile": "bun --filter @readoi/mobile start",
+    "mobile:android": "bun --filter @readoi/mobile android",
+    "mobile:android:release": "bun --filter @readoi/mobile android:release",
+    "mobile:ios": "bun --filter @readoi/mobile ios",
+    "mobile:web": "bun --filter @readoi/mobile web",
+    "desktop": "bun --filter @readoi/desktop start",
+    "desktop:package": "bun --filter @readoi/desktop package",
+    "test": "bun --workspaces --if-present test",
+    "typecheck": "bun --workspaces --if-present typecheck",
+    "lint": "bun --workspaces --if-present lint"
+  }
 }
