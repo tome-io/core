@@ -50,6 +50,7 @@
   },
   "scripts": {
     "start": "expo start",
+    "start:android": "expo start --android",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo run:android",
     "android:release": "expo run:android --variant release",
