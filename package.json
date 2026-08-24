@@ -15,6 +15,7 @@
     "mobile:ios": "bun --filter @readoi/mobile ios",
     "mobile:web": "bun --filter @readoi/mobile web",
     "desktop": "bun --filter @readoi/desktop start",
+    "desktop:install": "bun --filter @readoi/desktop electron:install",
     "desktop:package": "bun --filter @readoi/desktop package",
     "test": "bun --workspaces --if-present test",
     "typecheck": "bun --workspaces --if-present typecheck",

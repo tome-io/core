@@ -46,6 +46,7 @@ bun mobile
 bun mobile:android
 bun mobile:android:release
 bun mobile:web
+bun desktop:install
 bun desktop
 bun desktop:package
 ```
