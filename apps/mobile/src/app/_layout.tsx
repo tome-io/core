@@ -11,6 +11,7 @@ import {
 } from 'react-native-safe-area-context';
 
 import { Sidebar } from '@/components/sidebar';
+import { ExtensionsProvider } from '@/context/extensions-context';
 import { LibraryProvider } from '@/context/library-context';
 import { SettingsContext } from '@/context/settings-context';
 import { loadSettings, saveSettings } from '@/lib/settings';
@@ -66,25 +67,27 @@ export default function RootLayout() {
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>
       <ThemeProvider value={theme}>
         <SettingsContext.Provider value={value}>
-          <LibraryProvider>
-            <StatusBar style="light" />
-            <SafeAreaView
-              className="flex-1"
-              edges={['top', 'right', 'bottom', 'left']}
-              style={{ backgroundColor: BG }}
-            >
-              <View
+          <ExtensionsProvider>
+            <LibraryProvider>
+              <StatusBar style="light" />
+              <SafeAreaView
                 className="flex-1"
-                style={{ flexDirection: useBottomNavigation ? 'column' : 'row' }}
+                edges={['top', 'right', 'bottom', 'left']}
+                style={{ backgroundColor: BG }}
               >
-                {!useBottomNavigation && <Sidebar />}
-                <View className="flex-1" style={{ backgroundColor: BG }}>
-                  <Stack screenOptions={{ headerShown: false }} />
+                <View
+                  className="flex-1"
+                  style={{ flexDirection: useBottomNavigation ? 'column' : 'row' }}
+                >
+                  {!useBottomNavigation && <Sidebar />}
+                  <View className="flex-1" style={{ backgroundColor: BG }}>
+                    <Stack screenOptions={{ headerShown: false }} />
+                  </View>
+                  {useBottomNavigation && <Sidebar compact />}
                 </View>
-                {useBottomNavigation && <Sidebar compact />}
-              </View>
-            </SafeAreaView>
-          </LibraryProvider>
+              </SafeAreaView>
+            </LibraryProvider>
+          </ExtensionsProvider>
         </SettingsContext.Provider>
       </ThemeProvider>
     </SafeAreaProvider>

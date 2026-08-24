@@ -1,0 +1,23 @@
+{
+  "manifestVersion": 1,
+  "id": "org.readoi.internet-archive",
+  "version": "0.1.0",
+  "name": "Internet Archive",
+  "description": "Public book records and available files from the Internet Archive.",
+  "author": "Readio",
+  "homepage": "https://archive.org",
+  "types": ["book"],
+  "resources": [
+    { "name": "catalog", "supportsPagination": true },
+    { "name": "search", "supportsPagination": true },
+    { "name": "meta" },
+    { "name": "acquisition" }
+  ],
+  "catalogs": [
+    { "id": "popular", "name": "Popular on Internet Archive", "resource": "catalog" }
+  ],
+  "transport": { "kind": "bundled", "module": "@readoi/extension-internet-archive" },
+  "permissions": {
+    "hosts": ["https://archive.org"]
+  }
+}

@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 
 import { clearZlibSession, useSettings } from '@/context/settings-context';
+import { useExtensions } from '@/context/extensions-context';
 import { useLibrary } from '@/context/library-context';
 import { isSafLocation, pickDownloadFolder } from '@/lib/download';
 import { beginFolderPicker, endFolderPicker } from '@/lib/folder-picker-lock';
@@ -53,6 +54,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 export default function SettingsScreen() {
   const router = useRouter();
   const { settings, update } = useSettings();
+  const extensions = useExtensions();
   const { cloudLastSyncedAt, cloudSyncing, syncCloudProgress } = useLibrary();
 
   const [email, setEmail] = useState(settings.email);
@@ -61,6 +63,30 @@ export default function SettingsScreen() {
   const [remixUserKey, setRemixUserKey] = useState(settings.remixUserKey);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [extensionUrl, setExtensionUrl] = useState('');
+  const [installingExtension, setInstallingExtension] = useState(false);
+
+  const installExtension = async () => {
+    if (!extensionUrl.trim()) return;
+    setInstallingExtension(true);
+    try {
+      const installed = await extensions.install(extensionUrl);
+      setExtensionUrl('');
+      Alert.alert('Extension installed', `${installed.manifest.name} is now installed.`);
+    } catch (err: any) {
+      Alert.alert('Extension install failed', err.message || String(err));
+    } finally {
+      setInstallingExtension(false);
+    }
+  };
+
+  const updateInstalledExtension = async (operation: () => Promise<void>) => {
+    try {
+      await operation();
+    } catch (err: any) {
+      Alert.alert('Extension update failed', err.message || String(err));
+    }
+  };
 
   const saveAccount = async () => {
     setSaving(true);
@@ -149,6 +175,75 @@ export default function SettingsScreen() {
   return (
     <View className="flex-1" style={{ backgroundColor: '#0b0b0f' }}>
       <ScrollView contentContainerClassName="px-4 py-5">
+        <Section title="Extensions">
+          <Text className="text-sm text-neutral-300">
+            Official: {extensions.bundled.map((extension) => extension.name).join(', ')}
+          </Text>
+          <Text className="text-xs text-neutral-400 leading-4">
+            Third-party extensions are installed explicitly from their repository or manifest
+            URL. Readio does not include a community extension browser.
+          </Text>
+          {extensions.error ? (
+            <Text className="text-xs text-red-400">{extensions.error}</Text>
+          ) : null}
+          <TextInput
+            value={extensionUrl}
+            onChangeText={setExtensionUrl}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            placeholder="https://github.com/owner/repository"
+            placeholderTextColor="#737373"
+            className="h-11 px-3.5 rounded-xl text-white border border-neutral-800"
+            style={{ backgroundColor: '#17171c' }}
+          />
+          <Pressable
+            onPress={installExtension}
+            disabled={installingExtension || !extensionUrl.trim()}
+            className="h-11 rounded-xl items-center justify-center active:opacity-80 disabled:opacity-60"
+            style={{ backgroundColor: '#8b7cf6' }}
+          >
+            {installingExtension ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text className="font-semibold text-white">Install third-party extension</Text>
+            )}
+          </Pressable>
+          {extensions.thirdParty.map((extension) => (
+            <View
+              key={extension.manifest.id}
+              className="flex-row items-center gap-3 border-t border-neutral-800 pt-3"
+            >
+              <View className="flex-1">
+                <Text className="font-medium text-white">{extension.manifest.name}</Text>
+                <Text className="text-xs text-neutral-500" numberOfLines={1}>
+                  {extension.repositoryUrl}
+                </Text>
+              </View>
+              <Pressable
+                onPress={() =>
+                  updateInstalledExtension(() =>
+                    extensions.setEnabled(extension.manifest.id, !extension.enabled)
+                  )
+                }
+                className="rounded-full border border-neutral-700 px-3 py-2"
+              >
+                <Text className="text-xs text-neutral-300">
+                  {extension.enabled ? 'Enabled' : 'Disabled'}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() =>
+                  updateInstalledExtension(() => extensions.remove(extension.manifest.id))
+                }
+                className="rounded-full border border-red-950 px-3 py-2"
+              >
+                <Text className="text-xs text-red-400">Remove</Text>
+              </Pressable>
+            </View>
+          ))}
+        </Section>
+
         <Section title="Z-Library Account">
           <View>
             <Text className="text-sm text-neutral-500 mb-1.5">Email</Text>

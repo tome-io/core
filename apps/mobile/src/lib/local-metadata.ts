@@ -1,13 +1,10 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import JSZip from 'jszip';
-// Metro web resolves pdf-lib's ESM build through tslib@1's incompatible
-// default-export shim. The package's CommonJS entry exposes the same API and
-// avoids that interop failure on web while continuing to work on native.
-import { PDFDocument } from 'pdf-lib/cjs/index';
 
 import { metadataFromFilename } from './book-metadata';
 import type { LibraryBook } from './library';
 import { findBookMetadata, getWorkDetails, type DiscoveryBook } from './openlibrary';
+import { readPdfMetadata } from './pdf-metadata';
 
 const COVER_DIRECTORY = FileSystem.documentDirectory
   ? `${FileSystem.documentDirectory}library-covers`
@@ -165,21 +162,6 @@ async function readEpubMetadata(book: LibraryBook, base64: string): Promise<Embe
   }
 
   return metadata;
-}
-
-async function readPdfMetadata(base64: string): Promise<EmbeddedMetadata> {
-  const pdf = await PDFDocument.load(base64, {
-    ignoreEncryption: true,
-    throwOnInvalidObject: true,
-    updateMetadata: false,
-  });
-  const created = pdf.getCreationDate();
-  return {
-    title: pdf.getTitle()?.trim(),
-    author: pdf.getAuthor()?.trim(),
-    description: pdf.getSubject()?.trim(),
-    year: created ? validYear(String(created.getUTCFullYear())) : '',
-  };
 }
 
 function applyMetadata(book: LibraryBook, metadata: EmbeddedMetadata): LibraryBook {

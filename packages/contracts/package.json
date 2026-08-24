@@ -1,0 +1,16 @@
+{
+  "name": "@readoi/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@readoi/domain": "workspace:*",
+    "@readoi/extension-runtime": "workspace:*"
+  }
+}

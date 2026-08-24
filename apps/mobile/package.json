@@ -3,6 +3,10 @@
   "main": "expo-router/entry",
   "version": "1.0.0",
   "dependencies": {
+    "@readoi/domain": "workspace:*",
+    "@readoi/extension-runtime": "workspace:*",
+    "@readoi/official-extensions": "workspace:*",
+    "@readoi/sync": "workspace:*",
     "@expo/ui": "~57.0.11",
     "@expo/vector-icons": "^15.1.1",
     "@react-native-async-storage/async-storage": "^2.2.0",
@@ -55,7 +59,8 @@
     "test": "tsx --test scripts/live-test.mjs scripts/enrichment-test.mjs",
     "test:enrichment": "tsx --test scripts/enrichment-test.mjs",
     "test:enrichment:live": "LIVE_OPENLIBRARY=1 tsx --test scripts/enrichment-test.mjs",
-    "test:live": "tsx --test scripts/live-test.mjs"
+    "test:live": "tsx --test scripts/live-test.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "expo": {
     "autolinking": {

@@ -1,0 +1,17 @@
+{
+  "name": "@readoi/official-extensions",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@readoi/extension-internet-archive": "workspace:*",
+    "@readoi/extension-open-library": "workspace:*",
+    "@readoi/extension-project-gutenberg": "workspace:*"
+  }
+}

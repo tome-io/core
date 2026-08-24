@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "lib": ["DOM", "ES2022"],
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["src", "electron.vite.config.ts"]
+}

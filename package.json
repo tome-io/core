@@ -5,7 +5,8 @@
   "packageManager": "bun@1.4.0",
   "workspaces": [
     "apps/*",
-    "packages/*"
+    "packages/*",
+    "extensions/official/*"
   ],
   "scripts": {
     "mobile": "bun --filter @readoi/mobile start",

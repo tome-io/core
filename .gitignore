@@ -44,3 +44,6 @@ example
 /android
 /apps/mobile/ios
 /apps/mobile/android
+/apps/desktop/out
+/apps/desktop/dist
+/apps/desktop/release
