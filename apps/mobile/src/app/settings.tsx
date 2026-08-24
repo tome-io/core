@@ -1,5 +1,4 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -7,35 +6,15 @@ import {
   Pressable,
   ScrollView,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 
-import { clearZlibSession, useSettings } from '@/context/settings-context';
-import { useExtensions } from '@/context/extensions-context';
+import { useSettings } from '@/context/settings-context';
 import { useLibrary } from '@/context/library-context';
 import { isSafLocation, pickDownloadFolder } from '@/lib/download';
 import { beginFolderPicker, endFolderPicker } from '@/lib/folder-picker-lock';
 import { validateProgressFolder } from '@/lib/progress-folder-provider';
 import { forgetProgressSyncFolder } from '@/lib/progress-sync';
-
-const DOMAINS = [
-  { label: 'Auto (recommended)', value: '' },
-  { label: 'librella.fi', value: 'https://librella.fi' },
-  { label: 'lexlib.fi', value: 'https://lexlib.fi' },
-  { label: 'bookabooki.fi', value: 'https://bookabooki.fi' },
-  { label: 'article.sk', value: 'https://article.sk' },
-  { label: '1lib.sk', value: 'https://1lib.sk' },
-  { label: 'zlibrary-global.se', value: 'https://zlibrary-global.se' },
-];
-
-const FORMATS = [
-  { label: 'Any', value: '' },
-  { label: 'EPUB', value: 'epub' },
-  { label: 'PDF', value: 'pdf' },
-  { label: 'MOBI', value: 'mobi' },
-  { label: 'AZW3', value: 'azw3' },
-];
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -54,52 +33,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 export default function SettingsScreen() {
   const router = useRouter();
   const { settings, update } = useSettings();
-  const extensions = useExtensions();
   const { cloudLastSyncedAt, cloudSyncing, syncCloudProgress } = useLibrary();
-
-  const [email, setEmail] = useState(settings.email);
-  const [password, setPassword] = useState(settings.password);
-  const [remixUserId, setRemixUserId] = useState(settings.remixUserId);
-  const [remixUserKey, setRemixUserKey] = useState(settings.remixUserKey);
-  const [saving, setSaving] = useState(false);
-  const [savedAt, setSavedAt] = useState<number | null>(null);
-  const [extensionUrl, setExtensionUrl] = useState('');
-  const [installingExtension, setInstallingExtension] = useState(false);
-
-  const installExtension = async () => {
-    if (!extensionUrl.trim()) return;
-    setInstallingExtension(true);
-    try {
-      const installed = await extensions.install(extensionUrl);
-      setExtensionUrl('');
-      Alert.alert('Extension installed', `${installed.manifest.name} is now installed.`);
-    } catch (err: any) {
-      Alert.alert('Extension install failed', err.message || String(err));
-    } finally {
-      setInstallingExtension(false);
-    }
-  };
-
-  const updateInstalledExtension = async (operation: () => Promise<void>) => {
-    try {
-      await operation();
-    } catch (err: any) {
-      Alert.alert('Extension update failed', err.message || String(err));
-    }
-  };
-
-  const saveAccount = async () => {
-    setSaving(true);
-    try {
-      // Credentials changed -> drop cached session so next request re-logins
-      await clearZlibSession();
-      await update({ email: email.trim(), password, remixUserId: remixUserId.trim(), remixUserKey: remixUserKey.trim() });
-      setSavedAt(Date.now());
-      setTimeout(() => setSavedAt(null), 2500);
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const chooseFolder = async (
     setting:
@@ -176,140 +110,16 @@ export default function SettingsScreen() {
     <View className="flex-1" style={{ backgroundColor: '#0b0b0f' }}>
       <ScrollView contentContainerClassName="px-4 py-5">
         <Section title="Extensions">
-          <Text className="text-sm text-neutral-300">
-            Official: {extensions.bundled.map((extension) => extension.name).join(', ')}
-          </Text>
           <Text className="text-xs text-neutral-400 leading-4">
-            Third-party extensions are installed explicitly from their repository or manifest
-            URL. Readio does not include a community extension browser.
+            Install providers from a repository URL and configure each provider independently.
+            Readio does not include a third-party extension catalog.
           </Text>
-          {extensions.error ? (
-            <Text className="text-xs text-red-400">{extensions.error}</Text>
-          ) : null}
-          <TextInput
-            value={extensionUrl}
-            onChangeText={setExtensionUrl}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-            placeholder="https://github.com/owner/repository"
-            placeholderTextColor="#737373"
-            className="h-11 px-3.5 rounded-xl text-white border border-neutral-800"
-            style={{ backgroundColor: '#17171c' }}
-          />
           <Pressable
-            onPress={installExtension}
-            disabled={installingExtension || !extensionUrl.trim()}
+            onPress={() => router.push('/extensions')}
             className="h-11 rounded-xl items-center justify-center active:opacity-80 disabled:opacity-60"
             style={{ backgroundColor: '#8b7cf6' }}
           >
-            {installingExtension ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text className="font-semibold text-white">Install third-party extension</Text>
-            )}
-          </Pressable>
-          {extensions.thirdParty.map((extension) => (
-            <View
-              key={extension.manifest.id}
-              className="flex-row items-center gap-3 border-t border-neutral-800 pt-3"
-            >
-              <View className="flex-1">
-                <Text className="font-medium text-white">{extension.manifest.name}</Text>
-                <Text className="text-xs text-neutral-500" numberOfLines={1}>
-                  {extension.repositoryUrl}
-                </Text>
-              </View>
-              <Pressable
-                onPress={() =>
-                  updateInstalledExtension(() =>
-                    extensions.setEnabled(extension.manifest.id, !extension.enabled)
-                  )
-                }
-                className="rounded-full border border-neutral-700 px-3 py-2"
-              >
-                <Text className="text-xs text-neutral-300">
-                  {extension.enabled ? 'Enabled' : 'Disabled'}
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() =>
-                  updateInstalledExtension(() => extensions.remove(extension.manifest.id))
-                }
-                className="rounded-full border border-red-950 px-3 py-2"
-              >
-                <Text className="text-xs text-red-400">Remove</Text>
-              </Pressable>
-            </View>
-          ))}
-        </Section>
-
-        <Section title="Z-Library Account">
-          <View>
-            <Text className="text-sm text-neutral-500 mb-1.5">Email</Text>
-            <TextInput
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              autoComplete="email"
-              keyboardType="email-address"
-              placeholder="you@example.com"
-              placeholderTextColor="#a3a3a3"
-              className="h-11 px-3.5 rounded-xl text-white border border-neutral-800" style={{ backgroundColor: '#17171c' }}
-            />
-          </View>
-          <View>
-            <Text className="text-sm text-neutral-500 mb-1.5">Password</Text>
-            <TextInput
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              placeholder="Your password"
-              placeholderTextColor="#a3a3a3"
-              className="h-11 px-3.5 rounded-xl text-white border border-neutral-800" style={{ backgroundColor: '#17171c' }}
-            />
-          </View>
-          <Text className="text-xs text-neutral-400 leading-4">
-            Stored in the device Keychain and used only to obtain a session. Advanced alternative:
-            paste remix_userid / remix_userkey from your browser cookies instead. Expo Go and an
-            installed Reader build have separate encrypted storage, so credentials must be saved
-            again after installing Reader for the first time.
-          </Text>
-
-          <View className="gap-2">
-            <Text className="text-sm text-neutral-500">Remix User ID (optional)</Text>
-            <TextInput
-              value={remixUserId}
-              onChangeText={setRemixUserId}
-              autoCapitalize="none"
-              placeholder="e.g. 1234567"
-              placeholderTextColor="#a3a3a3"
-              className="h-11 px-3.5 rounded-xl text-white border border-neutral-800" style={{ backgroundColor: '#17171c' }}
-            />
-            <Text className="text-sm text-neutral-500">Remix User Key (optional)</Text>
-            <TextInput
-              value={remixUserKey}
-              onChangeText={setRemixUserKey}
-              secureTextEntry
-              autoCapitalize="none"
-              placeholder="remix_userkey cookie value"
-              placeholderTextColor="#a3a3a3"
-              className="h-11 px-3.5 rounded-xl text-white border border-neutral-800" style={{ backgroundColor: '#17171c' }}
-            />
-          </View>
-
-          <Pressable
-            onPress={saveAccount}
-            disabled={saving}
-            className="h-11 rounded-xl items-center justify-center active:opacity-80 disabled:opacity-60" style={{ backgroundColor: '#8b7cf6' }}
-          >
-            {saving ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text className="text-white font-semibold">
-                {savedAt ? 'Saved ✓' : 'Save account'}
-              </Text>
-            )}
+            <Text className="font-semibold text-white">Manage extensions</Text>
           </Pressable>
         </Section>
 
@@ -334,8 +144,8 @@ export default function SettingsScreen() {
             )}
           </View>
           <Text className="text-xs text-neutral-400 leading-4">
-            Local EPUB, PDF and ebook files are indexed from this folder. New Z-Library
-            downloads are saved here too.
+            Local EPUB, PDF and ebook files are indexed from this folder. Provider downloads are
+            saved here too.
           </Text>
         </Section>
 
@@ -415,62 +225,8 @@ export default function SettingsScreen() {
           )}
         </Section>
 
-        <Section title="API Domain">
-          <View className="flex-row flex-wrap gap-2">
-            {DOMAINS.map((d) => {
-              const active = d.value === settings.domain;
-              return (
-                <Pressable
-                  key={d.label}
-                  onPress={() => update({ domain: d.value })}
-                  className={
-                    active
-                      ? 'px-3 py-2 rounded-full'
-                      : 'px-3 py-2 rounded-full border border-neutral-800'
-                  }
-                  style={active ? { backgroundColor: '#8b7cf6' } : undefined}
-                >
-                  <Text className={active ? 'text-xs font-semibold text-white' : 'text-xs font-medium text-neutral-400'}>
-                    {d.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-          <Text className="text-xs text-neutral-400 leading-4">
-            Auto tries community mirrors until one answers and remembers it. A pinned mirror skips failover.
-          </Text>
-        </Section>
-
-        <Section title="Preferred Format">
-          <View className="flex-row flex-wrap gap-2">
-            {FORMATS.map((f) => {
-              const active = f.value === settings.preferredFormat;
-              return (
-                <Pressable
-                  key={f.label}
-                  onPress={() => update({ preferredFormat: f.value })}
-                  className={
-                    active
-                      ? 'px-3 py-2 rounded-full'
-                      : 'px-3 py-2 rounded-full border border-neutral-800'
-                  }
-                  style={active ? { backgroundColor: '#8b7cf6' } : undefined}
-                >
-                  <Text className={active ? 'text-xs font-semibold text-white' : 'text-xs font-medium text-neutral-400'}>
-                    {f.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-          <Text className="text-xs text-neutral-400 leading-4">
-            Filters search results when set.
-          </Text>
-        </Section>
-
         <Text onPress={() => router.replace('/home')} className="text-center text-xs text-neutral-400 mt-2 mb-8">
-          Reader · powered by Z-Library eapi
+          Readio
         </Text>
       </ScrollView>
     </View>

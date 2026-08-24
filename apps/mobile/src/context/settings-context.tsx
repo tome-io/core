@@ -1,13 +1,11 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useContext } from 'react';
 
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, type Settings } from '@/lib/settings';
-import { secureDelete } from '@/lib/secure';
 
 export interface SettingsContextValue {
   settings: Settings;
   ready: boolean;
-  /** Patch settings, persist them, and clear the zlib session when credentials change. */
+  /** Patch and persist application-level settings. Provider settings live with extensions. */
   update: (patch: Partial<Settings>) => Promise<void>;
 }
 
@@ -25,11 +23,3 @@ export function useSettings(): SettingsContextValue {
 export { loadSettings, saveSettings };
 
 /** Persisted outside the provider: which mirror last answered. */
-export async function forgetMirror() {
-  await AsyncStorage.removeItem('zlib_domain');
-}
-
-export async function clearZlibSession() {
-  await secureDelete('zlib_remix_userid');
-  await secureDelete('zlib_remix_userkey');
-}

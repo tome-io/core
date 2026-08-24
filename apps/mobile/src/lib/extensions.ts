@@ -1,10 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
+  ExtensionLoader,
   ExtensionRegistry,
   type ExtensionRegistryStore,
   type InstalledExtension,
 } from '@readoi/extension-runtime';
-import { officialExtensionManifests } from '@readoi/official-extensions';
+import { officialExtensionManifests, officialExtensions } from '@readoi/official-extensions';
+
+import { mobileScriptExtensionExecutor } from './script-extension-executor';
 
 const EXTENSION_REGISTRY_KEY = 'third_party_extensions_v1';
 
@@ -28,3 +31,8 @@ export const extensionRegistry = new ExtensionRegistry(
   new AsyncStorageExtensionStore(),
   officialExtensionManifests
 );
+
+export const extensionLoader = new ExtensionLoader({
+  bundled: new Map(officialExtensions.map((extension) => [extension.manifest.id, extension])),
+  scriptExecutor: mobileScriptExtensionExecutor,
+});

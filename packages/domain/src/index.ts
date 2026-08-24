@@ -20,6 +20,7 @@ export interface BookAcquisition {
   openUrl?: string;
   sizeBytes?: number;
   language?: string;
+  headers?: Record<string, string>;
 }
 
 export interface BookProgress {

@@ -59,7 +59,7 @@ export default function LibraryScreen() {
 
   const books = useMemo(() => {
     const filtered = downloaded.filter((book) => {
-      const bookFormat = book.format?.toLowerCase() || book.zlib?.format?.toLowerCase() || '';
+      const bookFormat = book.format?.toLowerCase() || '';
       if (format === 'all') return true;
       if (format === 'read') return book.isRead === true;
       if (format === 'other') return !MAIN_FORMATS.has(bookFormat);

@@ -19,8 +19,12 @@ DOM renderer or leaking Node APIs into mobile bundles.
 
 `apps/mobile` remains an Expo Router application. Existing mobile database and library
 code is intentionally kept operational while it is moved behind the shared repository
-interfaces incrementally. Android SAF, Moon+ backup parsing, secure Z-Library session
-storage, and Expo SQLite remain mobile adapters.
+interfaces incrementally. Android SAF, Moon+ backup parsing, extension-scoped secure storage,
+and Expo SQLite remain mobile adapters.
+
+Remote extension bundles are downloaded and SHA-256 verified by the host. Native bundles execute
+in a hidden WebView and web bundles in a sandboxed iframe. The sandbox has no direct network
+access; all requests cross a JSON message boundary where manifest host permissions are enforced.
 
 ## Desktop
 

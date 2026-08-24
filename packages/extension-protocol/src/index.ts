@@ -16,6 +16,44 @@ export interface ExtensionCatalog {
   resource: 'catalog';
 }
 
+export type ExtensionConfigValue = string | number | boolean;
+
+export type ExtensionConfigField =
+  | {
+      key: string;
+      type: 'text' | 'password';
+      title: string;
+      required?: boolean;
+      default?: string;
+    }
+  | {
+      key: string;
+      type: 'number';
+      title: string;
+      required?: boolean;
+      default?: number;
+    }
+  | {
+      key: string;
+      type: 'checkbox';
+      title: string;
+      required?: boolean;
+      default?: boolean;
+    }
+  | {
+      key: string;
+      type: 'select';
+      title: string;
+      required?: boolean;
+      default?: string;
+      options: { label: string; value: string }[];
+    };
+
+export interface ExtensionBehaviorHints {
+  configurable?: boolean;
+  configurationRequired?: boolean;
+}
+
 export type ExtensionTransport =
   | {
       kind: 'bundled';
@@ -49,6 +87,8 @@ export interface ExtensionManifest {
   types: ['book'];
   resources: ExtensionResource[];
   catalogs?: ExtensionCatalog[];
+  config?: ExtensionConfigField[];
+  behaviorHints?: ExtensionBehaviorHints;
   transport: ExtensionTransport;
   permissions?: {
     hosts?: string[];
@@ -61,6 +101,7 @@ export interface ExtensionQuery {
   page?: number;
   limit?: number;
   language?: string;
+  format?: string;
 }
 
 export interface ExtensionPage<T> {
@@ -117,6 +158,14 @@ const RESOURCE_NAMES = new Set<ExtensionResourceName>([
   'search',
   'meta',
   'acquisition',
+]);
+
+const CONFIG_FIELD_TYPES = new Set<ExtensionConfigField['type']>([
+  'text',
+  'password',
+  'number',
+  'checkbox',
+  'select',
 ]);
 
 export function parseExtensionManifest(input: unknown): ExtensionManifest {
@@ -222,6 +271,97 @@ export function parseExtensionManifest(input: unknown): ExtensionManifest {
       })
     : undefined;
 
+  const config = Array.isArray(value.config)
+    ? value.config.map((candidate, index): ExtensionConfigField => {
+        const field = record(candidate);
+        if (!field || !CONFIG_FIELD_TYPES.has(field.type as ExtensionConfigField['type'])) {
+          throw new InvalidExtensionManifestError(`Invalid config field at index ${index}.`);
+        }
+        const key = requiredString(field, 'key');
+        if (!/^[a-z][a-z0-9._-]*$/.test(key)) {
+          throw new InvalidExtensionManifestError(
+            `Config field key "${key}" must start with a lowercase letter and contain only lowercase letters, numbers, dots, dashes, or underscores.`
+          );
+        }
+        const title = requiredString(field, 'title');
+        const required = typeof field.required === 'boolean' ? field.required : undefined;
+
+        if (field.type === 'number') {
+          if (field.default != null && typeof field.default !== 'number') {
+            throw new InvalidExtensionManifestError(`Default for config field "${key}" must be a number.`);
+          }
+          return { key, type: 'number', title, ...(required != null ? { required } : {}), ...(typeof field.default === 'number' ? { default: field.default } : {}) };
+        }
+        if (field.type === 'checkbox') {
+          if (field.default != null && typeof field.default !== 'boolean') {
+            throw new InvalidExtensionManifestError(`Default for config field "${key}" must be a boolean.`);
+          }
+          return { key, type: 'checkbox', title, ...(required != null ? { required } : {}), ...(typeof field.default === 'boolean' ? { default: field.default } : {}) };
+        }
+        if (field.type === 'select') {
+          if (!Array.isArray(field.options) || !field.options.length) {
+            throw new InvalidExtensionManifestError(`Select config field "${key}" requires options.`);
+          }
+          const options = field.options.map((candidateOption, optionIndex) => {
+            const option = record(candidateOption);
+            if (!option) {
+              throw new InvalidExtensionManifestError(
+                `Invalid option ${optionIndex} for config field "${key}".`
+              );
+            }
+            if (typeof option.value !== 'string') {
+              throw new InvalidExtensionManifestError(
+                `Option ${optionIndex} for config field "${key}" must have a string value.`
+              );
+            }
+            return { label: requiredString(option, 'label'), value: option.value };
+          });
+          if (field.default != null && typeof field.default !== 'string') {
+            throw new InvalidExtensionManifestError(`Default for config field "${key}" must be a string.`);
+          }
+          if (
+            typeof field.default === 'string' &&
+            !options.some((option) => option.value === field.default)
+          ) {
+            throw new InvalidExtensionManifestError(
+              `Default for config field "${key}" must match a declared option.`
+            );
+          }
+          return { key, type: 'select', title, options, ...(required != null ? { required } : {}), ...(typeof field.default === 'string' ? { default: field.default } : {}) };
+        }
+        if (field.default != null && typeof field.default !== 'string') {
+          throw new InvalidExtensionManifestError(`Default for config field "${key}" must be a string.`);
+        }
+        return {
+          key,
+          type: field.type,
+          title,
+          ...(required != null ? { required } : {}),
+          ...(typeof field.default === 'string' ? { default: field.default } : {}),
+        };
+      })
+    : undefined;
+  if (config && new Set(config.map((field) => field.key)).size !== config.length) {
+    throw new InvalidExtensionManifestError('Config field keys must be unique.');
+  }
+
+  const behaviorHintsValue = record(value.behaviorHints);
+  const behaviorHints = behaviorHintsValue
+    ? {
+        ...(typeof behaviorHintsValue.configurable === 'boolean'
+          ? { configurable: behaviorHintsValue.configurable }
+          : {}),
+        ...(typeof behaviorHintsValue.configurationRequired === 'boolean'
+          ? { configurationRequired: behaviorHintsValue.configurationRequired }
+          : {}),
+      }
+    : undefined;
+  if (behaviorHints?.configurationRequired && !config?.some((field) => field.required)) {
+    throw new InvalidExtensionManifestError(
+      'configurationRequired extensions must declare at least one required config field.'
+    );
+  }
+
   const permissions = record(value.permissions);
   const hosts = permissions?.hosts;
   if (hosts != null && !Array.isArray(hosts)) {
@@ -237,7 +377,7 @@ export function parseExtensionManifest(input: unknown): ExtensionManifest {
       })
     : undefined;
   if (
-    (parsedTransport.kind === 'http' || parsedTransport.kind === 'declarative') &&
+    parsedTransport.kind !== 'bundled' &&
     !parsedHosts?.length
   ) {
     throw new InvalidExtensionManifestError(
@@ -260,6 +400,8 @@ export function parseExtensionManifest(input: unknown): ExtensionManifest {
     if (typeof value[key] === 'string') manifest[key] = value[key];
   }
   if (catalogs) manifest.catalogs = catalogs;
+  if (config) manifest.config = config;
+  if (behaviorHints) manifest.behaviorHints = behaviorHints;
   if (parsedHosts) manifest.permissions = { hosts: parsedHosts };
   return manifest;
 }

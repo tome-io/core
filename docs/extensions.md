@@ -36,20 +36,27 @@ A GitHub repository resolves to `reado-extension.json` at its root. Readio store
 manifest snapshot, source URL, enabled state, and install/update timestamps locally.
 Official ids cannot be replaced by third-party manifests.
 
-Third-party extensions can be declarative or expose the HTTP resource protocol. A
-script manifest must contain an immutable bundle URL and SHA-256 digest. It is accepted
-only on platforms with an explicit sandbox executor; raw TypeScript and unverified
-branch-head JavaScript are never executed.
+Third-party extensions can be declarative, expose the HTTP resource protocol, or provide an
+integrity-checked JavaScript bundle. Script extensions execute in an isolated WebView/iframe with
+direct network access disabled. The host exposes scoped configuration, normal storage, secure
+storage, and network requests restricted to the HTTPS origins declared by the manifest.
 
-The planned public extension collection should be a separate repository in the
-[`readoi`](https://github.com/readoi) organization. It may accept community pull
-requests, but the app will still require explicit URL installation unless a catalog is
-introduced later.
+Extension configuration is described by the manifest. Password fields are stored through the
+platform secure store; provider credentials and mirror preferences are never application-level
+settings. Search always targets one explicitly selected extension rather than combining results
+from multiple providers.
 
-## Z-Library transition
+The public extension collection lives at
+[`readoi/extensions`](https://github.com/readoi/extensions). It may accept community pull requests,
+but the app still requires explicit URL installation; there is no in-app third-party catalog.
 
-The current Expo client still contains its established Z-Library adapter so existing
-search and downloads are not removed before an integrity-checked mobile script sandbox
-exists. It remains the sole provider for the existing search screen. The adapter should
-move to a separately installed third-party repository once that sandbox is implemented;
-it must not become an official bundled discovery source.
+## Third-party Z-Library provider
+
+The Z-Library adapter is not built into Readio. It is a manually installed script extension at:
+
+```text
+https://github.com/readoi/extensions/tree/main/third-party/zlibrary
+```
+
+Its account, session, domain, and preferred format are owned by that extension. Removing the
+extension removes its declared configuration and disconnects it from search.

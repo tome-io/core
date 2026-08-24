@@ -1,14 +1,17 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
-import type { Book } from './zlib';
-
 function sanitize(name: string): string {
   return name.replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, 150);
 }
 
-export function bookFilename(book: Book): string {
-  const base = [book.title, book.author].filter(Boolean).join(' - ');
-  const ext = book.format ? `.${book.format}` : '.bin';
+export function bookFilename(book: {
+  title: string;
+  author?: string;
+  authors?: string[];
+  format?: string;
+}): string {
+  const base = [book.title, book.author || book.authors?.[0]].filter(Boolean).join(' - ');
+  const ext = book.format ? `.${book.format.toLowerCase()}` : '.bin';
   return sanitize(base || 'book') + ext;
 }
 

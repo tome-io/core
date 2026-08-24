@@ -1,6 +1,6 @@
 import type { DiscoveryBook, FeedBook } from './openlibrary';
 import { loadPersistedLibrary, savePersistedLibrary } from './library-db';
-import type { Book } from './zlib';
+import type { BookAcquisition, BookMetadata } from '@readoi/domain';
 import { metadataFromFilename } from './book-metadata';
 
 export interface LibraryBook extends FeedBook {
@@ -13,7 +13,11 @@ export interface LibraryBook extends FeedBook {
   downloadedAt?: number;
   fileUri?: string;
   discovery?: DiscoveryBook;
-  zlib?: Book;
+  extension?: {
+    extensionId: string;
+    book: BookMetadata;
+    acquisition?: BookAcquisition;
+  };
   local?: LocalFileBook;
   metadataPending?: boolean;
   metadataUpdatedAt?: number;
@@ -61,10 +65,6 @@ function discoveryKey(book: DiscoveryBook): string {
   return `openlibrary:${book.id}`;
 }
 
-function zlibKey(book: Book): string {
-  return `zlib:${book.id}:${book.hash}`;
-}
-
 export function fromLocalFile(file: LocalFileBook): LibraryBook {
   const { title, author } = metadataFromFilename(file.filename, file.format);
   const key = `local:${file.uri}`;
@@ -110,24 +110,25 @@ export function fromDiscoveryBook(
   };
 }
 
-export function fromZlibBook(
-  book: Book,
+export function fromExtensionBook(
+  extensionId: string,
+  book: BookMetadata,
   overrides: Partial<LibraryBook> = {}
 ): LibraryBook {
-  const key = zlibKey(book);
+  const key = `extension:${extensionId}:${book.id}`;
   return {
     key,
     id: key,
     title: book.title,
-    author: book.author,
-    cover: book.cover,
-    description: book.description,
-    year: book.year,
+    author: book.authors[0] || 'Unknown',
+    cover: book.coverUrl || '',
+    description: book.description || '',
+    year: book.publishedYear || '',
+    rating: book.rating,
+    ratingsCount: book.ratingsCount,
     genre: 'Other',
-    format: book.format,
-    size: book.size,
     addedAt: Date.now(),
-    zlib: book,
+    extension: { extensionId, book },
     ...overrides,
   };
 }
@@ -151,10 +152,14 @@ export function detailParams(book: LibraryBook) {
       params: { id: book.discovery.id, ext: JSON.stringify(book.discovery) },
     };
   }
-  if (book.zlib) {
+  if (book.extension) {
     return {
       pathname: '/book/[id]' as const,
-      params: { id: book.zlib.id, item: JSON.stringify(book.zlib) },
+      params: {
+        id: book.extension.book.id,
+        extensionId: book.extension.extensionId,
+        extensionBook: JSON.stringify(book.extension.book),
+      },
     };
   }
   throw new Error(`Library item ${book.key} has no source metadata.`);

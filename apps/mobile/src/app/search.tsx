@@ -1,4 +1,5 @@
 import { Feather } from '@expo/vector-icons';
+import type { BookMetadata } from '@readoi/domain';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -12,8 +13,8 @@ import {
 } from 'react-native';
 
 import { BookGrid, BookGridSkeleton, GridLoadingMore } from '@/components/book-grid';
-import { useSettings } from '@/context/settings-context';
-import { searchBooks, type Book } from '@/lib/zlib';
+import type { CardBook } from '@/components/book-card';
+import { useExtensions } from '@/context/extensions-context';
 
 const SEARCH_DELAY_MS = 500;
 
@@ -31,15 +32,33 @@ const SEARCH_HINTS = [
   { icon: 'hash' as const, label: 'ISBNs' },
 ];
 
+interface SearchBook extends CardBook {
+  extensionId: string;
+  metadata: BookMetadata;
+}
+
+function searchBook(book: BookMetadata, extensionId: string): SearchBook {
+  return {
+    id: `${extensionId}:${book.id}`,
+    title: book.title,
+    author: book.authors[0] || 'Unknown',
+    cover: book.coverUrl || '',
+    year: book.publishedYear,
+    rating: book.rating,
+    extensionId,
+    metadata: book,
+  };
+}
+
 export default function SearchScreen() {
   const router = useRouter();
-  const { settings } = useSettings();
+  const extensions = useExtensions();
   const { width } = useWindowDimensions();
   const wideHeader = width >= 900;
   const searchGeneration = useRef(0);
   const [query, setQuery] = useState('');
-  const [format, setFormat] = useState(settings.preferredFormat);
-  const [books, setBooks] = useState<Book[]>([]);
+  const [format, setFormat] = useState('');
+  const [books, setBooks] = useState<SearchBook[]>([]);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -56,11 +75,19 @@ export default function SearchScreen() {
     setSearchedFor(cleanQuery);
     setSearchedFormat(fmt);
     try {
-      const results = await searchBooks(cleanQuery, 1, fmt);
+      if (!extensions.searchExtensionId) {
+        throw new Error('Choose an enabled search provider in Extensions first.');
+      }
+      const result = await extensions.search(extensions.searchExtensionId, {
+        query: cleanQuery,
+        page: 1,
+        limit: 25,
+        format: fmt || undefined,
+      });
       if (searchGeneration.current !== generation) return;
-      setBooks(results);
+      setBooks(result.items.map((book) => searchBook(book, extensions.searchExtensionId!)));
       setPage(1);
-      setHasMore(results.length === 25);
+      setHasMore(result.nextPage != null || result.items.length === 25);
     } catch (err: any) {
       if (searchGeneration.current !== generation) return;
       setError(err.message || String(err));
@@ -68,7 +95,7 @@ export default function SearchScreen() {
     } finally {
       if (searchGeneration.current === generation) setLoading(false);
     }
-  }, []);
+  }, [extensions]);
 
   useEffect(() => {
     const cleanQuery = query.trim();
@@ -119,21 +146,39 @@ export default function SearchScreen() {
     setError(null);
     try {
       const nextPage = page + 1;
-      const results = await searchBooks(searchedFor, nextPage, searchedFormat);
+      if (!extensions.searchExtensionId) {
+        throw new Error('Choose an enabled search provider in Extensions first.');
+      }
+      const result = await extensions.search(extensions.searchExtensionId, {
+        query: searchedFor,
+        page: nextPage,
+        limit: 25,
+        format: searchedFormat || undefined,
+      });
       if (searchGeneration.current !== generation) return;
       setPage(nextPage);
-      setHasMore(results.length === 25);
-      setBooks((current) => [...current, ...results]);
+      setHasMore(result.nextPage != null || result.items.length === 25);
+      setBooks((current) => [
+        ...current,
+        ...result.items.map((book) => searchBook(book, extensions.searchExtensionId!)),
+      ]);
     } catch (err: any) {
       if (searchGeneration.current === generation) setError(err.message || String(err));
     } finally {
       if (searchGeneration.current === generation) setLoadingMore(false);
     }
-  }, [hasMore, loadingMore, page, searchedFor, searchedFormat]);
+  }, [extensions, hasMore, loadingMore, page, searchedFor, searchedFormat]);
 
   const openBook = useCallback(
-    (book: Book) => {
-      router.push({ pathname: '/book/[id]', params: { id: book.id, item: JSON.stringify(book) } });
+    (book: SearchBook) => {
+      router.push({
+        pathname: '/book/[id]',
+        params: {
+          id: book.metadata.id,
+          extensionId: book.extensionId,
+          extensionBook: JSON.stringify(book.metadata),
+        },
+      });
     },
     [router]
   );

@@ -10,16 +10,15 @@ if (!config.resolver.assetExts.includes('wasm')) {
   config.resolver.assetExts.push('wasm');
 }
 
-// Dev-only CORS proxy: Z-Library mirrors don't send CORS headers, so the web
-// build routes its API calls through /zlib-proxy/<encodeURIComponent(url)>.
-// Native builds talk to the mirrors directly.
+// Dev-only CORS proxy for provider requests made by the web build. Native
+// builds talk to declared extension hosts directly.
 const previousEnhance = config.server?.enhanceMiddleware;
 config.server = {
   ...(config.server || {}),
   enhanceMiddleware: (middleware, server) => {
     const inner = previousEnhance ? previousEnhance(middleware, server) : middleware;
 
-    const PREFIX = '/zlib-proxy/';
+    const PREFIX = '/reado-proxy/';
 
     return (req, res, next) => {
       // expo-sqlite uses SharedArrayBuffer on web. These headers are required
@@ -46,7 +45,7 @@ config.server = {
 };
 
 async function handleProxy(req, res) {
-  const PREFIX = '/zlib-proxy/';
+  const PREFIX = '/reado-proxy/';
   try {
     const encoded = req.url.slice(PREFIX.length).split('?')[0];
     const target = decodeURIComponent(encoded);
@@ -58,9 +57,10 @@ async function handleProxy(req, res) {
 
     // Forward method/body/headers, dropping hop-by-hop and browser-only ones
     const headers = { ...req.headers };
-    // Browsers can't set the Cookie header; the app sends X-Zlib-Cookie instead
-    if (headers['x-zlib-cookie']) {
-      headers.cookie = headers['x-zlib-cookie'];
+    // Browsers cannot set Cookie directly; the host bridge uses this private
+    // development header after enforcing extension host permissions.
+    if (headers['x-reado-cookie']) {
+      headers.cookie = headers['x-reado-cookie'];
     }
     for (const h of [
       'host',
@@ -69,7 +69,7 @@ async function handleProxy(req, res) {
       'referer',
       'accept-encoding',
       'content-length',
-      'x-zlib-cookie',
+      'x-reado-cookie',
     ]) {
       delete headers[h];
     }
