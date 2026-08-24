@@ -37,7 +37,11 @@ export interface MetadataEnrichmentResult {
 }
 
 export class MetadataEnrichmentService {
-  constructor(private readonly sources: readonly MetadataEnrichmentSource[]) {}
+  private readonly sources: readonly MetadataEnrichmentSource[];
+
+  constructor(sources: readonly MetadataEnrichmentSource[]) {
+    this.sources = sources;
+  }
 
   async enrich(seed: MetadataCandidate): Promise<MetadataEnrichmentResult> {
     const title = seed.metadata.title;
@@ -65,7 +69,11 @@ export class MetadataEnrichmentService {
 }
 
 export class DiscoveryService {
-  constructor(private readonly extensions: ExtensionProvider) {}
+  private readonly extensions: ExtensionProvider;
+
+  constructor(extensions: ExtensionProvider) {
+    this.extensions = extensions;
+  }
 
   async catalog(
     extensionId: string,

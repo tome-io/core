@@ -130,11 +130,19 @@ function assertThirdPartyTransport(manifest: ExtensionManifest): void {
 }
 
 export class ExtensionRegistry {
+  private readonly store: ExtensionRegistryStore;
+  private readonly bundled: readonly ExtensionManifest[];
+  private readonly fetchFn: typeof fetch;
+
   constructor(
-    private readonly store: ExtensionRegistryStore,
-    private readonly bundled: readonly ExtensionManifest[],
-    private readonly fetchFn: typeof fetch = fetch
-  ) {}
+    store: ExtensionRegistryStore,
+    bundled: readonly ExtensionManifest[],
+    fetchFn: typeof fetch = fetch
+  ) {
+    this.store = store;
+    this.bundled = bundled;
+    this.fetchFn = fetchFn;
+  }
 
   private async installed(): Promise<InstalledExtension[]> {
     return (await this.store.read()).map(validateInstalledExtension);
@@ -308,8 +316,10 @@ function createRemoteExtension(
 
 export class ExtensionLoader {
   private readonly fetchFn: typeof fetch;
+  private readonly options: ExtensionLoaderOptions;
 
-  constructor(private readonly options: ExtensionLoaderOptions) {
+  constructor(options: ExtensionLoaderOptions) {
+    this.options = options;
     this.fetchFn = options.fetchFn ?? fetch;
   }
 

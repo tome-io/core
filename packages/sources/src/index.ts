@@ -15,13 +15,16 @@ export interface SourceHttpClient {
 }
 
 export class SourceRequestError extends Error {
+  readonly url: string;
+
   constructor(
     message: string,
-    readonly url: string,
+    url: string,
     options?: ErrorOptions
   ) {
     super(message, options);
     this.name = 'SourceRequestError';
+    this.url = url;
   }
 }
 

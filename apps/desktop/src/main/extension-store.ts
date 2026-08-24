@@ -6,7 +6,11 @@ import type {
 } from '@readoi/extension-runtime';
 
 export class JsonExtensionStore implements ExtensionRegistryStore {
-  constructor(private readonly path: string) {}
+  private readonly path: string;
+
+  constructor(path: string) {
+    this.path = path;
+  }
 
   async read(): Promise<InstalledExtension[]> {
     let contents: string;
