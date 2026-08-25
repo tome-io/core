@@ -9,10 +9,10 @@
     "extensions/official/*"
   ],
   "scripts": {
-    "android": "bun run --cwd \"$PWD/apps/mobile\" start:android",
+    "android": "bun run --cwd \"$PWD/apps/mobile\" android",
     "android:build": "bun run --cwd \"$PWD/apps/mobile\" android",
     "android:release": "bun run --cwd \"$PWD/apps/mobile\" android:release",
-    "mobile": "bun run --cwd \"$PWD/apps/mobile\" start:android",
+    "mobile": "bun run --cwd \"$PWD/apps/mobile\" android",
     "mobile:start": "bun run --cwd \"$PWD/apps/mobile\" start",
     "mobile:android": "bun run --cwd \"$PWD/apps/mobile\" android",
     "mobile:android:release": "bun run --cwd \"$PWD/apps/mobile\" android:release",
