@@ -9,10 +9,11 @@ import {
   View,
 } from 'react-native';
 
+import { colors } from '@/components/app-ui';
 import { BookCard, type CardBook } from './book-card';
 
 const SIDEBAR_WIDTH = 76;
-const IDEAL_CARD_WIDTH = 112;
+const IDEAL_CARD_WIDTH = 124;
 const HORIZONTAL_PADDING = 24;
 const COLUMN_GAP = 16;
 const ROW_GAP = 24;
@@ -85,8 +86,8 @@ export function BookGrid<T extends CardBook>({
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            tintColor="#8b7cf6"
-            colors={['#8b7cf6']}
+            tintColor={colors.accent}
+            colors={[colors.accent]}
           />
         ) : undefined
       }
@@ -123,16 +124,16 @@ export function BookGridSkeleton({ count = 18 }: { count?: number }) {
                 style={{
                   width: cardWidth,
                   height: Math.round(cardWidth * 1.5),
-                  backgroundColor: '#1b1b22',
+                  backgroundColor: colors.surfaceRaised,
                 }}
               />
               <View
                 className="h-2.5 rounded-full mb-2"
-                style={{ width: '72%', backgroundColor: '#1b1b22' }}
+                style={{ width: '72%', backgroundColor: colors.surfaceRaised }}
               />
               <View
                 className="h-2 rounded-full"
-                style={{ width: '48%', backgroundColor: '#1b1b22' }}
+                style={{ width: '48%', backgroundColor: colors.surfaceRaised }}
               />
             </View>
           ))}
@@ -145,7 +146,7 @@ export function BookGridSkeleton({ count = 18 }: { count?: number }) {
 export function GridLoadingMore() {
   return (
     <View style={{ paddingVertical: 20, alignItems: 'center' }}>
-      <ActivityIndicator color="#8b7cf6" />
+      <ActivityIndicator color={colors.accent} />
     </View>
   );
 }

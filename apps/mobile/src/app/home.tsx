@@ -1,11 +1,23 @@
+import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { FlatList, type ViewToken, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  FlatList,
+  Keyboard,
+  Pressable,
+  TextInput,
+  type ViewToken,
+  View,
+} from 'react-native';
 
+import { colors } from '@/components/app-ui';
 import { Rail, toDiscoveryBook } from '@/components/poster';
+import { useLibrary } from '@/context/library-context';
+import { detailParams, type LibraryBook } from '@/lib/library';
 import { getSubject, getTrending, type FeedBook } from '@/lib/openlibrary';
 
-const BG = '#0b0b0f';
+const SEARCH_DELAY_MS = 650;
+const MIN_CONTINUE_READING_PROGRESS = 1;
 
 interface FeedConfig {
   key: string;
@@ -39,9 +51,47 @@ function initialFeeds(): Record<string, FeedState> {
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { downloaded } = useLibrary();
   const generation = useRef(0);
   const requestedFeeds = useRef(new Set<string>());
   const [feeds, setFeeds] = useState<Record<string, FeedState>>(initialFeeds);
+  const [query, setQuery] = useState('');
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const continueReading = useMemo(
+    () =>
+      downloaded
+        .filter(
+          (book) =>
+            typeof book.progress === 'number' &&
+            book.progress >= MIN_CONTINUE_READING_PROGRESS &&
+            book.progress < 100 &&
+            !book.isRead &&
+            typeof book.lastReadAt === 'number' &&
+            book.lastReadAt > 0
+        )
+        .sort((left, right) => (right.lastReadAt ?? 0) - (left.lastReadAt ?? 0))
+        .slice(0, 12),
+    [downloaded]
+  );
+
+  const openSearch = useCallback(
+    (value: string) => {
+      const cleanQuery = value.trim();
+      if (cleanQuery.length < 2) return;
+      Keyboard.dismiss();
+      router.push({ pathname: '/search', params: { q: cleanQuery } });
+    },
+    [router]
+  );
+
+  useEffect(() => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    if (query.trim().length < 2) return;
+    searchTimer.current = setTimeout(() => openSearch(query), SEARCH_DELAY_MS);
+    return () => {
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+    };
+  }, [openSearch, query]);
 
   const requestFeed = useCallback((feed: FeedConfig, requestGeneration: number, force = false) => {
     if (!force && requestedFeeds.current.has(feed.key)) return;
@@ -101,6 +151,11 @@ export default function HomeScreen() {
     [router]
   );
 
+  const openLibraryBook = useCallback(
+    (book: LibraryBook) => router.push(detailParams(book) as any),
+    [router]
+  );
+
   const openCategory = useCallback(
     (feed: FeedConfig) => {
       router.push({
@@ -119,7 +174,7 @@ export default function HomeScreen() {
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 5 }).current;
 
   return (
-    <View className="flex-1" style={{ backgroundColor: BG }}>
+    <View className="flex-1" style={{ backgroundColor: colors.background }}>
       <FlatList
         data={FEEDS}
         keyExtractor={(feed) => feed.key}
@@ -129,6 +184,47 @@ export default function HomeScreen() {
         viewabilityConfig={viewabilityConfig}
         contentContainerStyle={{ paddingTop: 16, paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}
+        ListHeaderComponent={
+          <View>
+            <View className="px-6 pb-7">
+              <View
+                className="h-12 max-w-[700px] self-center w-full rounded-full flex-row items-center"
+                style={{ backgroundColor: colors.surfaceRaised }}
+              >
+                <TextInput
+                  value={query}
+                  onChangeText={setQuery}
+                  onSubmitEditing={() => openSearch(query)}
+                  returnKeyType="search"
+                  placeholder="Search books, authors or ISBNs"
+                  placeholderTextColor={colors.textMuted}
+                  className="flex-1 h-12 pl-5 pr-2 text-[15px] font-medium text-white"
+                />
+                {query ? (
+                  <Pressable
+                    onPress={() => setQuery('')}
+                    accessibilityLabel="Clear search"
+                    className="h-12 w-12 items-center justify-center"
+                  >
+                    <Feather name="x" size={19} color={colors.textMuted} />
+                  </Pressable>
+                ) : (
+                  <View className="h-12 w-12 items-center justify-center">
+                    <Feather name="search" size={20} color={colors.textMuted} />
+                  </View>
+                )}
+              </View>
+            </View>
+            {continueReading.length ? (
+              <Rail
+                title="Continue Reading"
+                books={continueReading}
+                onPressBook={openLibraryBook}
+                onSeeAll={() => router.push('/library')}
+              />
+            ) : null}
+          </View>
+        }
         renderItem={({ item: feed }) => {
           const state = feeds[feed.key] ?? { books: [], status: 'loading', error: null };
           return (

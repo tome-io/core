@@ -2,6 +2,7 @@ import { Image } from 'expo-image';
 import { useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
+import { colors } from '@/components/app-ui';
 import { RatingChip } from './rating-chip';
 
 export interface CardBook {
@@ -59,7 +60,7 @@ export function BookCard({ book, onPress, onLongPress, width }: Props) {
       className="active:opacity-70"
     >
       <View
-        style={{ width, height, backgroundColor: '#17171c' }}
+        style={{ width, height, backgroundColor: colors.surfaceRaised }}
         className="rounded-lg overflow-hidden mb-2"
       >
         {activeCover ? (
@@ -80,7 +81,7 @@ export function BookCard({ book, onPress, onLongPress, width }: Props) {
             <Text style={{ fontSize: 28 }}>📚</Text>
           </View>
         ) : book.metadataPending ? (
-          <View className="flex-1 bg-[#1b1b22]" />
+          <View className="flex-1" style={{ backgroundColor: colors.surfaceRaised }} />
         ) : (
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
             <Text style={{ fontSize: 28 }}>📚</Text>
@@ -94,15 +95,20 @@ export function BookCard({ book, onPress, onLongPress, width }: Props) {
         <RatingChip rating={book.rating} />
         {typeof progress === 'number' && progress > 0 && (
           <>
-            <View className="absolute left-0 right-0 bottom-0 h-2 bg-black/80">
+            <View className="absolute left-0 right-0 bottom-0 h-1.5 bg-black/80">
               <View
-                className="h-full bg-[#8b7cf6]"
-                style={{ width: `${Math.max(0, Math.min(100, progress))}%` }}
+                className="h-full"
+                style={{
+                  width: `${Math.max(0, Math.min(100, progress))}%`,
+                  backgroundColor: colors.accent,
+                }}
               />
             </View>
             <View
               className="absolute left-1.5 bottom-3 rounded-md px-1.5 py-1"
-              style={{ backgroundColor: book.isRead ? '#059669' : 'rgba(73, 63, 145, 0.95)' }}
+              style={{
+                backgroundColor: book.isRead ? colors.success : 'rgba(73, 63, 145, 0.95)',
+              }}
             >
               <Text className="text-[9px] font-bold text-white">
                 {book.isRead ? 'Read' : `${Math.max(1, Math.round(progress))}%`}
@@ -111,14 +117,18 @@ export function BookCard({ book, onPress, onLongPress, width }: Props) {
           </>
         )}
       </View>
-      <Text numberOfLines={1} className="text-[11px] font-medium text-neutral-200">
+      <Text numberOfLines={1} className="text-[13px] font-medium" style={{ color: colors.text }}>
         {book.title || 'Untitled'}
       </Text>
-      <Text numberOfLines={1} className="text-[10px] text-neutral-500 mt-0.5">
+      <Text numberOfLines={1} className="mt-0.5 text-[11px]" style={{ color: colors.textMuted }}>
         {book.author}
       </Text>
       {(book.format || book.year) && (
-        <Text numberOfLines={1} className="text-[9px] uppercase tracking-wide text-neutral-500 mt-1">
+        <Text
+          numberOfLines={1}
+          className="mt-1 text-[10px] uppercase tracking-wide"
+          style={{ color: colors.textMuted }}
+        >
           {[book.format, book.year].filter(Boolean).join(' · ')}
         </Text>
       )}

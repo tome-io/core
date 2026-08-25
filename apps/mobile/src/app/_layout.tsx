@@ -1,5 +1,6 @@
 import '../global.css';
 
+import { colors } from '@readoi/design';
 import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -17,8 +18,6 @@ import { SettingsContext } from '@/context/settings-context';
 import { loadSettings, saveSettings } from '@/lib/settings';
 import type { Settings } from '@/lib/settings';
 import { DEFAULT_SETTINGS } from '@/lib/settings';
-
-const BG = '#0b0b0f';
 
 export default function RootLayout() {
   const { width } = useWindowDimensions();
@@ -55,9 +54,9 @@ export default function RootLayout() {
       ...DarkTheme,
       colors: {
         ...DarkTheme.colors,
-        background: BG,
-        card: BG,
-        primary: '#8b7cf6',
+        background: colors.background,
+        card: colors.background,
+        primary: colors.accent,
       },
     }),
     []
@@ -73,15 +72,15 @@ export default function RootLayout() {
               <SafeAreaView
                 className="flex-1"
                 edges={['top', 'right', 'bottom', 'left']}
-                style={{ backgroundColor: BG }}
+                style={{ backgroundColor: colors.background }}
               >
                 <View
                   className="flex-1"
                   style={{ flexDirection: useBottomNavigation ? 'column' : 'row' }}
                 >
                   {!useBottomNavigation && <Sidebar />}
-                  <View className="flex-1" style={{ backgroundColor: BG }}>
-                    <Stack screenOptions={{ headerShown: false }} />
+                  <View className="flex-1" style={{ backgroundColor: colors.background }}>
+                    <Stack screenOptions={{ headerShown: false, animation: 'none' }} />
                   </View>
                   {useBottomNavigation && <Sidebar compact />}
                 </View>

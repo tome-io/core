@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Alert, Text, View } from 'react-native';
 
+import { colors } from '@/components/app-ui';
 import { BookGrid, BookGridSkeleton } from '@/components/book-grid';
 import { CatalogToolbar, type CatalogOption } from '@/components/catalog-toolbar';
 import { DismissibleToast } from '@/components/dismissible-toast';
@@ -13,7 +14,6 @@ import { useLibrary } from '@/context/library-context';
 import { detailParams, type LibraryBook } from '@/lib/library';
 import { openInMoonReader } from '@/lib/moon-reader-launcher';
 
-const BG = '#0b0b0f';
 type FormatFilter = 'all' | 'read' | 'epub' | 'pdf' | 'mobi' | 'azw3' | 'other';
 type LibrarySort = 'recent' | 'title' | 'author' | 'rating' | 'progress';
 
@@ -113,7 +113,7 @@ export default function LibraryScreen() {
   }, [deleteLocalBook, runAction, selectedBook]);
 
   return (
-    <View className="flex-1" style={{ backgroundColor: BG }}>
+    <View className="flex-1" style={{ backgroundColor: colors.background }}>
       <CatalogToolbar
         filters={FILTERS}
         selectedFilter={format}

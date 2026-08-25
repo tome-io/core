@@ -1,15 +1,13 @@
 import { Feather } from '@expo/vector-icons';
+import { colors } from '@readoi/design';
 import { usePathname, useRouter } from 'expo-router';
 import { Pressable, Text, View } from 'react-native';
 
-const ACCENT = '#8b7cf6';
-const BG = '#0b0b0f';
-
 const ITEMS = [
   { route: '/home', label: 'Home', icon: 'home' as const },
-  { route: '/search', label: 'Search', icon: 'search' as const },
   { route: '/library', label: 'Library', icon: 'book-open' as const },
   { route: '/reading-list', label: 'Reading list', icon: 'bookmark' as const },
+  { route: '/extensions', label: 'Add-ons', icon: 'package' as const },
 ];
 
 const SETTINGS = { route: '/settings', label: 'Settings', icon: 'settings' as const };
@@ -56,12 +54,16 @@ export function Sidebar({ compact = false }: SidebarProps) {
               : undefined
           }
         >
-          <Feather name={item.icon} size={compact ? 19 : 20} color={active ? ACCENT : '#6b6b76'} />
+          <Feather
+            name={item.icon}
+            size={compact ? 19 : 20}
+            color={active ? colors.accent : '#6b6b76'}
+          />
         </View>
         {compact && (
           <Text
             numberOfLines={1}
-            style={{ color: active ? ACCENT : '#777782', fontSize: 9, fontWeight: '600' }}
+            style={{ color: active ? colors.accent : '#777782', fontSize: 9, fontWeight: '600' }}
           >
             {item.label}
           </Text>
@@ -76,8 +78,8 @@ export function Sidebar({ compact = false }: SidebarProps) {
         className="w-full flex-row items-center"
         style={{
           height: 58,
-          backgroundColor: BG,
-          borderTopColor: '#202027',
+          backgroundColor: colors.background,
+          borderTopColor: colors.border,
           borderTopWidth: 1,
         }}
       >
@@ -88,8 +90,8 @@ export function Sidebar({ compact = false }: SidebarProps) {
 
   return (
     <View
-      className="h-full items-center justify-between py-5"
-      style={{ width: 76, backgroundColor: BG }}
+      className="h-full items-center justify-between pt-5 pb-1"
+      style={{ width: 76, backgroundColor: colors.background }}
     >
       <View className="items-center gap-2">{ITEMS.map(renderItem)}</View>
 

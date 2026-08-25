@@ -2,12 +2,12 @@ import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Text, View } from 'react-native';
 
+import { colors } from '@/components/app-ui';
 import { BookGrid, BookGridSkeleton } from '@/components/book-grid';
 import { CatalogToolbar, type CatalogOption } from '@/components/catalog-toolbar';
 import { useLibrary } from '@/context/library-context';
 import { detailParams, type LibraryBook } from '@/lib/library';
 
-const BG = '#0b0b0f';
 type ReadingSort = 'recent' | 'title' | 'author' | 'rating';
 
 const SORTS: CatalogOption<ReadingSort>[] = [
@@ -44,9 +44,8 @@ export default function ReadingListScreen() {
   );
 
   return (
-    <View className="flex-1" style={{ backgroundColor: BG }}>
+    <View className="flex-1" style={{ backgroundColor: colors.background }}>
       <CatalogToolbar
-        title="Reading List"
         filters={filters}
         selectedFilter={genre}
         onFilter={setGenre}

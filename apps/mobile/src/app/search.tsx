@@ -1,6 +1,6 @@
 import { Feather } from '@expo/vector-icons';
 import type { BookMetadata } from '@readoi/domain';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Keyboard,
@@ -14,6 +14,7 @@ import {
 
 import { BookGrid, BookGridSkeleton, GridLoadingMore } from '@/components/book-grid';
 import type { CardBook } from '@/components/book-card';
+import { colors, FilterChip } from '@/components/app-ui';
 import { useExtensions } from '@/context/extensions-context';
 
 const SEARCH_DELAY_MS = 500;
@@ -52,11 +53,12 @@ function searchBook(book: BookMetadata, extensionId: string): SearchBook {
 
 export default function SearchScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ q?: string }>();
   const extensions = useExtensions();
   const { width } = useWindowDimensions();
   const wideHeader = width >= 900;
   const searchGeneration = useRef(0);
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(params.q ?? '');
   const [format, setFormat] = useState('');
   const [books, setBooks] = useState<SearchBook[]>([]);
   const [page, setPage] = useState(1);
@@ -67,6 +69,11 @@ export default function SearchScreen() {
   const [searchedFor, setSearchedFor] = useState('');
   const [searchedFormat, setSearchedFormat] = useState('');
 
+  useEffect(() => {
+    const nextQuery = typeof params.q === 'string' ? params.q : '';
+    setQuery((current) => (current === nextQuery ? current : nextQuery));
+  }, [params.q]);
+
   const runSearch = useCallback(async (q: string, fmt: string, generation: number) => {
     const cleanQuery = q.trim();
     if (cleanQuery.length < 2) return;
@@ -76,7 +83,7 @@ export default function SearchScreen() {
     setSearchedFormat(fmt);
     try {
       if (!extensions.searchExtensionId) {
-        throw new Error('Choose an enabled search provider in Extensions first.');
+        throw new Error('Choose an enabled search provider in Add-ons first.');
       }
       const result = await extensions.search(extensions.searchExtensionId, {
         query: cleanQuery,
@@ -147,7 +154,7 @@ export default function SearchScreen() {
     try {
       const nextPage = page + 1;
       if (!extensions.searchExtensionId) {
-        throw new Error('Choose an enabled search provider in Extensions first.');
+        throw new Error('Choose an enabled search provider in Add-ons first.');
       }
       const result = await extensions.search(extensions.searchExtensionId, {
         query: searchedFor,
@@ -189,38 +196,54 @@ export default function SearchScreen() {
     <View className="items-center gap-2 py-5">
       <Text className="text-xs text-red-400">{error}</Text>
       <Pressable onPress={loadMore}>
-        <Text className="text-xs font-semibold text-[#8b7cf6]">Retry</Text>
+        <Text className="text-xs font-semibold" style={{ color: colors.accent }}>
+          Retry
+        </Text>
       </Pressable>
     </View>
   ) : null;
 
   return (
-    <View className="flex-1" style={{ backgroundColor: '#0b0b0f' }}>
+    <View className="flex-1" style={{ backgroundColor: colors.background }}>
       <View
         className={wideHeader ? 'px-6 pt-4 pb-1 flex-row items-center gap-3' : 'px-6 pt-4 pb-1 gap-3'}
       >
-        <View
-          className="h-12 rounded-full flex-row items-center flex-1"
-          style={{ backgroundColor: '#17171c' }}
-        >
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            onSubmitEditing={submitSearch}
-            returnKeyType="search"
-            autoFocus
-            placeholder="Search books, authors or ISBNs"
-            placeholderTextColor="#777783"
-            className="flex-1 h-12 pl-5 pr-2 text-[15px] font-medium text-white"
-          />
+        <View className="flex-1 flex-row items-center gap-3">
           <Pressable
-            onPress={query.length ? clearSearch : submitSearch}
-            accessibilityLabel={query.length ? 'Clear search' : 'Search'}
-            accessibilityRole="button"
-            className="h-12 w-14 items-center justify-center"
+            onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}
+            accessibilityLabel="Back to home"
+            className="h-10 w-10 items-center justify-center rounded-full"
+            style={{ backgroundColor: colors.surfaceRaised }}
           >
-            <Feather name={query.length ? 'x' : 'search'} size={20} color="#a7a7b3" />
+            <Feather name="chevron-left" size={22} color={colors.textMuted} />
           </Pressable>
+          <View
+            className="h-12 rounded-full flex-row items-center flex-1"
+            style={{ backgroundColor: colors.surfaceRaised }}
+          >
+            <TextInput
+              value={query}
+              onChangeText={setQuery}
+              onSubmitEditing={submitSearch}
+              returnKeyType="search"
+              autoFocus={!params.q}
+              placeholder="Search books, authors or ISBNs"
+              placeholderTextColor={colors.textMuted}
+              className="flex-1 h-12 pl-5 pr-2 text-[15px] font-medium text-white"
+            />
+            <Pressable
+              onPress={query.length ? clearSearch : submitSearch}
+              accessibilityLabel={query.length ? 'Clear search' : 'Search'}
+              accessibilityRole="button"
+              className="h-12 w-14 items-center justify-center"
+            >
+              <Feather
+                name={query.length ? 'x' : 'search'}
+                size={20}
+                color={colors.textMuted}
+              />
+            </Pressable>
+          </View>
         </View>
 
         <ScrollView
@@ -229,27 +252,14 @@ export default function SearchScreen() {
           contentContainerStyle={{ gap: 8 }}
           style={wideHeader ? { flexGrow: 0, maxWidth: Math.min(470, width * 0.42) } : undefined}
         >
-          {FORMATS.map((item) => {
-            const active = item.value === format;
-            return (
-              <Pressable
-                key={item.label}
-                onPress={() => setFormat(item.value)}
-                className="h-8 px-4 rounded-full items-center justify-center"
-                style={{ backgroundColor: active ? '#8b7cf6' : '#17171c' }}
-              >
-                <Text
-                  className={
-                    active
-                      ? 'text-xs font-semibold text-white'
-                      : 'text-xs font-medium text-neutral-400'
-                  }
-                >
-                  {item.label}
-                </Text>
-              </Pressable>
-            );
-          })}
+          {FORMATS.map((item) => (
+            <FilterChip
+              key={item.label}
+              label={item.label}
+              selected={item.value === format}
+              onPress={() => setFormat(item.value)}
+            />
+          ))}
         </ScrollView>
       </View>
 
@@ -276,7 +286,7 @@ export default function SearchScreen() {
           <View className="flex-row gap-12">
             {SEARCH_HINTS.map((hint) => (
               <View key={hint.label} className="items-center gap-3 w-20">
-                <Feather name={hint.icon} size={38} color="#555560" />
+                <Feather name={hint.icon} size={38} color={colors.textMuted} />
                 <Text className="text-sm text-neutral-500 text-center">{hint.label}</Text>
               </View>
             ))}

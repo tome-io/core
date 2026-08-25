@@ -1,30 +1,10 @@
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 
-const ACCENT = '#8b7cf6';
+import { colors, FilterChip } from '@/components/app-ui';
 
 export interface CatalogOption<T extends string> {
   label: string;
   value: T;
-}
-
-function Chip<T extends string>({ option, selected, onSelect }: {
-  option: CatalogOption<T>;
-  selected: boolean;
-  onSelect: (value: T) => void;
-}) {
-  return (
-    <Pressable
-      onPress={() => onSelect(option.value)}
-      accessibilityRole="button"
-      accessibilityState={{ selected }}
-      className="h-9 px-4 rounded-full items-center justify-center active:opacity-75"
-      style={{ backgroundColor: selected ? ACCENT : '#17171c' }}
-    >
-      <Text className={selected ? 'text-xs font-semibold text-white' : 'text-xs text-neutral-400'}>
-        {option.label}
-      </Text>
-    </Pressable>
-  );
 }
 
 export function CatalogToolbar<TFilter extends string, TSort extends string>({
@@ -55,10 +35,15 @@ export function CatalogToolbar<TFilter extends string, TSort extends string>({
           className="flex-1"
         >
           {filters.map((option) => (
-            <Chip key={option.value} option={option} selected={option.value === selectedFilter} onSelect={onFilter} />
+            <FilterChip
+              key={option.value}
+              label={option.label}
+              selected={option.value === selectedFilter}
+              onPress={() => onFilter(option.value)}
+            />
           ))}
         </ScrollView>
-        <View className="h-7 w-px bg-[#292930]" />
+        <View className="h-7 w-px" style={{ backgroundColor: colors.border }} />
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -66,7 +51,12 @@ export function CatalogToolbar<TFilter extends string, TSort extends string>({
           style={{ flexGrow: 0, maxWidth: '48%' }}
         >
           {sorts.map((option) => (
-            <Chip key={option.value} option={option} selected={option.value === selectedSort} onSelect={onSort} />
+            <FilterChip
+              key={option.value}
+              label={option.label}
+              selected={option.value === selectedSort}
+              onPress={() => onSort(option.value)}
+            />
           ))}
         </ScrollView>
       </View>

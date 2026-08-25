@@ -1,12 +1,9 @@
 import { Image } from 'expo-image';
 import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
 
+import { colors, SectionHeader } from '@/components/app-ui';
 import type { DiscoveryBook, FeedBook } from '@/lib/openlibrary';
 import { RatingChip } from './rating-chip';
-
-const PANEL = '#17171c';
-const ACCENT = '#8b7cf6';
-const PLACEHOLDER = '#1b1b22';
 
 export function toDiscoveryBook(b: FeedBook, genre = 'Open Library'): DiscoveryBook {
   return {
@@ -31,6 +28,11 @@ export function PosterCard<T extends FeedBook>({
   onPress: (book: T) => void;
   width?: number;
 }) {
+  const progressBook = book as T & { progress?: number; isRead?: boolean };
+  const progress = progressBook.isRead
+    ? 100
+    : Math.max(0, Math.min(100, progressBook.progress ?? 0));
+
   return (
     <Pressable
       onPress={() => onPress(book)}
@@ -38,7 +40,7 @@ export function PosterCard<T extends FeedBook>({
       className="active:opacity-80"
     >
       <View
-        style={{ width, height: Math.round(width * 1.5), backgroundColor: PANEL }}
+        style={{ width, height: Math.round(width * 1.5), backgroundColor: colors.surfaceRaised }}
         className="rounded-lg overflow-hidden mb-2"
       >
         {book.cover ? (
@@ -57,11 +59,33 @@ export function PosterCard<T extends FeedBook>({
           </View>
         )}
         <RatingChip rating={book.rating} />
+        {progress > 0 ? (
+          <>
+            <View className="absolute bottom-0 left-0 right-0 h-1.5 bg-black/70">
+              <View
+                className="h-full"
+                style={{ width: `${progress}%`, backgroundColor: colors.accent }}
+              />
+            </View>
+            <View
+              className="absolute bottom-2 left-1.5 rounded-md px-1.5 py-1"
+              style={{
+                backgroundColor: progressBook.isRead
+                  ? colors.success
+                  : 'rgba(73, 63, 145, 0.95)',
+              }}
+            >
+              <Text className="text-[9px] font-bold text-white">
+                {progressBook.isRead ? 'Read' : `${Math.max(1, Math.round(progress))}%`}
+              </Text>
+            </View>
+          </>
+        ) : null}
       </View>
-      <Text numberOfLines={1} className="text-[11px] font-medium text-neutral-200">
+      <Text numberOfLines={1} className="text-[13px] font-medium" style={{ color: colors.text }}>
         {book.title}
       </Text>
-      <Text numberOfLines={1} className="text-[10px] text-neutral-500 mt-0.5">
+      <Text numberOfLines={1} className="mt-0.5 text-[11px]" style={{ color: colors.textMuted }}>
         {book.author}
       </Text>
     </Pressable>
@@ -72,16 +96,16 @@ export function PosterSkeleton({ width = 124 }: { width?: number }) {
   return (
     <View style={{ width }}>
       <View
-        style={{ width, height: Math.round(width * 1.5), backgroundColor: PLACEHOLDER }}
+        style={{ width, height: Math.round(width * 1.5), backgroundColor: colors.surfaceRaised }}
         className="rounded-lg mb-2"
       />
       <View
         className="h-2.5 rounded-full mb-2"
-        style={{ width: '72%', backgroundColor: PLACEHOLDER }}
+        style={{ width: '72%', backgroundColor: colors.surfaceRaised }}
       />
       <View
         className="h-2 rounded-full"
-        style={{ width: '48%', backgroundColor: PLACEHOLDER }}
+        style={{ width: '48%', backgroundColor: colors.surfaceRaised }}
       />
     </View>
   );
@@ -109,22 +133,7 @@ export function Rail<T extends FeedBook>({
 }) {
   return (
     <View className="mb-8">
-      <View className="flex-row items-center justify-between px-6 mb-3">
-        <Text className="text-sm font-bold uppercase tracking-widest text-neutral-400">
-          {title}
-        </Text>
-        {onSeeAll && (
-          <Pressable
-            onPress={onSeeAll}
-            accessibilityRole="button"
-            className="h-8 px-2 flex-row items-center justify-center rounded-full active:bg-[#17171c]"
-          >
-            <Text style={{ color: ACCENT }} className="text-xs font-medium">
-              See all ›
-            </Text>
-          </Pressable>
-        )}
-      </View>
+      <SectionHeader title={title} actionLabel={onSeeAll ? 'See all' : undefined} onAction={onSeeAll} />
       {loading ? (
         <ScrollView
           horizontal
@@ -143,7 +152,7 @@ export function Rail<T extends FeedBook>({
           </Text>
           {onRetry && (
             <Pressable onPress={onRetry}>
-              <Text className="text-xs font-semibold" style={{ color: ACCENT }}>
+              <Text className="text-xs font-semibold" style={{ color: colors.accent }}>
                 Retry
               </Text>
             </Pressable>
