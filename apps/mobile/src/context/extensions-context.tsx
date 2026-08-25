@@ -27,17 +27,24 @@ import {
   writeExtensionConfiguration,
 } from '@/lib/extension-configuration';
 import { extensionLoader, extensionRegistry } from '@/lib/extensions';
-import { readSearchExtensionId, writeSearchExtensionId } from '@/lib/extension-preferences';
+import {
+  readAcquisitionExtensionId,
+  readSearchExtensionId,
+  writeAcquisitionExtensionId,
+  writeSearchExtensionId,
+} from '@/lib/extension-preferences';
 import { mobileScriptExtensionExecutor } from '@/lib/script-extension-executor';
 
 interface ExtensionsContextValue extends ExtensionRegistrySnapshot {
   ready: boolean;
   error: string | null;
   searchExtensionId: string | null;
+  acquisitionExtensionId: string | null;
   install(repositoryUrl: string): Promise<InstalledExtension>;
   remove(id: string): Promise<void>;
   setEnabled(id: string, enabled: boolean): Promise<void>;
   setSearchExtension(id: string): Promise<void>;
+  setAcquisitionExtension(id: string): Promise<void>;
   configuration(manifest: ExtensionManifest): Promise<Record<string, ExtensionConfigValue>>;
   configure(
     manifest: ExtensionManifest,
@@ -53,6 +60,7 @@ const EMPTY: ExtensionsContextValue = {
   ready: false,
   error: null,
   searchExtensionId: null,
+  acquisitionExtensionId: null,
   install: async () => {
     throw new Error('Extensions provider is unavailable.');
   },
@@ -63,6 +71,7 @@ const EMPTY: ExtensionsContextValue = {
     throw new Error('Extensions provider is unavailable.');
   },
   setSearchExtension: async () => {},
+  setAcquisitionExtension: async () => {},
   configuration: async () => ({}),
   configure: async () => {},
   load: async () => {
@@ -83,20 +92,53 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchExtensionId, setSearchExtensionId] = useState<string | null>(null);
+  const [acquisitionExtensionId, setAcquisitionExtensionId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const next = await extensionRegistry.list();
     setSnapshot(next);
-    const savedSearchId = await readSearchExtensionId();
-    const candidates = [
+    const [savedSearchId, savedAcquisitionId] = await Promise.all([
+      readSearchExtensionId(),
+      readAcquisitionExtensionId(),
+    ]);
+    const enabledManifests = [
       ...next.thirdParty.filter((extension) => extension.enabled).map((extension) => extension.manifest),
       ...next.bundled,
-    ].filter((manifest) => manifest.resources.some((resource) => resource.name === 'search'));
-    const selected = candidates.some((manifest) => manifest.id === savedSearchId)
+    ];
+    const searchCandidates = enabledManifests.filter((manifest) =>
+      manifest.resources.some((resource) => resource.name === 'search')
+    );
+    const acquisitionCandidates = enabledManifests.filter(
+      (manifest) =>
+        manifest.resources.some((resource) => resource.name === 'search') &&
+        manifest.resources.some((resource) => resource.name === 'acquisition')
+    );
+    const selectedSearch = searchCandidates.some((manifest) => manifest.id === savedSearchId)
       ? savedSearchId
-      : candidates[0]?.id ?? null;
-    if (selected !== savedSearchId) await writeSearchExtensionId(selected);
-    setSearchExtensionId(selected);
+      : searchCandidates.find((manifest) => manifest.id === 'org.readoi.open-library')?.id ??
+        searchCandidates[0]?.id ??
+        null;
+    const selectedAcquisition = acquisitionCandidates.some(
+      (manifest) => manifest.id === savedAcquisitionId
+    )
+      ? savedAcquisitionId
+      : acquisitionCandidates.some((manifest) => manifest.id === savedSearchId)
+        ? savedSearchId
+        : acquisitionCandidates.find(
+              (manifest) => manifest.id === 'org.readoi.internet-archive'
+            )?.id ??
+          acquisitionCandidates[0]?.id ??
+          null;
+    await Promise.all([
+      selectedSearch !== savedSearchId
+        ? writeSearchExtensionId(selectedSearch)
+        : Promise.resolve(),
+      selectedAcquisition !== savedAcquisitionId
+        ? writeAcquisitionExtensionId(selectedAcquisition)
+        : Promise.resolve(),
+    ]);
+    setSearchExtensionId(selectedSearch);
+    setAcquisitionExtensionId(selectedAcquisition);
     setError(null);
   }, []);
 
@@ -201,10 +243,39 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
     },
     [refresh, snapshot.thirdParty]
   );
-  const setSearchExtension = useCallback(async (id: string) => {
-    await writeSearchExtensionId(id);
-    setSearchExtensionId(id);
-  }, []);
+  const setSearchExtension = useCallback(
+    async (id: string) => {
+      const manifest = [
+        ...snapshot.thirdParty
+          .filter((extension) => extension.enabled)
+          .map((extension) => extension.manifest),
+        ...snapshot.bundled,
+      ].find((candidate) => candidate.id === id);
+      if (!manifest?.resources.some((resource) => resource.name === 'search')) {
+        throw new Error(`Extension "${id}" is not an enabled search provider.`);
+      }
+      await writeSearchExtensionId(id);
+      setSearchExtensionId(id);
+    },
+    [snapshot]
+  );
+  const setAcquisitionExtension = useCallback(
+    async (id: string) => {
+      const manifest = [
+        ...snapshot.thirdParty
+          .filter((extension) => extension.enabled)
+          .map((extension) => extension.manifest),
+        ...snapshot.bundled,
+      ].find((candidate) => candidate.id === id);
+      const resources = new Set(manifest?.resources.map((resource) => resource.name));
+      if (!manifest || !resources.has('search') || !resources.has('acquisition')) {
+        throw new Error(`Extension "${id}" cannot resolve and download books.`);
+      }
+      await writeAcquisitionExtensionId(id);
+      setAcquisitionExtensionId(id);
+    },
+    [snapshot]
+  );
 
   const value = useMemo(
     () => ({
@@ -212,10 +283,12 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       ready,
       error,
       searchExtensionId,
+      acquisitionExtensionId,
       install,
       remove,
       setEnabled,
       setSearchExtension,
+      setAcquisitionExtension,
       configuration,
       configure,
       load,
@@ -226,10 +299,12 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       ready,
       error,
       searchExtensionId,
+      acquisitionExtensionId,
       install,
       remove,
       setEnabled,
       setSearchExtension,
+      setAcquisitionExtension,
       configuration,
       configure,
       load,

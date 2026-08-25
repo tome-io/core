@@ -25,7 +25,7 @@ appropriate for a bundled client.
 ## Third-party installation
 
 There is deliberately no in-app community catalog. A user pastes an HTTPS GitHub
-repository URL or a direct manifest URL in Settings. For example:
+repository URL or a direct manifest URL on the Add-ons page. For example:
 
 ```text
 https://github.com/owner/repository
@@ -43,20 +43,24 @@ storage, and network requests restricted to the HTTPS origins declared by the ma
 
 Extension configuration is described by the manifest. Password fields are stored through the
 platform secure store; provider credentials and mirror preferences are never application-level
-settings. Search always targets one explicitly selected extension rather than combining results
-from multiple providers.
+settings. Readio selects providers by role in application Settings: one search provider supplies
+search results and one download provider resolves those books into available files. Installing an
+extension does not automatically assign either role, and results are not combined across multiple
+search providers. A download provider must expose both `search` and `acquisition` so it can resolve
+books discovered by a different extension.
 
-The public extension collection lives at
-[`readoi/extensions`](https://github.com/readoi/extensions). It may accept community pull requests,
-but the app still requires explicit URL installation; there is no in-app third-party catalog.
+The public extension collection at [`readoi/extensions`](https://github.com/readoi/extensions) is
+reserved for reviewed community extensions. The app still requires explicit URL installation;
+there is no in-app third-party catalog.
 
 ## Third-party Z-Library provider
 
 The Z-Library adapter is not built into Readio. It is a manually installed script extension at:
 
 ```text
-https://github.com/readoi/extensions/tree/main/third-party/zlibrary
+https://github.com/imprisonedmind/readio-zlibrary-extension
 ```
 
-Its account, session, domain, and preferred format are owned by that extension. Removing the
-extension removes its declared configuration and disconnects it from search.
+Its account, session, domain, and preferred format are owned by that extension. It can be selected
+as the download provider while Open Library remains the search provider. Removing the extension
+removes its declared configuration and disconnects it from any assigned provider role.

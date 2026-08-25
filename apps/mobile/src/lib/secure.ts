@@ -21,26 +21,39 @@ async function available(): Promise<boolean> {
 }
 
 const PREFIX = 'secure_';
+const VALID_KEY = /^[a-zA-Z0-9._-]+$/;
+
+function validatedKey(key: string): string {
+  if (!VALID_KEY.test(key)) {
+    throw new Error(
+      'Secure storage keys may contain only letters, numbers, dots, dashes, and underscores.'
+    );
+  }
+  return key;
+}
 
 export async function secureGet(key: string): Promise<string | null> {
+  const storageKey = validatedKey(key);
   if (await available()) {
-    return SecureStore.getItemAsync(key);
+    return SecureStore.getItemAsync(storageKey);
   }
-  return AsyncStorage.getItem(PREFIX + key);
+  return AsyncStorage.getItem(PREFIX + storageKey);
 }
 
 export async function secureSet(key: string, value: string): Promise<void> {
+  const storageKey = validatedKey(key);
   if (await available()) {
-    await SecureStore.setItemAsync(key, value);
+    await SecureStore.setItemAsync(storageKey, value);
   } else {
-    await AsyncStorage.setItem(PREFIX + key, value);
+    await AsyncStorage.setItem(PREFIX + storageKey, value);
   }
 }
 
 export async function secureDelete(key: string): Promise<void> {
+  const storageKey = validatedKey(key);
   if (await available()) {
-    await SecureStore.deleteItemAsync(key);
+    await SecureStore.deleteItemAsync(storageKey);
   } else {
-    await AsyncStorage.removeItem(PREFIX + key);
+    await AsyncStorage.removeItem(PREFIX + storageKey);
   }
 }

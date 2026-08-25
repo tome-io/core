@@ -43,6 +43,7 @@ type Phase =
 interface AcquisitionOption {
   key: string;
   extensionId: string;
+  providerName: string;
   book: BookMetadata;
   acquisition: BookAcquisition;
 }
@@ -84,6 +85,7 @@ function plainText(value: string): string {
 export default function BookDetailScreen() {
   const router = useRouter();
   const extensions = useExtensions();
+  const { acquisitionExtensionId, load: loadExtension } = extensions;
   const { width } = useWindowDimensions();
   const compactLayout = width < 700;
   const params = useLocalSearchParams<{
@@ -246,41 +248,49 @@ export default function BookDetailScreen() {
     setOptionsError(null);
 
     const loadOptions = async () => {
-      if (extensionBook && extensionId) {
-        const provider = await extensions.load(extensionId);
-        const acquisitions = provider.acquisition
-          ? await provider.acquisition(extensionBook.id)
-          : [];
+      if (!acquisitionExtensionId) return [];
+      const provider = await loadExtension(acquisitionExtensionId);
+      if (!provider.acquisition) {
+        throw new Error(`${provider.manifest.name} does not provide downloads.`);
+      }
+      if (extensionBook && extensionId === acquisitionExtensionId) {
+        const acquisitions = await provider.acquisition(extensionBook.id);
         return acquisitions.map((acquisition) => ({
-          key: `${extensionId}:${acquisition.id}`,
-          extensionId,
+          key: `${acquisitionExtensionId}:${extensionBook.id}:${acquisition.id}`,
+          extensionId: acquisitionExtensionId,
+          providerName: provider.manifest.name,
           book: extensionBook,
           acquisition,
         }));
       }
-      if (!currentDiscovery || !extensions.searchExtensionId) return [];
-      const provider = await extensions.load(extensions.searchExtensionId);
-      if (!provider.search || !provider.acquisition) return [];
+      const lookupBook = extensionBook ?? currentDiscovery;
+      if (!lookupBook) return [];
+      if (!provider.search) {
+        throw new Error(
+          `${provider.manifest.name} cannot resolve books from another search provider.`
+        );
+      }
       const page = await provider.search({
-        query: `${currentDiscovery.title} ${currentDiscovery.author}`.trim(),
+        query: `${lookupBook.title} ${
+          'authors' in lookupBook ? lookupBook.authors[0] ?? '' : lookupBook.author
+        }`.trim(),
         page: 1,
         limit: 8,
       });
-      const results = await Promise.allSettled(
+      const results = await Promise.all(
         page.items.map(async (book) => ({
           book,
           acquisitions: await provider.acquisition!(book.id),
         }))
       );
       return results.flatMap((result) =>
-        result.status === 'fulfilled'
-          ? result.value.acquisitions.map((acquisition) => ({
-              key: `${extensions.searchExtensionId}:${acquisition.id}`,
-              extensionId: extensions.searchExtensionId!,
-              book: result.value.book,
-              acquisition,
-            }))
-          : []
+        result.acquisitions.map((acquisition) => ({
+          key: `${acquisitionExtensionId}:${result.book.id}:${acquisition.id}`,
+          extensionId: acquisitionExtensionId,
+          providerName: provider.manifest.name,
+          book: result.book,
+          acquisition,
+        }))
       );
     };
 
@@ -296,7 +306,7 @@ export default function BookDetailScreen() {
     return () => {
       cancelled = true;
     };
-  }, [currentDiscovery, extensionBook, extensionId, extensions]);
+  }, [acquisitionExtensionId, currentDiscovery, extensionBook, extensionId, loadExtension]);
 
   const readingListBook = useMemo<LibraryBook | null>(() => {
     if (extensionBook && extensionId) return fromExtensionBook(extensionId, extensionBook);
@@ -703,20 +713,54 @@ function AcquisitionRow({
   onDownload: () => void;
 }) {
   const { acquisition, book } = option;
+  const [coverFailed, setCoverFailed] = useState(false);
   const metadata = [
     acquisition.format?.toUpperCase(),
     formatSize(acquisition.sizeBytes),
     acquisition.language,
+    book.publishedYear ? String(book.publishedYear) : '',
+    option.providerName,
   ].filter(Boolean);
+  const description = book.description ? plainText(book.description) : '';
+  const progress =
+    phase.kind === 'downloading' && phase.progress.totalBytes > 0
+      ? Math.min(100, Math.round((phase.progress.bytesWritten / phase.progress.totalBytes) * 100))
+      : null;
   return (
-    <View className="rounded-xl border border-neutral-800 px-4 py-3 flex-row items-center gap-3">
-      <View className="flex-1 gap-0.5">
-        <Text numberOfLines={1} className="text-sm font-medium text-neutral-100">
-          {acquisition.label || book.title}
+    <View className="rounded-2xl border border-[#292932] p-3 flex-row items-center gap-3 bg-[#111116]">
+      <View className="h-[78px] w-[54px] overflow-hidden rounded-lg bg-[#202029] items-center justify-center">
+        {book.coverUrl && !coverFailed ? (
+          <Image
+            source={{ uri: book.coverUrl }}
+            contentFit="cover"
+            onError={() => setCoverFailed(true)}
+            accessibilityLabel={`${book.title} cover`}
+            style={{ width: 54, height: 78 }}
+          />
+        ) : (
+          <Feather name="book-open" size={20} color="#6f6f7a" />
+        )}
+      </View>
+      <View className="flex-1 gap-1">
+        <Text numberOfLines={1} className="text-sm font-semibold text-neutral-100">
+          {book.title}
         </Text>
+        {book.authors.length ? (
+          <Text numberOfLines={1} className="text-xs text-neutral-400">
+            {book.authors.join(', ')}
+          </Text>
+        ) : null}
         {metadata.length ? (
-          <Text className="text-[11px] uppercase tracking-wide text-neutral-400">
+          <Text numberOfLines={1} className="text-[10px] uppercase tracking-wide text-neutral-500">
             {metadata.join(' · ')}
+          </Text>
+        ) : null}
+        {acquisition.label && acquisition.label.toLocaleLowerCase() !== `download ${acquisition.format}`.toLocaleLowerCase() ? (
+          <Text numberOfLines={1} className="text-[11px] text-neutral-400">{acquisition.label}</Text>
+        ) : null}
+        {description ? (
+          <Text numberOfLines={2} className="text-[11px] leading-4 text-neutral-500">
+            {description}
           </Text>
         ) : null}
         {phase.kind === 'error' ? (
@@ -724,13 +768,23 @@ function AcquisitionRow({
         ) : null}
       </View>
       {phase.kind === 'done' ? (
-        <Text className="text-sm font-semibold text-emerald-500">Saved</Text>
+        <View className="h-10 rounded-xl bg-emerald-950 px-4 flex-row items-center gap-2">
+          <Feather name="check" size={15} color="#5ee0a0" />
+          <Text className="self-center text-xs font-semibold text-emerald-300">Saved</Text>
+        </View>
       ) : phase.kind === 'downloading' || phase.kind === 'resolving' ? (
-        <ActivityIndicator color="#8b7cf6" size="small" />
+        <View className="min-w-[76px] items-center gap-1">
+          <ActivityIndicator color="#8b7cf6" size="small" />
+          {progress !== null ? <Text className="text-[10px] text-neutral-400">{progress}%</Text> : null}
+        </View>
       ) : (
-        <Pressable onPress={onDownload} className="h-9 px-3.5 items-center justify-center">
+        <Pressable
+          onPress={onDownload}
+          className="h-10 rounded-xl bg-[#8b7cf6] px-4 flex-row items-center justify-center gap-2 active:opacity-80"
+        >
+          <Feather name={acquisition.downloadUrl ? 'download' : 'external-link'} size={15} color="white" />
           <Text className="text-xs font-semibold text-white">
-            {acquisition.downloadUrl ? 'Get' : 'Open'}
+            {acquisition.downloadUrl ? 'Download' : 'Open'}
           </Text>
         </Pressable>
       )}

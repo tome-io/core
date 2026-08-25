@@ -10,7 +10,7 @@ import { secureDelete, secureGet, secureSet } from './secure';
 const CONFIG_PREFIX = 'extension_config_v1';
 
 function storageKey(extensionId: string, fieldKey: string): string {
-  return `${CONFIG_PREFIX}:${extensionId}:${fieldKey}`;
+  return `${CONFIG_PREFIX}.${extensionId}.${fieldKey}`;
 }
 
 function defaultValue(field: ExtensionConfigField): ExtensionConfigValue | undefined {

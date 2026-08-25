@@ -396,8 +396,13 @@ export function parseExtensionManifest(input: unknown): ExtensionManifest {
     transport: parsedTransport,
   };
 
-  for (const key of ['author', 'homepage', 'repository', 'icon'] as const) {
+  for (const key of ['author', 'homepage', 'repository'] as const) {
     if (typeof value[key] === 'string') manifest[key] = value[key];
+  }
+  if (value.icon != null) {
+    const icon = requiredString(value, 'icon');
+    requireHttps(icon, 'icon');
+    manifest.icon = icon;
   }
   if (catalogs) manifest.catalogs = catalogs;
   if (config) manifest.config = config;

@@ -60,6 +60,15 @@ function scopedKey(prefix: string, extensionId: string, key: string): string {
   return `${prefix}:${extensionId}:${key}`;
 }
 
+function secureScopedKey(prefix: string, extensionId: string, key: string): string {
+  if (!/^[a-zA-Z0-9._-]{1,120}$/.test(key)) {
+    throw new Error(
+      'Extension storage keys may contain only letters, numbers, dots, dashes, and underscores.'
+    );
+  }
+  return `${prefix}.${extensionId}.${key}`;
+}
+
 export function createSandboxHtml(
   manifest: ExtensionManifest,
   bundle: string,
@@ -308,7 +317,7 @@ export class MobileScriptExtensionExecutor implements ScriptExtensionExecutor {
       await Promise.all(
         secureKeys
           .filter((key): key is string => typeof key === 'string')
-          .map((key) => secureDelete(scopedKey(EXTENSION_SECURE_PREFIX, id, key)))
+          .map((key) => secureDelete(secureScopedKey(EXTENSION_SECURE_PREFIX, id, key)))
       );
     }
     await AsyncStorage.removeItem(secureIndexKey);
@@ -409,7 +418,7 @@ export class MobileScriptExtensionExecutor implements ScriptExtensionExecutor {
       }
     }
     if (method.startsWith('secure.')) {
-      const storageKey = scopedKey(EXTENSION_SECURE_PREFIX, manifest.id, key);
+      const storageKey = secureScopedKey(EXTENSION_SECURE_PREFIX, manifest.id, key);
       const indexKey = `${EXTENSION_SECURE_INDEX_PREFIX}:${manifest.id}`;
       if (method === 'secure.get') return secureGet(storageKey);
       if (method === 'secure.set') {
