@@ -37,6 +37,7 @@ interface LocalCatalogRow extends ProgressCatalogRow {
 
 interface ProgressSnapshotRow extends ProgressCatalogRow {
   book_key: string;
+  sync_identity: string | null;
   override_updated_at: number | null;
 }
 
@@ -201,6 +202,13 @@ async function initializeDatabase(): Promise<SQLiteDatabase> {
     );
     CREATE INDEX IF NOT EXISTS moonreader_items_source ON moonreader_items(source_key, sort_at DESC);
 
+    CREATE TABLE IF NOT EXISTS progress_sync_items (
+      identity TEXT PRIMARY KEY NOT NULL,
+      book_key TEXT NOT NULL UNIQUE REFERENCES catalog_books(book_key) ON DELETE CASCADE,
+      sort_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS progress_sync_items_order ON progress_sync_items(sort_at DESC);
+
     CREATE TABLE IF NOT EXISTS metadata_sources (
       book_key TEXT NOT NULL REFERENCES catalog_books(book_key) ON DELETE CASCADE,
       source TEXT NOT NULL,
@@ -246,7 +254,7 @@ async function initializeDatabase(): Promise<SQLiteDatabase> {
       value TEXT NOT NULL
     );
 
-    PRAGMA user_version = 3;
+    PRAGMA user_version = 4;
   `);
   await migrateLegacyLibrary(database);
   await database.runAsync('DELETE FROM content_cache WHERE expires_at <= ?', Date.now());
@@ -320,6 +328,7 @@ export async function savePersistedLibrary(state: LibraryState): Promise<void> {
       WHERE book_key NOT IN (SELECT book_key FROM collections)
         AND book_key NOT IN (SELECT book_key FROM local_files)
         AND book_key NOT IN (SELECT book_key FROM moonreader_items)
+        AND book_key NOT IN (SELECT book_key FROM progress_sync_items)
     `);
   });
 }
@@ -390,6 +399,36 @@ export async function loadMoonReaderCatalog(sourceKey: string): Promise<LibraryB
     sourceKey
   );
   return Promise.all(rows.map((row) => withValidGeneratedCover(withProgress(row))));
+}
+
+export async function loadProgressSyncCatalog(): Promise<LibraryBook[]> {
+  const database = await getLibraryDatabase();
+  const rows = await database.getAllAsync<ProgressCatalogRow>(
+    `SELECT books.book_json,
+            progress.progress, progress.is_read, progress.reading_time_ms,
+            progress.words_read, progress.last_read_at,
+            progress.synced_at AS progress_synced_at,
+            NULL AS moonreader_json,
+            manual.is_read AS override_is_read
+     FROM progress_sync_items AS synced
+     JOIN catalog_books AS books ON books.book_key = synced.book_key
+     LEFT JOIN reading_progress AS progress ON progress.book_key = synced.book_key
+     LEFT JOIN reading_overrides AS manual ON manual.book_key = synced.book_key
+     ORDER BY synced.sort_at DESC`
+  );
+  return Promise.all(
+    rows.map(async (row) => {
+      const book = withProgress(row);
+      return withValidGeneratedCover({
+        ...book,
+        moonReader: {
+          ...book.moonReader,
+          availableLocally: false,
+          syncedAt: book.moonReader?.syncedAt ?? row.progress_synced_at ?? Date.now(),
+        },
+      });
+    })
+  );
 }
 
 export async function loadLocalCatalogBook(
@@ -562,7 +601,8 @@ export async function reconcileLocalCatalog(
          WHERE book_key = ?
            AND book_key NOT IN (SELECT book_key FROM collections)
            AND book_key NOT IN (SELECT book_key FROM local_files)
-           AND book_key NOT IN (SELECT book_key FROM moonreader_items)`,
+           AND book_key NOT IN (SELECT book_key FROM moonreader_items)
+           AND book_key NOT IN (SELECT book_key FROM progress_sync_items)`,
         bookKey
       );
     }
@@ -722,6 +762,7 @@ export async function persistMoonReaderCatalog(
       WHERE book_key NOT IN (SELECT book_key FROM collections)
         AND book_key NOT IN (SELECT book_key FROM local_files)
         AND book_key NOT IN (SELECT book_key FROM moonreader_items)
+        AND book_key NOT IN (SELECT book_key FROM progress_sync_items)
     `);
   });
 }
@@ -738,6 +779,7 @@ export async function clearMoonReaderCatalog(): Promise<void> {
       WHERE book_key NOT IN (SELECT book_key FROM collections)
         AND book_key NOT IN (SELECT book_key FROM local_files)
         AND book_key NOT IN (SELECT book_key FROM moonreader_items)
+        AND book_key NOT IN (SELECT book_key FROM progress_sync_items)
     `);
   });
 }
@@ -821,6 +863,23 @@ function syncAliases(book: LibraryBook): string[] {
   ].filter(Boolean);
 }
 
+function progressSyncBook(record: ProgressSyncRecord): LibraryBook {
+  const key = `progress:${record.identity}`;
+  return {
+    key,
+    id: key,
+    title: record.title,
+    author: record.author || 'Unknown',
+    cover: '',
+    description: '',
+    year: '',
+    genre: 'Other',
+    format: record.format || undefined,
+    addedAt: record.updatedAt,
+    metadataPending: true,
+  };
+}
+
 function rowProgressRecord(row: ProgressSnapshotRow): ProgressSyncRecord | null {
   const book = parseBook(row.book_json);
   const isRead = row.override_is_read === 1 || row.is_read === 1;
@@ -853,10 +912,12 @@ async function progressSnapshotRows(database: SQLiteDatabase): Promise<ProgressS
             progress.synced_at AS progress_synced_at,
             manual.is_read AS override_is_read,
             manual.updated_at AS override_updated_at,
+            synced.identity AS sync_identity,
             NULL AS moonreader_json
      FROM catalog_books AS books
      LEFT JOIN reading_progress AS progress ON progress.book_key = books.book_key
-     LEFT JOIN reading_overrides AS manual ON manual.book_key = books.book_key`
+     LEFT JOIN reading_overrides AS manual ON manual.book_key = books.book_key
+     LEFT JOIN progress_sync_items AS synced ON synced.book_key = books.book_key`
   );
 }
 
@@ -876,7 +937,11 @@ export async function applyProgressSyncRecords(
   const rowsByAlias = new Map<string, ProgressSnapshotRow[]>();
   for (const row of rows) {
     const book = parseBook(row.book_json);
-    const aliases = [bookIdentity(book.title, book.author), ...syncAliases(book)];
+    const aliases = [
+      row.sync_identity ?? '',
+      bookIdentity(book.title, book.author),
+      ...syncAliases(book),
+    ].filter(Boolean);
     for (const alias of aliases) {
       const matches = rowsByAlias.get(alias) ?? [];
       matches.push(row);
@@ -890,6 +955,40 @@ export async function applyProgressSyncRecords(
       const matches = new Map<string, ProgressSnapshotRow>();
       for (const alias of [record.identity, ...record.aliases]) {
         for (const row of rowsByAlias.get(alias) ?? []) matches.set(row.book_key, row);
+      }
+      if (!matches.size) {
+        const book = progressSyncBook(record);
+        await upsertBook(transaction, book);
+        await transaction.runAsync(
+          `INSERT INTO progress_sync_items (identity, book_key, sort_at)
+           VALUES (?, ?, ?)
+           ON CONFLICT(identity) DO UPDATE SET
+             book_key = excluded.book_key,
+             sort_at = MAX(progress_sync_items.sort_at, excluded.sort_at)`,
+          record.identity,
+          book.key,
+          record.lastReadAt ?? record.updatedAt
+        );
+        const row: ProgressSnapshotRow = {
+          book_key: book.key,
+          book_json: JSON.stringify(book),
+          progress: null,
+          is_read: null,
+          reading_time_ms: null,
+          words_read: null,
+          last_read_at: null,
+          progress_synced_at: null,
+          moonreader_json: null,
+          override_is_read: null,
+          override_updated_at: null,
+          sync_identity: record.identity,
+        };
+        matches.set(book.key, row);
+        for (const alias of [record.identity, ...record.aliases]) {
+          const aliasRows = rowsByAlias.get(alias) ?? [];
+          aliasRows.push(row);
+          rowsByAlias.set(alias, aliasRows);
+        }
       }
       for (const row of matches.values()) {
         const localRead = row.override_is_read === 1 || row.is_read === 1;
@@ -997,7 +1096,8 @@ export async function deleteLocalCatalogBook(uri: string): Promise<void> {
        WHERE book_key = ?
          AND book_key NOT IN (SELECT book_key FROM collections)
          AND book_key NOT IN (SELECT book_key FROM local_files)
-         AND book_key NOT IN (SELECT book_key FROM moonreader_items)`,
+         AND book_key NOT IN (SELECT book_key FROM moonreader_items)
+         AND book_key NOT IN (SELECT book_key FROM progress_sync_items)`,
       row.book_key
     );
   });

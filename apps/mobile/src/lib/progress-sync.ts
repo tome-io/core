@@ -197,6 +197,9 @@ export async function synchronizeProgressFolder(
   const located = await locateSyncFiles(directoryUri, deviceId);
   const localRecords = await loadProgressSyncRecords();
   const folderRecords = located.documents.flatMap((document) => document.records);
+  console.info(
+    `[progress-sync] Found ${located.documents.length} sync file(s) containing ${folderRecords.length} record(s).`
+  );
   const mergedBeforeImport = mergeProgressRecords(folderRecords, localRecords);
   const importedRecords = await applyProgressSyncRecords(mergedBeforeImport);
   const merged = mergeProgressRecords(folderRecords, await loadProgressSyncRecords());
@@ -228,6 +231,10 @@ export async function synchronizeProgressFolder(
   if (!ownFileUri) {
     throw new Error('Reader could not locate or create its progress sync file.');
   }
+
+  console.info(
+    `[progress-sync] Applied ${importedRecords} update(s); ${merged.length} merged record(s); ${wroteChanges ? 'wrote this device file' : 'no write required'}.`
+  );
 
   return {
     fileUri: ownFileUri,

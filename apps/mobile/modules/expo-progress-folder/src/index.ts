@@ -44,7 +44,9 @@ export function hasNativeProgressFolder(): boolean {
 
 function requireProgressFolderModule(): ProgressFolderNativeModule {
   if (!nativeModule) {
-    throw new Error('Google Drive progress sync requires a native Reader build.');
+    throw new Error(
+      'Google Drive progress sync requires the installed Readio development build. Run `bun run android` from the repository root.'
+    );
   }
   return nativeModule;
 }

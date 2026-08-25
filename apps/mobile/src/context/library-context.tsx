@@ -18,6 +18,7 @@ import {
   invalidateCatalogMetadata,
   loadLocalCatalog,
   loadMoonReaderCatalog,
+  loadProgressSyncCatalog,
   markCatalogBookRead,
 } from '@/lib/library-db';
 import { enrichIndexedLocalLibrary, indexLocalLibrary } from '@/lib/library-sync';
@@ -82,6 +83,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<LibraryState>(EMPTY_LIBRARY);
   const [localBooks, setLocalBooks] = useState<LibraryBook[]>([]);
   const [moonReaderBooks, setMoonReaderBooks] = useState<LibraryBook[]>([]);
+  const [progressSyncBooks, setProgressSyncBooks] = useState<LibraryBook[]>([]);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -121,15 +123,27 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     let promise: Promise<void>;
     promise = synchronizeProgressFolder(settings.progressSyncLocation)
       .then(async (result) => {
-        const [syncedLocal, syncedMoonReader] = await Promise.all([
+        const [syncedLocal, syncedMoonReader, syncedProgressBooks] = await Promise.all([
           loadLocalCatalog(localKey),
           settings.moonReaderBackupLocation
             ? loadMoonReaderCatalog(moonReaderKey)
             : Promise.resolve([]),
+          loadProgressSyncCatalog(),
         ]);
         setLocalBooks(syncedLocal);
         setMoonReaderBooks(syncedMoonReader);
+        setProgressSyncBooks(syncedProgressBooks);
         setCloudLastSyncedAt(result.syncedAt);
+        setSyncError(null);
+        console.info(
+          `[progress-sync] Imported ${result.importedRecords} updates; ${result.recordCount} records available.`
+        );
+      })
+      .catch((cause) => {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        setSyncError(`Progress folder sync failed: ${message}`);
+        console.error('[progress-sync] Synchronization failed:', cause);
+        throw cause;
       })
       .finally(() => {
         setCloudSyncing(false);
@@ -164,14 +178,16 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     let promise: Promise<void>;
     promise = (async () => {
       if (!moonReaderLocation) await clearMoonReaderCatalog();
-      const [cachedLocal, cachedMoonReader] = await Promise.all([
+      const [cachedLocal, cachedMoonReader, cachedProgressBooks] = await Promise.all([
         loadLocalCatalog(localKey),
         moonReaderLocation ? loadMoonReaderCatalog(moonReaderKey) : Promise.resolve([]),
+        loadProgressSyncCatalog(),
       ]);
       if (scanGeneration.current !== generation) return;
       if (directoryChanged) {
         setLocalBooks(cachedLocal);
         setMoonReaderBooks(cachedMoonReader);
+        setProgressSyncBooks(cachedProgressBooks);
       }
 
       const warnings: string[] = [];
@@ -205,15 +221,18 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
 
       let enrichmentLocalBooks = local.books;
       let enrichmentMoonReaderBooks = moonReader.books;
+      let enrichmentProgressBooks = cachedProgressBooks;
 
       if (settings.progressSyncLocation) {
         try {
           await syncCloudProgress();
-          [enrichmentLocalBooks, enrichmentMoonReaderBooks] = await Promise.all([
+          [enrichmentLocalBooks, enrichmentMoonReaderBooks, enrichmentProgressBooks] =
+            await Promise.all([
             loadLocalCatalog(localKey),
             moonReaderLocation
               ? loadMoonReaderCatalog(moonReaderKey)
               : Promise.resolve([]),
+            loadProgressSyncCatalog(),
           ]);
         } catch (err: any) {
           warnings.push(`Progress folder sync failed: ${err.message || String(err)}`);
@@ -229,7 +248,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         (book) => moonLocalByKey.get(book.key) ?? book
       );
 
-      const [enrichedLocal, enrichedMoonReader] = await Promise.all([
+      const [enrichedLocal, enrichedMoonReader, enrichedProgress] = await Promise.all([
         enrichIndexedLocalLibrary({
           directoryKey: localKey,
           books: localWithMoonReaderMetadata,
@@ -252,15 +271,26 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
           books: enrichmentMoonReaderBooks,
           warnings: [`Moon+ Reader metadata enrichment failed: ${err.message || String(err)}`],
         })),
+        enrichIndexedMoonReaderCatalog(enrichmentProgressBooks, (enriched) => {
+          if (scanGeneration.current !== generation) return;
+          setProgressSyncBooks((current) =>
+            current.map((book) => (book.key === enriched.key ? enriched : book))
+          );
+        }).catch((err: any) => ({
+          books: enrichmentProgressBooks,
+          warnings: [`Synced library metadata enrichment failed: ${err.message || String(err)}`],
+        })),
       ]);
       if (scanGeneration.current !== generation) return;
       setLocalBooks(enrichedLocal.books);
       setMoonReaderBooks(enrichedMoonReader.books);
+      setProgressSyncBooks(enrichedProgress.books);
       warnings.push(
         ...local.warnings,
         ...moonReader.warnings,
         ...enrichedLocal.warnings,
-        ...enrichedMoonReader.warnings
+        ...enrichedMoonReader.warnings,
+        ...enrichedProgress.warnings
       );
       setWarning(warnings.length ? warnings.join(' ') : null);
     })()
@@ -401,6 +431,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         item.key === book.key ? { ...item, isRead: true, progress: 100 } : item;
       setLocalBooks((current) => current.map(applyRead));
       setMoonReaderBooks((current) => current.map(applyRead));
+      setProgressSyncBooks((current) => current.map(applyRead));
       await commit((current) => ({
         downloaded: current.downloaded.map(applyRead),
         readingList: current.readingList.map(applyRead),
@@ -447,6 +478,9 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       setMoonReaderBooks((current) =>
         current.map((item) => (item.key === refreshed.key ? refreshed : item))
       );
+      setProgressSyncBooks((current) =>
+        current.map((item) => (item.key === refreshed.key ? refreshed : item))
+      );
       setWarning(result.warnings.length ? result.warnings.join(' ') : null);
     },
     [settings.localLibraryLocation]
@@ -490,6 +524,47 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       );
       if (catalogKey !== moonBook.key) catalog.delete(moonBook.key);
     }
+
+    const catalogByIdentity = new Map(
+      [...catalog.values()].map((book) => [bookIdentity(book.title, book.author), book] as const)
+    );
+    for (const syncedBook of progressSyncBooks) {
+      const catalogBook =
+        catalog.get(syncedBook.key) ??
+        catalogByIdentity.get(bookIdentity(syncedBook.title, syncedBook.author));
+      if (!catalogBook) {
+        catalog.set(syncedBook.key, syncedBook);
+        catalogByIdentity.set(
+          bookIdentity(syncedBook.title, syncedBook.author),
+          syncedBook
+        );
+        continue;
+      }
+
+      const localProgress = catalogBook.isRead ? 100 : catalogBook.progress ?? 0;
+      const syncedProgress = syncedBook.isRead ? 100 : syncedBook.progress ?? 0;
+      const mergedProgress = Math.max(localProgress, syncedProgress);
+      const mergedBook: LibraryBook = {
+        ...syncedBook,
+        ...catalogBook,
+        progress: mergedProgress,
+        isRead: catalogBook.isRead || syncedBook.isRead || mergedProgress >= 100,
+        readingTimeMs: Math.max(
+          catalogBook.readingTimeMs ?? 0,
+          syncedBook.readingTimeMs ?? 0
+        ) || undefined,
+        wordsRead: Math.max(catalogBook.wordsRead ?? 0, syncedBook.wordsRead ?? 0) || undefined,
+        lastReadAt: Math.max(catalogBook.lastReadAt ?? 0, syncedBook.lastReadAt ?? 0) || undefined,
+        moonReader: {
+          ...syncedBook.moonReader,
+          ...catalogBook.moonReader,
+          availableLocally: !!catalogBook.local || catalogBook.moonReader?.availableLocally,
+        },
+      };
+      catalog.set(catalogBook.key, mergedBook);
+      catalogByIdentity.set(bookIdentity(mergedBook.title, mergedBook.author), mergedBook);
+      if (catalogBook.key !== syncedBook.key) catalog.delete(syncedBook.key);
+    }
     const seen = new Set<string>();
     const seenIdentities = new Set(
       [...catalog.values()].map((book) =>
@@ -519,7 +594,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       seen.add(key);
       return true;
     });
-  }, [localBooks, moonReaderBooks, state.downloaded]);
+  }, [localBooks, moonReaderBooks, progressSyncBooks, state.downloaded]);
 
   const readingList = useMemo(() => {
     const libraryByKey = new Map(downloaded.map((book) => [book.key, book]));
