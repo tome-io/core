@@ -20,6 +20,11 @@ import {
   type LibraryAction,
 } from '@/components/library-book-actions';
 import {
+  DescriptionText,
+  descriptionPlainText,
+  normalizeDescription,
+} from '@/components/description-text';
+import {
   BookStatusChips,
   colors,
   usePageBottomPadding,
@@ -125,18 +130,6 @@ function sameRouteValue(left?: string | null, right?: string | null): boolean {
     }
   };
   return comparable(left) === comparable(right);
-}
-
-function plainText(value: string): string {
-  return value
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)))
-    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(parseInt(code, 10)))
-    .replace(/&amp;/gi, '&')
-    .replace(/&quot;/gi, '"')
-    .replace(/&apos;/gi, "'")
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 export default function BookDetailScreen() {
@@ -323,7 +316,7 @@ export default function BookDetailScreen() {
   useEffect(() => {
     if (!sourceDiscoveryBook) return;
     let cancelled = false;
-    const suppliedDescription = plainText(sourceDiscoveryBook.description);
+    const suppliedDescription = normalizeDescription(sourceDiscoveryBook.description);
     setRemoteDescription(suppliedDescription);
     setGenreLabel(sourceDiscoveryBook.genre);
     setMetadataError(null);
@@ -336,7 +329,7 @@ export default function BookDetailScreen() {
       getWorkDetails(sourceDiscoveryBook.id)
         .then((details) => {
           if (cancelled) return;
-          if (details.description) setRemoteDescription(plainText(details.description));
+          if (details.description) setRemoteDescription(normalizeDescription(details.description));
           if (details.subjects.length) setGenreLabel(details.subjects.slice(0, 3).join(', '));
         })
         .catch((cause) => {
@@ -731,11 +724,11 @@ export default function BookDetailScreen() {
     localBook?.fallbackCover ||
     '';
   const description = extensionBook?.description
-    ? plainText(extensionBook.description)
+    ? normalizeDescription(extensionBook.description)
     : currentDiscovery?.description
-      ? plainText(currentDiscovery.description)
+      ? normalizeDescription(currentDiscovery.description)
       : localBook?.description
-        ? plainText(localBook.description)
+        ? normalizeDescription(localBook.description)
         : '';
   const rating = extensionBook?.rating ?? currentDiscovery?.rating ?? localBook?.rating;
   const trackedBook = localBook ?? moonBook;
@@ -785,9 +778,11 @@ export default function BookDetailScreen() {
       onPress={() => setDescriptionOpen(true)}
       className="mt-5 overflow-hidden"
     >
-      <Text numberOfLines={compactLayout ? 6 : 5} className="text-sm text-neutral-300 leading-5">
-        {description}
-      </Text>
+      <DescriptionText
+        value={description}
+        numberOfLines={compactLayout ? 6 : 5}
+        className="text-sm text-neutral-300 leading-5"
+      />
     </Pressable>
   ) : null;
 
@@ -1045,7 +1040,10 @@ export default function BookDetailScreen() {
               </Pressable>
             </View>
             <ScrollView contentContainerStyle={{ padding: 20 }}>
-              <Text className="text-sm leading-6 text-neutral-300">{description}</Text>
+              <DescriptionText
+                value={description}
+                className="text-sm leading-6 text-neutral-300"
+              />
             </ScrollView>
           </Pressable>
         </Pressable>
@@ -1146,7 +1144,7 @@ function AcquisitionRow({
     book.publishedYear ? String(book.publishedYear) : '',
     entry.providerName,
   ].filter(Boolean);
-  const description = book.description ? plainText(book.description) : '';
+  const description = book.description ? descriptionPlainText(book.description) : '';
   const progress =
     phase.kind === 'downloading' && phase.progress.totalBytes > 0
       ? Math.min(100, Math.round((phase.progress.bytesWritten / phase.progress.totalBytes) * 100))
