@@ -1,0 +1,51 @@
+{
+  "name": "@tomeio/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "electron:install": "install-electron --no",
+    "start": "bun run electron:install && electron-vite dev",
+    "build": "electron-vite build",
+    "package": "bun run electron:install && bun run build && electron-builder --mac",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tomeio/contracts": "workspace:*",
+    "@tomeio/design": "workspace:*",
+    "@tomeio/domain": "workspace:*",
+    "@tomeio/extension-runtime": "workspace:*",
+    "@tomeio/official-extensions": "workspace:*",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@types/react": "~19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.1.1",
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "typescript": "~6.0.3",
+    "vite": "^7.2.2"
+  },
+  "build": {
+    "appId": "org.readoi.reader",
+    "productName": "Tomeio",
+    "asar": true,
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "icon": "build/icon.png",
+      "category": "public.app-category.books",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    }
+  }
+}

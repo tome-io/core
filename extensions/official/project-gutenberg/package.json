@@ -1,0 +1,19 @@
+{
+  "name": "@tomeio/extension-project-gutenberg",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test test/index.test.ts",
+    "test:live": "bun test test/live.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tomeio/domain": "workspace:*",
+    "@tomeio/extension-protocol": "workspace:*",
+    "@tomeio/sources": "workspace:*"
+  }
+}

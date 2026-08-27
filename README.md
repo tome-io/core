@@ -1,56 +1,114 @@
-# Welcome to your Expo app 👋
+<p align="center">
+  <img src="apps/mobile/assets/images/icon.png" width="152" alt="Tomeio logo" />
+</p>
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+<h1 align="center">Tomeio</h1>
 
-## Get started
+<p align="center">
+  A book discovery, download, and library app built around extensions.
+</p>
 
-1. Install dependencies
+Tomeio brings catalogs, search, downloads, reading lists, and a local book library into one
+application. It is inspired by [Stremio](https://www.stremio.com/), with book sources taking the
+place of media add-ons.
 
-   ```bash
-   npm install
-   ```
+## tomeio-core
 
-2. Start the app
+`tomeio-core` contains the shared application logic, platform clients, and official extensions used
+to build Tomeio. It is a Bun workspace with an Expo client for Android, iOS, and web, plus an early
+Electron client for macOS.
 
-   ```bash
-   npx expo start
-   ```
+### Goals
 
-In the output, you'll find options to open the app in a
+- Share book, library, extension, and progress-sync logic between clients.
+- Keep operating-system APIs behind platform-specific adapters.
+- Make catalogs and downloads extensible through a small resource protocol.
+- Keep shared packages independent of React Native, Electron, and Node APIs.
+- Preserve deterministic data and sync behavior across platforms.
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+### Apps
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+- `apps/mobile` — Expo Router client for Android, iOS, and web.
+- `apps/desktop` — Electron main/preload processes and React renderer for macOS.
 
-## Get a fresh project
+### Modules
 
-When you're ready, run:
+- `application` — platform-neutral use cases and ports.
+- `contracts` — typed IPC contracts shared by Electron processes.
+- `database` — portable database driver contract and core schema.
+- `design` — shared colors and design tokens.
+- `domain` — book metadata, identity, acquisition, and progress models.
+- `extension-protocol` — manifest, resource, query, and response types.
+- `extension-runtime` — extension installation, registry, and transport loading.
+- `official-extensions` — registry of extensions bundled with Tomeio.
+- `sources` — shared provider HTTP and cache utilities.
+- `sync` — progress documents and deterministic merge rules.
 
-```bash
-npm run reset-project
+The main dependency direction is:
+
+```text
+Expo screens ──────┐
+                   ├── application ── domain
+Electron renderer ─┘        │
+                            ├── extension protocol/runtime
+Platform adapters ──────────┴── database and sync contracts
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Platform integrations stay in their clients. Expo owns Android Storage Access Framework,
+SecureStore, external reader integration, and Expo SQLite. Electron's main process owns filesystem,
+dialog, and native persistence access; its renderer does not have Node access.
 
-### Other setup steps
+## Extensions
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+Tomeio extensions expose four book resources:
 
-## Learn more
+- `catalog` — discovery shelves and paged catalogs.
+- `search` — provider search.
+- `meta` — book details and metadata enrichment.
+- `acquisition` — downloadable formats or external open actions.
 
-To learn more about developing your project with Expo, look at the following resources:
+The official extensions are Open Library, Project Gutenberg, and Internet Archive — Open Books.
+They implement the common extension contract and are compiled with the app.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+See [extensions/README.md](extensions/README.md) for the source layout and
+[docs/extensions.md](docs/extensions.md) for the protocol.
 
-## Join the community
+## Development
 
-Join our community of developers creating universal apps.
+Tomeio uses [Bun](https://bun.sh/) `1.4.x` and
+[Expo SDK 57](https://docs.expo.dev/versions/v57.0.0/).
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+```bash
+bun install
+```
+
+Common commands:
+
+```bash
+bun mobile:start
+bun mobile:android
+bun mobile:ios
+bun mobile:web
+bun desktop
+bun desktop:package
+```
+
+Workspace validation:
+
+```bash
+bun test
+bun typecheck
+bun lint
+```
+
+## Compatibility
+
+Tomeio was previously named Readio. Compatibility-sensitive identifiers such as
+`reado-extension.json`, `org.readoi.*`, the script extension `reado` API, and the desktop
+`window.readio` bridge remain unchanged.
+
+More detail is available in [docs/architecture.md](docs/architecture.md).
+
+## License
+
+See [LICENSE](LICENSE).

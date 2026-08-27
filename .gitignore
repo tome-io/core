@@ -11,6 +11,7 @@ expo-env.d.ts
 
 # Native
 .kotlin/
+**/android/build/
 *.orig.*
 *.jks
 *.p8
@@ -41,3 +42,8 @@ example
 # generated native folders
 /ios
 /android
+/apps/mobile/ios
+/apps/mobile/android
+/apps/desktop/out
+/apps/desktop/dist
+/apps/desktop/release

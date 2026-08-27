@@ -1,0 +1,24 @@
+{
+  "manifestVersion": 1,
+  "id": "org.readoi.open-library",
+  "version": "0.1.1",
+  "name": "Open Library",
+  "description": "Trending catalogs and book metadata from Open Library.",
+  "author": "Tomeio",
+  "homepage": "https://openlibrary.org",
+  "types": ["book"],
+  "resources": [
+    { "name": "catalog", "supportsPagination": true },
+    { "name": "search", "supportsPagination": true },
+    { "name": "meta" }
+  ],
+  "catalogs": [
+    { "id": "trending", "name": "Trending this week", "resource": "catalog" },
+    { "id": "fantasy", "name": "Fantasy", "resource": "catalog" },
+    { "id": "science-fiction", "name": "Science fiction", "resource": "catalog" }
+  ],
+  "transport": { "kind": "bundled", "module": "@tomeio/extension-open-library" },
+  "permissions": {
+    "hosts": ["https://openlibrary.org", "https://covers.openlibrary.org"]
+  }
+}
