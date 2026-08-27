@@ -1,0 +1,28 @@
+#!/bin/sh
+
+set -eu
+
+profile="${1:-}"
+case "$profile" in
+  beta)
+    suffix="-beta"
+    ;;
+  production)
+    suffix=""
+    ;;
+  *)
+    echo "Usage: $0 beta|production" >&2
+    exit 1
+    ;;
+esac
+
+app_version=$(bun -p "require('./app.json').expo.version")
+
+bunx expo prebuild --clean --platform android
+mkdir -p dist
+bunx eas build \
+  --platform android \
+  --profile "$profile" \
+  --local \
+  --clear-cache \
+  --output "./dist/tomeio-$app_version$suffix.aab"

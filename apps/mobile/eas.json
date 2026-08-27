@@ -1,0 +1,30 @@
+{
+  "cli": {
+    "version": ">= 16.18.1",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "beta": {
+      "environment": "production",
+      "env": {
+        "NODE_ENV": "production"
+      },
+      "autoIncrement": true,
+      "credentialsSource": "remote",
+      "android": {
+        "buildType": "app-bundle"
+      }
+    },
+    "production": {
+      "environment": "production",
+      "env": {
+        "NODE_ENV": "production"
+      },
+      "autoIncrement": true,
+      "credentialsSource": "remote",
+      "android": {
+        "buildType": "app-bundle"
+      }
+    }
+  }
+}

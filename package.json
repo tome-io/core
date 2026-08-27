@@ -12,11 +12,17 @@
     "android": "bun run --cwd \"$PWD/apps/mobile\" android",
     "android:build": "bun run --cwd \"$PWD/apps/mobile\" android",
     "android:release": "bun run --cwd \"$PWD/apps/mobile\" android:release",
+    "android:aab": "bun run --cwd \"$PWD/apps/mobile\" build:android:beta",
+    "android:aab:production": "bun run --cwd \"$PWD/apps/mobile\" build:android:production",
+    "play:validate": "gplay validate --package org.tomeio.app --track internal --bundle apps/mobile/dist/tomeio-1.0.0-beta.aab --listings-dir .gplay/metadata --release-notes @.gplay/release-notes.json --pretty",
+    "play:release:internal": "gplay release --package org.tomeio.app --track internal --bundle apps/mobile/dist/tomeio-1.0.0-beta.aab --listings-dir .gplay/metadata --release-notes @.gplay/release-notes.json --status completed --wait --pretty",
     "mobile": "bun run --cwd \"$PWD/apps/mobile\" android",
     "mobile:start": "bun run --cwd \"$PWD/apps/mobile\" start",
     "mobile:android": "bun run --cwd \"$PWD/apps/mobile\" android",
     "mobile:android:release": "bun run --cwd \"$PWD/apps/mobile\" android:release",
     "mobile:ios": "bun run --cwd \"$PWD/apps/mobile\" ios",
+    "ios:ipa": "bun run --cwd \"$PWD/apps/mobile\" build:ios:beta",
+    "ios:ipa:production": "bun run --cwd \"$PWD/apps/mobile\" build:ios:production",
     "mobile:web": "bun run --cwd \"$PWD/apps/mobile\" web",
     "desktop": "bun run --cwd \"$PWD/apps/desktop\" start",
     "desktop:install": "bun run --cwd \"$PWD/apps/desktop\" electron:install",
@@ -26,8 +32,8 @@
     "lint": "bun --workspaces --if-present lint"
   },
   "dependencies": {
-    "expo": "~57.0.14",
+    "expo": "~57.0.17",
     "react": "19.2.3",
-    "react-native": "0.86.2"
+    "react-native": "0.86.3"
   }
 }

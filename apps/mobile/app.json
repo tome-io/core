@@ -3,6 +3,8 @@
     "name": "Tomeio",
     "slug": "tomeio",
     "version": "1.0.0",
+    "description": "Discover, download, organize, and read books with extensible providers.",
+    "githubUrl": "https://github.com/tome-io/core",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "tomeio",
@@ -11,11 +13,21 @@
     "primaryColor": "#FF6A00",
     "ios": {
       "icon": "./assets/images/icon.png",
-      "bundleIdentifier": "org.tomeio.app"
+      "bundleIdentifier": "org.tomeio.app",
+      "supportsTablet": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "org.tomeio.app",
-      "versionCode": 1,
+      "allowBackup": false,
+      "permissions": [
+        "android.permission.POST_NOTIFICATIONS"
+      ],
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#FFB511",
         "foregroundImage": "./assets/images/icon.png",
@@ -51,11 +63,18 @@
           "monochromeSvg": "./assets/images/android-icon-monochrome.svg"
         }
       ],
+      "@kesha-antonov/react-native-background-downloader",
       "expo-sqlite"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "0d4223fb-db24-47ae-bafd-f3a41a986d53"
+      }
+    },
+    "owner": "luke1999"
   }
 }
