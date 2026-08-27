@@ -74,7 +74,7 @@ const pendingRequests = new Map<string, Promise<any>>();
 
 function proxied(url: string): string {
   if (!isWeb) return url;
-  return `/reado-proxy/${encodeURIComponent(url)}`;
+  return `/tomeio-proxy/${encodeURIComponent(url)}`;
 }
 
 function coverUrl(coverI?: number, coverEditionKey?: string): string {

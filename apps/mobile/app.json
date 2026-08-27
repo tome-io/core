@@ -5,18 +5,16 @@
     "version": "1.0.0",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
-    "scheme": [
-      "tomeio",
-      "readerapp"
-    ],
+    "scheme": "tomeio",
     "userInterfaceStyle": "automatic",
     "backgroundColor": "#100B08",
     "primaryColor": "#FF6A00",
     "ios": {
-      "icon": "./assets/images/icon.png"
+      "icon": "./assets/images/icon.png",
+      "bundleIdentifier": "org.tomeio.app"
     },
     "android": {
-      "package": "com.lukestembp.readio",
+      "package": "org.tomeio.app",
       "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#FFB511",

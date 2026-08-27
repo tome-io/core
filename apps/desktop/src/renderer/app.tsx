@@ -11,7 +11,7 @@ export function App() {
 
   const refresh = useCallback(async () => {
     try {
-      setRegistry(await window.readio.extensions.list());
+      setRegistry(await window.tomeio.extensions.list());
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -27,7 +27,7 @@ export function App() {
     if (!repositoryUrl.trim()) return;
     setInstalling(true);
     try {
-      await window.readio.extensions.install(repositoryUrl);
+      await window.tomeio.extensions.install(repositoryUrl);
       setRepositoryUrl('');
       await refresh();
     } catch (cause) {

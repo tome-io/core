@@ -7,7 +7,7 @@ Tomeio extensions expose Stremio-style resources specialized for books:
 - `meta` for book details and enrichment;
 - `acquisition` for available downloads or external open actions.
 
-Every extension has a versioned `reado-extension.json`. Official extensions implement
+Every extension has a versioned `tomeio-extension.json`. Official extensions implement
 the same contract as third-party extensions but use a `bundled` transport and ship with
 the application.
 
@@ -29,10 +29,10 @@ repository URL or a direct manifest URL on the Add-ons page. For example:
 
 ```text
 https://github.com/owner/repository
-https://raw.githubusercontent.com/owner/repository/v1.2.0/reado-extension.json
+https://raw.githubusercontent.com/owner/repository/v1.2.0/tomeio-extension.json
 ```
 
-A GitHub repository resolves to `reado-extension.json` at its root. Tomeio stores the
+A GitHub repository resolves to `tomeio-extension.json` at its root. Tomeio stores the
 manifest snapshot, source URL, enabled state, and install/update timestamps locally.
 Official ids cannot be replaced by third-party manifests.
 
@@ -49,7 +49,7 @@ extension does not automatically assign either role, and results are not combine
 search providers. A download provider must expose both `search` and `acquisition` so it can resolve
 books discovered by a different extension.
 
-The public extension collection at [`tomeio/extensions`](https://github.com/tomeio/extensions) is
+The public extension collection at [`tome-io/extensions`](https://github.com/tome-io/extensions) is
 reserved for reviewed community extensions. The app still requires explicit URL installation;
 there is no in-app third-party catalog.
 

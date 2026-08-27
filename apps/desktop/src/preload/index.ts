@@ -19,4 +19,4 @@ const bridge: DesktopBridge = {
   },
 };
 
-contextBridge.exposeInMainWorld('readio', bridge);
+contextBridge.exposeInMainWorld('tomeio', bridge);

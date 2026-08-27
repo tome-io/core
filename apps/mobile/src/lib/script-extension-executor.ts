@@ -75,8 +75,8 @@ export function createSandboxHtml(
   bridge: 'native' | 'web' = 'native'
 ): string {
   const entrypoint = manifest.transport.kind === 'script'
-    ? manifest.transport.entrypoint ?? 'readoExtension'
-    : 'readoExtension';
+    ? manifest.transport.entrypoint ?? 'tomeioExtension'
+    : 'tomeioExtension';
   const nonce = manifest.transport.kind === 'script' ? manifest.transport.sha256.slice(0, 24) : '';
   const postMessage = (expression: string) =>
     bridge === 'web'
@@ -92,7 +92,7 @@ export function createSandboxHtml(
         pending.set(requestId, { resolve, reject });
         send({ type: 'host-call', requestId, method, args });
       });
-      Object.defineProperty(globalThis, 'reado', {
+      Object.defineProperty(globalThis, 'tomeio', {
         configurable: false,
         writable: false,
         value: Object.freeze({
@@ -110,7 +110,7 @@ export function createSandboxHtml(
           }),
         }),
       });
-      globalThis.__readoReceive = async (message) => {
+      globalThis.__tomeioReceive = async (message) => {
         if (message.type === 'host-result') {
           const request = pending.get(message.requestId);
           if (!request) return;
@@ -130,7 +130,7 @@ export function createSandboxHtml(
           send({ type: 'result', requestId: message.requestId, error: error instanceof Error ? error.message : String(error) });
         }
       };
-      ${bridge === 'web' ? "window.addEventListener('message', (event) => globalThis.__readoReceive(event.data));" : ''}
+      ${bridge === 'web' ? "window.addEventListener('message', (event) => globalThis.__tomeioReceive(event.data));" : ''}
     })();
   `;
   const ready = `
@@ -378,12 +378,12 @@ export class MobileScriptExtensionExecutor implements ScriptExtensionExecutor {
       const options = (args[1] ?? {}) as RequestInit;
       const headers = new Headers(options.headers);
       if (Platform.OS === 'web' && headers.has('cookie')) {
-        headers.set('x-reado-cookie', headers.get('cookie') ?? '');
+        headers.set('x-tomeio-cookie', headers.get('cookie') ?? '');
         headers.delete('cookie');
       }
       const requestUrl =
         Platform.OS === 'web'
-          ? `/reado-proxy/${encodeURIComponent(url.toString())}`
+          ? `/tomeio-proxy/${encodeURIComponent(url.toString())}`
           : url.toString();
       const response = await fetch(requestUrl, {
         method: options.method,

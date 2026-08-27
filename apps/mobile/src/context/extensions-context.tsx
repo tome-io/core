@@ -115,7 +115,7 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
     );
     const selectedSearch = searchCandidates.some((manifest) => manifest.id === savedSearchId)
       ? savedSearchId
-      : searchCandidates.find((manifest) => manifest.id === 'org.readoi.open-library')?.id ??
+      : searchCandidates.find((manifest) => manifest.id === 'org.tomeio.open-library')?.id ??
         searchCandidates[0]?.id ??
         null;
     const selectedAcquisition = acquisitionCandidates.some(
@@ -125,7 +125,7 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       : acquisitionCandidates.some((manifest) => manifest.id === savedSearchId)
         ? savedSearchId
         : acquisitionCandidates.find(
-              (manifest) => manifest.id === 'org.readoi.internet-archive'
+              (manifest) => manifest.id === 'org.tomeio.internet-archive'
             )?.id ??
           acquisitionCandidates[0]?.id ??
           null;

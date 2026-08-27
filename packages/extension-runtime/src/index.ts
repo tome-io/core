@@ -67,7 +67,7 @@ export function resolveExtensionManifestUrl(input: string): string {
   if (url.hostname !== 'github.com') {
     return url.pathname.endsWith('.json')
       ? url.toString()
-      : new URL('reado-extension.json', `${url.toString().replace(/\/$/, '')}/`).toString();
+      : new URL('tomeio-extension.json', `${url.toString().replace(/\/$/, '')}/`).toString();
   }
 
   const parts = url.pathname.replace(/^\//, '').replace(/\.git$/, '').split('/').filter(Boolean);
@@ -87,9 +87,9 @@ export function resolveExtensionManifestUrl(input: string): string {
   }
   if (mode === 'tree' && ref) {
     const directory = pathParts.length ? `${pathParts.join('/')}/` : '';
-    return `https://raw.githubusercontent.com/${owner}/${repository}/${ref}/${directory}reado-extension.json`;
+    return `https://raw.githubusercontent.com/${owner}/${repository}/${ref}/${directory}tomeio-extension.json`;
   }
-  return `https://raw.githubusercontent.com/${owner}/${repository}/HEAD/reado-extension.json`;
+  return `https://raw.githubusercontent.com/${owner}/${repository}/HEAD/tomeio-extension.json`;
 }
 
 async function fetchManifest(

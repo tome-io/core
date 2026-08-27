@@ -40,7 +40,7 @@ export function ExtensionSandboxes() {
             mobileScriptExtensionExecutor.attach(session.manifest.id, (message) => {
               webviews.current
                 .get(session.manifest.id)
-                ?.injectJavaScript(`window.__readoReceive(${message}); true;`);
+                ?.injectJavaScript(`window.__tomeioReceive(${message}); true;`);
             });
           }}
           onMessage={(event) => {

@@ -101,12 +101,6 @@ bun typecheck
 bun lint
 ```
 
-## Compatibility
-
-Tomeio was previously named Readio. Compatibility-sensitive identifiers such as
-`reado-extension.json`, `org.readoi.*`, the script extension `reado` API, and the desktop
-`window.readio` bridge remain unchanged.
-
 More detail is available in [docs/architecture.md](docs/architecture.md).
 
 ## License

@@ -11,7 +11,7 @@ its provider-specific API code and exposes a common set of book resources to the
 - `acquisition(id)` returns downloadable formats or external open actions.
 
 An extension implements only the resources it supports. The declared resources and catalogs live
-in its versioned `reado-extension.json` manifest.
+in its versioned `tomeio-extension.json` manifest.
 
 ## Official extensions
 
@@ -26,7 +26,7 @@ in its versioned `reado-extension.json` manifest.
 ```text
 official/provider-name/
 ├── package.json
-├── reado-extension.json
+├── tomeio-extension.json
 ├── src/index.ts
 └── test/
 ```
@@ -57,7 +57,7 @@ Supported transports are:
 ## Adding an official extension
 
 1. Create a workspace under `extensions/official/<provider>`.
-2. Add a valid `reado-extension.json` and matching exported manifest.
+2. Add a valid `tomeio-extension.json` and matching exported manifest.
 3. Implement a `BookExtension` using the shared domain types.
 4. Add focused tests for mapping, pagination, empty responses, and provider failures.
 5. Register the default instance in `packages/official-extensions`.
@@ -76,6 +76,3 @@ bun typecheck
 
 Providers with live integration tests expose a `test:live` script in their package. These tests
 contact the provider API and are separate from the normal workspace test command.
-
-The `reado-extension.json` filename remains unchanged for compatibility with extensions installed
-before the project was renamed to Tomeio.

@@ -9,7 +9,7 @@ import { createSourceHttpClient, type SourceHttpOptions } from '@tomeio/sources'
 
 export const manifest: ExtensionManifest = {
   manifestVersion: 1,
-  id: 'org.readoi.project-gutenberg',
+  id: 'org.tomeio.project-gutenberg',
   version: '0.1.0',
   name: 'Project Gutenberg',
   description: 'Public-domain books and downloads from Project Gutenberg.',
@@ -29,7 +29,7 @@ export const manifest: ExtensionManifest = {
 };
 
 const OPDS_PAGE_SIZE = 25;
-const GUTENBERG_USER_AGENT = 'Tomeio/0.1 (+https://github.com/tomeio/core)';
+const GUTENBERG_USER_AGENT = 'Tomeio/0.1 (+https://github.com/tome-io/core)';
 
 function decodeXml(value: string): string {
   return value

@@ -18,7 +18,7 @@ config.server = {
   enhanceMiddleware: (middleware, server) => {
     const inner = previousEnhance ? previousEnhance(middleware, server) : middleware;
 
-    const PREFIX = '/reado-proxy/';
+    const PREFIX = '/tomeio-proxy/';
 
     return (req, res, next) => {
       // expo-sqlite uses SharedArrayBuffer on web. These headers are required
@@ -45,7 +45,7 @@ config.server = {
 };
 
 async function handleProxy(req, res) {
-  const PREFIX = '/reado-proxy/';
+  const PREFIX = '/tomeio-proxy/';
   try {
     const encoded = req.url.slice(PREFIX.length).split('?')[0];
     const target = decodeURIComponent(encoded);
@@ -59,8 +59,8 @@ async function handleProxy(req, res) {
     const headers = { ...req.headers };
     // Browsers cannot set Cookie directly; the host bridge uses this private
     // development header after enforcing extension host permissions.
-    if (headers['x-reado-cookie']) {
-      headers.cookie = headers['x-reado-cookie'];
+    if (headers['x-tomeio-cookie']) {
+      headers.cookie = headers['x-tomeio-cookie'];
     }
     for (const h of [
       'host',
@@ -69,7 +69,7 @@ async function handleProxy(req, res) {
       'referer',
       'accept-encoding',
       'content-length',
-      'x-reado-cookie',
+      'x-tomeio-cookie',
     ]) {
       delete headers[h];
     }

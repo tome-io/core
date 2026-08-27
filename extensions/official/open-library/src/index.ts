@@ -9,7 +9,7 @@ import { createSourceHttpClient, type SourceHttpOptions } from '@tomeio/sources'
 
 export const manifest: ExtensionManifest = {
   manifestVersion: 1,
-  id: 'org.readoi.open-library',
+  id: 'org.tomeio.open-library',
   version: '0.1.1',
   name: 'Open Library',
   description: 'Trending catalogs and book metadata from Open Library.',

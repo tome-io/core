@@ -1,6 +1,6 @@
 {
   "manifestVersion": 1,
-  "id": "org.readoi.project-gutenberg",
+  "id": "org.tomeio.project-gutenberg",
   "version": "0.1.0",
   "name": "Project Gutenberg",
   "description": "Public-domain books and downloads from Project Gutenberg.",

@@ -70,28 +70,28 @@ type ExtensionBranding = {
 };
 
 const BRANDING: Record<string, ExtensionBranding> = {
-  'org.readoi.open-library': {
+  'org.tomeio.open-library': {
     color: '#f4f1e8',
     icon: 'book-open',
     mark: 'OL',
     logo: require('../../../assets/images/extensions/open-library.png'),
     logoScale: 0.88,
   },
-  'org.readoi.internet-archive': {
+  'org.tomeio.internet-archive': {
     color: '#f2f2f2',
     icon: 'archive',
     mark: 'IA',
     logo: require('../../../assets/images/extensions/internet-archive.png'),
     logoScale: 0.68,
   },
-  'org.readoi.project-gutenberg': {
+  'org.tomeio.project-gutenberg': {
     color: '#dce8ec',
     icon: 'feather',
     mark: 'PG',
     logo: require('../../../assets/images/extensions/project-gutenberg.jpg'),
     logoScale: 0.94,
   },
-  'community.readoi.zlibrary': { color: '#8a3945', icon: 'book', mark: 'Z' },
+  'community.tomeio.zlibrary': { color: '#8a3945', icon: 'book', mark: 'Z' },
 };
 
 function brandingFor(manifest: ExtensionManifest): ExtensionBranding {

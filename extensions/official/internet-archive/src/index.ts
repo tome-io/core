@@ -14,7 +14,7 @@ import {
 
 export const manifest: ExtensionManifest = {
   manifestVersion: 1,
-  id: 'org.readoi.internet-archive',
+  id: 'org.tomeio.internet-archive',
   version: '0.1.0',
   name: 'Internet Archive — Open Books',
   description: 'Internet Archive records with rights-verified native downloads.',
