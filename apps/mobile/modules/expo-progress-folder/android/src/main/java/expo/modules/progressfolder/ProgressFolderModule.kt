@@ -1,5 +1,7 @@
 package expo.modules.progressfolder
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
@@ -12,6 +14,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withTimeout
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileNotFoundException
+import java.io.InputStream
 import java.nio.charset.StandardCharsets
 
 class ProgressFolderModule : Module() {
@@ -87,6 +92,31 @@ class ProgressFolderModule : Module() {
           "The file provider did not inspect the progress folder within 20 seconds."
         )
       }
+    }
+
+    AsyncFunction("copyFileToDirectory") Coroutine {
+        sourceUri: String,
+        directoryUri: String,
+        filename: String,
+        mimeType: String ->
+      runInterruptible(Dispatchers.IO) {
+        copyFileToDirectory(
+          sourceUri,
+          Uri.parse(directoryUri),
+          filename,
+          mimeType
+        )
+      }
+    }
+
+    AsyncFunction("deleteFile") Coroutine { fileUri: String ->
+      runInterruptible(Dispatchers.IO) {
+        deleteFile(Uri.parse(fileUri))
+      }
+    }
+
+    AsyncFunction("openDirectory") { directoryUri: String ->
+      openDirectory(Uri.parse(directoryUri))
     }
   }
 
@@ -228,6 +258,115 @@ class ProgressFolderModule : Module() {
       writer.write(contents)
       writer.flush()
     }
+  }
+
+  private fun sourceStream(sourceUri: String): InputStream {
+    val uri = Uri.parse(sourceUri)
+    return when (uri.scheme) {
+      "content" -> context().contentResolver.openInputStream(uri)
+      "file" -> uri.path?.let { File(it).inputStream() }
+      null -> File(sourceUri).inputStream()
+      else -> null
+    } ?: throw IllegalStateException("The downloaded file could not be opened.")
+  }
+
+  private fun findChild(treeUri: Uri, filename: String): Uri? {
+    val resolver = context().contentResolver
+    val directoryUri = directoryDocumentUri(treeUri)
+    val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+      directoryUri,
+      DocumentsContract.getDocumentId(directoryUri)
+    )
+    val projection = arrayOf(
+      DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+      DocumentsContract.Document.COLUMN_DISPLAY_NAME
+    )
+    val cursor = resolver.query(childrenUri, projection, null, null, null)
+      ?: throw IllegalStateException("The file provider did not return the folder contents.")
+    cursor.use {
+      val idColumn = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+      val nameColumn = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+      while (it.moveToNext()) {
+        if (it.getString(nameColumn) == filename) {
+          return DocumentsContract.buildDocumentUriUsingTree(
+            directoryUri,
+            it.getString(idColumn)
+          )
+        }
+      }
+    }
+    return null
+  }
+
+  private fun copyFileToDirectory(
+    sourceUri: String,
+    treeUri: Uri,
+    filename: String,
+    mimeType: String
+  ): String {
+    val resolver = context().contentResolver
+    var created = false
+    val destination = findChild(treeUri, filename) ?: DocumentsContract.createDocument(
+      resolver,
+      directoryDocumentUri(treeUri),
+      mimeType,
+      filename
+    )?.also { created = true }
+      ?: throw IllegalStateException("The file provider did not create the downloaded book.")
+
+    try {
+      sourceStream(sourceUri).use { input ->
+        val output = resolver.openOutputStream(destination, "wt")
+          ?: throw IllegalStateException("The file provider could not open the downloaded book for writing.")
+        output.use { input.copyTo(it, 64 * 1024) }
+      }
+      return destination.toString()
+    } catch (error: Throwable) {
+      if (created) runCatching { DocumentsContract.deleteDocument(resolver, destination) }
+      throw error
+    }
+  }
+
+  private fun deleteFile(fileUri: Uri) {
+    if (fileUri.scheme != "content") {
+      throw IllegalArgumentException("Only Android document-provider files can be deleted here.")
+    }
+    try {
+      if (!DocumentsContract.deleteDocument(context().contentResolver, fileUri)) {
+        throw IllegalStateException("The file provider refused to delete the book.")
+      }
+    } catch (_: FileNotFoundException) {
+      // Deletion is idempotent: a file removed outside Tomeio is already in the desired state.
+    }
+  }
+
+  private fun openDirectory(treeUri: Uri) {
+    if (treeUri.scheme != "content") {
+      throw IllegalArgumentException("Only Android document-provider folders can be opened here.")
+    }
+    val directoryUri = directoryDocumentUri(treeUri)
+    val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+      Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+      Intent.FLAG_ACTIVITY_NEW_TASK
+    val intents = listOf(
+      Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(directoryUri, DocumentsContract.Document.MIME_TYPE_DIR)
+        addFlags(flags)
+      },
+      Intent("android.provider.action.BROWSE").apply {
+        setDataAndType(directoryUri, DocumentsContract.Document.MIME_TYPE_DIR)
+        addFlags(flags)
+      }
+    )
+    for (intent in intents) {
+      try {
+        context().startActivity(intent)
+        return
+      } catch (_: ActivityNotFoundException) {
+        // Try the DocumentsUI browse action when a file manager does not support ACTION_VIEW.
+      }
+    }
+    throw IllegalStateException("No installed file manager can open the Books folder.")
   }
 
   private fun validateContents(contents: String) {

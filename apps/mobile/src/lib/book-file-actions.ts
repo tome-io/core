@@ -1,8 +1,8 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import * as IntentLauncher from 'expo-intent-launcher';
 import * as Sharing from 'expo-sharing';
 import { Platform } from 'react-native';
 
+import { openNativeProgressFolder } from '../../modules/expo-progress-folder/src';
 import type { LibraryBook } from './library';
 
 const MIME_TYPES: Record<string, string> = {
@@ -18,7 +18,11 @@ const MIME_TYPES: Record<string, string> = {
 
 function sourceUri(book: LibraryBook): string {
   const uri = book.local?.uri ?? book.fileUri;
-  if (!uri || book.moonReader?.availableLocally === false) {
+  if (
+    !uri ||
+    book.availableLocally === false ||
+    book.moonReader?.availableLocally === false
+  ) {
     throw new Error('Download this book before opening its source file.');
   }
   return uri;
@@ -58,16 +62,28 @@ export async function openBookWithAnotherApp(book: LibraryBook): Promise<void> {
   });
 }
 
-export async function showBookInFiles(book: LibraryBook): Promise<void> {
+export async function showBookInFiles(
+  book: LibraryBook,
+  libraryDirectoryUri?: string | null
+): Promise<void> {
   if (Platform.OS !== 'android') {
     throw new Error('Showing a book in the file manager is available on Android only.');
   }
-  const uri = sourceUri(book);
-  const contentUri = uri.startsWith('content:') ? uri : await FileSystem.getContentUriAsync(uri);
-  await IntentLauncher.startActivityAsync('android.intent.action.OPEN_DOCUMENT', {
-    category: 'android.intent.category.OPENABLE',
-    type: mimeType(book),
-    flags: 1,
-    extra: { 'android.provider.extra.INITIAL_URI': contentUri },
-  });
+  const uri = book.local?.uri ?? book.fileUri;
+  if (!uri?.startsWith('content:')) {
+    throw new Error(
+      'This book is stored inside Tomeio. Choose a Library folder in Settings to reveal downloaded books in Files.'
+    );
+  }
+  await openNativeProgressFolder(libraryDirectoryUri ?? uri);
+}
+
+export function canShowBookInFiles(book: LibraryBook): boolean {
+  const uri = book.local?.uri ?? book.fileUri;
+  return (
+    Platform.OS === 'android' &&
+    book.availableLocally !== false &&
+    book.moonReader?.availableLocally !== false &&
+    !!uri?.startsWith('content:')
+  );
 }

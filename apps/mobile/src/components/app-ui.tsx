@@ -221,6 +221,55 @@ export function SectionHeader({
   );
 }
 
+export function BookStatusChips({
+  rating,
+  progress,
+  isRead = false,
+}: {
+  rating?: number;
+  progress?: number;
+  isRead?: boolean;
+}) {
+  const normalizedProgress = isRead
+    ? 100
+    : typeof progress === 'number'
+      ? Math.max(0, Math.min(100, progress))
+      : null;
+  if (!rating && (!normalizedProgress || normalizedProgress <= 0)) return null;
+
+  return (
+    <View className="mt-3 flex-row flex-wrap gap-2">
+      {rating ? (
+        <View
+          className="h-8 flex-row items-center justify-center rounded-full px-3"
+          style={{ backgroundColor: 'rgba(10, 10, 14, 0.72)' }}
+        >
+          <Text className="text-xs font-bold" style={{ color: colors.rating }}>
+            ★ {rating.toFixed(1)}
+          </Text>
+        </View>
+      ) : null}
+      {normalizedProgress && normalizedProgress > 0 ? (
+        <View
+          className="h-8 flex-row items-center justify-center gap-1.5 rounded-full px-3"
+          style={{
+            backgroundColor: isRead ? colors.success : colors.accentMuted,
+          }}
+        >
+          <Feather
+            name={isRead ? 'check' : 'book-open'}
+            size={13}
+            color={colors.text}
+          />
+          <Text className="text-xs font-semibold" style={{ color: colors.text }}>
+            {isRead ? 'Read' : `${Math.max(1, Math.round(normalizedProgress))}% read`}
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 export function PillButton({
   label,
   icon,

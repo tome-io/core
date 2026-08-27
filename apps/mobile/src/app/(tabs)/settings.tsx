@@ -1,4 +1,6 @@
 import { Feather } from '@expo/vector-icons';
+import * as Application from 'expo-application';
+import Constants from 'expo-constants';
 import { Image } from 'expo-image';
 import type { ExtensionManifest } from '@tomeio/extension-protocol';
 import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
@@ -41,14 +43,10 @@ import {
 } from '@/lib/launcher-icon';
 import { validateProgressFolder } from '@/lib/progress-folder-provider';
 import { forgetProgressSyncFolder } from '@/lib/progress-sync';
+import type { FolderLocationSetting } from '@/lib/settings';
 
 type ProviderRole = 'search' | 'acquisition';
 type SettingsSectionId = 'appearance' | 'providers' | 'library' | 'sync';
-type LocationSetting =
-  | 'localLibraryLocation'
-  | 'moonReaderBackupLocation'
-  | 'progressSyncLocation';
-
 const SECTIONS: { id: SettingsSectionId; label: string }[] = [
   ...(Platform.OS === 'android'
     ? [{ id: 'appearance' as const, label: 'Appearance' }]
@@ -57,6 +55,9 @@ const SECTIONS: { id: SettingsSectionId; label: string }[] = [
   { id: 'library', label: 'Library' },
   { id: 'sync', label: 'Progress sync' },
 ];
+
+const APP_VERSION =
+  Application.nativeApplicationVersion ?? Constants.expoConfig?.version ?? null;
 
 const LAUNCHER_ICONS: {
   id: LauncherIcon;
@@ -108,7 +109,7 @@ function SettingsMenu({
       })}
       <View className="flex-1" />
       <Text className="px-6 text-xs" style={{ color: colors.textMuted, opacity: 0.45 }}>
-        Tomeio
+        {APP_VERSION ? `Tomeio · v${APP_VERSION}` : 'Tomeio · Version unavailable'}
       </Text>
     </View>
   );
@@ -352,7 +353,7 @@ export default function SettingsScreen() {
     if (active !== selectedSection) setSelectedSection(active);
   };
 
-  const chooseFolder = async (setting: LocationSetting) => {
+  const chooseFolder = async (setting: FolderLocationSetting) => {
     if (Platform.OS !== 'android') {
       Alert.alert(
         'Not supported here',
@@ -365,11 +366,19 @@ export default function SettingsScreen() {
     beginFolderPicker();
     try {
       const picked = await pickDownloadFolder(
-        isSafLocation(settings[setting]) ? settings[setting] : null
+        isSafLocation(settings[setting])
+          ? settings[setting]
+          : settings.folderPickerLocations[setting]
       );
       if (!picked) return;
       if (setting === 'progressSyncLocation') await validateProgressFolder(picked.uri);
-      await update({ [setting]: picked.uri });
+      await update({
+        [setting]: picked.uri,
+        folderPickerLocations: {
+          ...settings.folderPickerLocations,
+          [setting]: picked.uri,
+        },
+      });
     } catch (cause) {
       Alert.alert(
         setting === 'progressSyncLocation'
@@ -382,7 +391,7 @@ export default function SettingsScreen() {
     }
   };
 
-  const resetFolder = async (setting: LocationSetting) => {
+  const resetFolder = async (setting: FolderLocationSetting) => {
     if (setting === 'progressSyncLocation' && settings.progressSyncLocation) {
       await forgetProgressSyncFolder(settings.progressSyncLocation);
     }

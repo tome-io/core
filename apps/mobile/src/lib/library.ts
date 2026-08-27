@@ -12,6 +12,7 @@ export interface LibraryBook extends FeedBook {
   addedAt: number;
   downloadedAt?: number;
   fileUri?: string;
+  availableLocally?: boolean;
   discovery?: DiscoveryBook;
   extension?: {
     extensionId: string;
@@ -83,6 +84,7 @@ export function fromLocalFile(file: LocalFileBook): LibraryBook {
     addedAt: file.modificationTime || Date.now(),
     downloadedAt: file.modificationTime || Date.now(),
     fileUri: file.uri,
+    availableLocally: true,
     local: file,
     metadataPending: true,
   };

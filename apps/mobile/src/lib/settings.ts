@@ -4,12 +4,25 @@ export interface Settings {
   localLibraryLocation: string | null; // Local books and download destination
   moonReaderBackupLocation: string | null; // Moon+ Reader backup folder only
   progressSyncLocation: string | null; // Provider-neutral shared progress folder
+  folderPickerLocations: Record<FolderLocationSetting, string | null>;
 }
+
+export type FolderLocationSetting =
+  | 'localLibraryLocation'
+  | 'moonReaderBackupLocation'
+  | 'progressSyncLocation';
+
+const EMPTY_FOLDER_PICKER_LOCATIONS: Settings['folderPickerLocations'] = {
+  localLibraryLocation: null,
+  moonReaderBackupLocation: null,
+  progressSyncLocation: null,
+};
 
 export const DEFAULT_SETTINGS: Settings = {
   localLibraryLocation: null,
   moonReaderBackupLocation: null,
   progressSyncLocation: null,
+  folderPickerLocations: EMPTY_FOLDER_PICKER_LOCATIONS,
 };
 
 const SETTINGS_KEY = 'app_settings_v1';
@@ -23,6 +36,14 @@ export async function loadSettings(): Promise<Settings> {
         if (!(key in parsed)) continue;
         (settings as any)[key] = parsed[key];
       }
+      const storedPickerLocations =
+        parsed.folderPickerLocations && typeof parsed.folderPickerLocations === 'object'
+          ? parsed.folderPickerLocations
+          : {};
+      settings.folderPickerLocations = {
+        ...EMPTY_FOLDER_PICKER_LOCATIONS,
+        ...storedPickerLocations,
+      };
       if (!settings.localLibraryLocation && typeof parsed.downloadLocation === 'string') {
         settings.localLibraryLocation = parsed.downloadLocation;
       }

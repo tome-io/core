@@ -12,7 +12,9 @@ import {
 } from 'react-native-safe-area-context';
 
 import { Sidebar } from '@/components/sidebar';
+import { DownloadProvider } from '@/context/download-context';
 import { ExtensionsProvider } from '@/context/extensions-context';
+import { HomeNavigationProvider } from '@/context/home-navigation-context';
 import { LibraryProvider } from '@/context/library-context';
 import { SettingsContext } from '@/context/settings-context';
 import { loadSettings, saveSettings } from '@/lib/settings';
@@ -68,36 +70,40 @@ export default function RootLayout() {
         <SettingsContext.Provider value={value}>
           <ExtensionsProvider>
             <LibraryProvider>
-              <StatusBar style="light" />
-              <SafeAreaView
-                className="flex-1"
-                edges={['top', 'right', 'bottom', 'left']}
-                style={{ backgroundColor: colors.background }}
-              >
-                <View
-                  className="flex-1"
-                  style={{ flexDirection: useBottomNavigation ? 'column' : 'row' }}
-                >
-                  {!useBottomNavigation && <Sidebar />}
-                  <View className="flex-1" style={{ backgroundColor: colors.background }}>
-                    <Stack screenOptions={{ headerShown: false, animation: 'none' }} />
-                  </View>
-                  {useBottomNavigation && (
+              <DownloadProvider>
+                <HomeNavigationProvider>
+                  <StatusBar style="light" />
+                  <SafeAreaView
+                    className="flex-1"
+                    edges={['top', 'right', 'bottom', 'left']}
+                    style={{ backgroundColor: colors.background }}
+                  >
                     <View
-                      pointerEvents="box-none"
-                      style={{
-                        position: 'absolute',
-                        right: 0,
-                        bottom: 0,
-                        left: 0,
-                        zIndex: 20,
-                      }}
+                      className="flex-1"
+                      style={{ flexDirection: useBottomNavigation ? 'column' : 'row' }}
                     >
-                      <Sidebar compact />
+                      {!useBottomNavigation && <Sidebar />}
+                      <View className="flex-1" style={{ backgroundColor: colors.background }}>
+                        <Stack screenOptions={{ headerShown: false, animation: 'none' }} />
+                      </View>
+                      {useBottomNavigation && (
+                        <View
+                          pointerEvents="box-none"
+                          style={{
+                            position: 'absolute',
+                            right: 0,
+                            bottom: 0,
+                            left: 0,
+                            zIndex: 20,
+                          }}
+                        >
+                          <Sidebar compact />
+                        </View>
+                      )}
                     </View>
-                  )}
-                </View>
-              </SafeAreaView>
+                  </SafeAreaView>
+                </HomeNavigationProvider>
+              </DownloadProvider>
             </LibraryProvider>
           </ExtensionsProvider>
         </SettingsContext.Provider>

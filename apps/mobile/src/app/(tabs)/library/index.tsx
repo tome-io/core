@@ -21,7 +21,7 @@ import { detailParams, type LibraryBook } from '@/lib/library';
 import { openInMoonReader } from '@/lib/moon-reader-launcher';
 
 type FormatFilter = 'all' | 'finished' | 'epub' | 'pdf' | 'mobi' | 'azw3' | 'other';
-type LibrarySort = 'recent' | 'title' | 'author' | 'rating' | 'progress';
+type LibrarySort = 'recent' | 'downloaded' | 'title' | 'author' | 'rating' | 'progress';
 
 const FILTERS: CatalogOption<FormatFilter>[] = [
   { label: 'All', value: 'all' },
@@ -35,6 +35,7 @@ const FILTERS: CatalogOption<FormatFilter>[] = [
 
 const SORTS: CatalogOption<LibrarySort>[] = [
   { label: 'Recent', value: 'recent' },
+  { label: 'Downloaded', value: 'downloaded' },
   { label: 'A–Z', value: 'title' },
   { label: 'Author', value: 'author' },
   { label: 'Rating', value: 'rating' },
@@ -55,9 +56,9 @@ export default function LibraryScreen() {
     showWarning,
   } = useLibraryUiStatus();
   const {
-    deleteLocalBook,
     markAsRead,
-    removeSyncedBook,
+    removeLibraryBook,
+    removeLocalFile,
     refreshBookMetadata,
     refreshLocalBooks,
   } = useLibraryActions();
@@ -80,6 +81,7 @@ export default function LibraryScreen() {
       if (sort === 'author') return a.author.localeCompare(b.author);
       if (sort === 'rating') return (b.rating ?? -1) - (a.rating ?? -1);
       if (sort === 'progress') return (b.progress ?? -1) - (a.progress ?? -1);
+      if (sort === 'downloaded') return (b.downloadedAt ?? -1) - (a.downloadedAt ?? -1);
       return (b.downloadedAt ?? b.addedAt) - (a.downloadedAt ?? a.addedAt);
     });
   }, [downloaded, format, sort]);
@@ -108,31 +110,38 @@ export default function LibraryScreen() {
 
   const confirmRemove = useCallback(() => {
     if (!selectedBook) return;
+    const localRecord = !!(selectedBook.local?.uri ?? selectedBook.fileUri);
+    const localFileAvailable = localRecord && selectedBook.availableLocally !== false;
     Alert.alert(
-      'Remove synced book?',
-      `“${selectedBook.title}” will be removed from Tomeio on every synced device. Newer Moon+ Reader activity can add it again.`,
+      localRecord ? 'Remove from Tomeio?' : 'Remove synced book?',
+      localRecord
+        ? localFileAvailable
+          ? `“${selectedBook.title}” and its local file will be permanently removed from Tomeio.`
+          : `“${selectedBook.title}” will be removed from your library. The missing file will not be deleted again.`
+        : `“${selectedBook.title}” will be removed from Tomeio on every synced device. Newer Moon+ Reader activity can add it again.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Remove',
           style: 'destructive',
-          onPress: () => void runAction('remove', () => removeSyncedBook(selectedBook)),
+          onPress: () =>
+            void runAction('remove', () => removeLibraryBook(selectedBook)),
         },
       ]
     );
-  }, [removeSyncedBook, runAction, selectedBook]);
+  }, [removeLibraryBook, runAction, selectedBook]);
 
   const confirmDelete = useCallback(() => {
     if (!selectedBook?.local) return;
-    Alert.alert('Delete local file?', `This permanently deletes “${selectedBook.title}”.`, [
+    Alert.alert('Remove local file?', `The file for “${selectedBook.title}” will be deleted, but its library and sync record will be kept.`, [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: 'Delete',
+        text: 'Remove',
         style: 'destructive',
-        onPress: () => void runAction('delete', () => deleteLocalBook(selectedBook)),
+        onPress: () => void runAction('delete', () => removeLocalFile(selectedBook)),
       },
     ]);
-  }, [deleteLocalBook, runAction, selectedBook]);
+  }, [removeLocalFile, runAction, selectedBook]);
 
   return (
     <View className="flex-1" style={{ backgroundColor: colors.background }}>
@@ -178,7 +187,11 @@ export default function LibraryScreen() {
           onClose={() => setSelectedBook(null)}
           onOpenMoonReader={() => void runAction('moon', () => openInMoonReader(selectedBook))}
           onOpenWith={() => void runAction('openWith', () => openBookWithAnotherApp(selectedBook))}
-          onShowInFiles={() => void runAction('files', () => showBookInFiles(selectedBook))}
+          onShowInFiles={() =>
+            void runAction('files', () =>
+              showBookInFiles(selectedBook, settings.localLibraryLocation)
+            )
+          }
           onDelete={confirmDelete}
           onRemove={confirmRemove}
           onMarkRead={() => void runAction('read', () => markAsRead(selectedBook))}

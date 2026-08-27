@@ -19,8 +19,7 @@ import {
   CatalogSelect,
 } from '@/components/catalog-toolbar';
 import { useExtensions } from '@/context/extensions-context';
-
-const SEARCH_DELAY_MS = 500;
+import { useHomeNavigation } from '@/context/home-navigation-context';
 
 const FORMATS = [
   { label: 'All', value: '' },
@@ -58,6 +57,7 @@ export default function SearchScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ q?: string }>();
   const extensions = useExtensions();
+  const { setSearchActive } = useHomeNavigation();
   const gutter = usePageGutter();
   const { width } = useWindowDimensions();
   const searchGeneration = useRef(0);
@@ -75,9 +75,9 @@ export default function SearchScreen() {
   const selectedFormat = FORMATS.find((option) => option.value === format) ?? FORMATS[0];
 
   useEffect(() => {
-    const nextQuery = typeof params.q === 'string' ? params.q : '';
-    setQuery((current) => (current === nextQuery ? current : nextQuery));
-  }, [params.q]);
+    setSearchActive(true);
+    return () => setSearchActive(false);
+  }, [setSearchActive]);
 
   const runSearch = useCallback(async (q: string, fmt: string, generation: number) => {
     const cleanQuery = q.trim();
@@ -110,28 +110,14 @@ export default function SearchScreen() {
   }, [extensions]);
 
   useEffect(() => {
-    const cleanQuery = query.trim();
+    const routeQuery = typeof params.q === 'string' ? params.q : '';
+    setQuery((current) => (current === routeQuery ? current : routeQuery));
+    const cleanQuery = routeQuery.trim();
+    if (cleanQuery.length < 2) return;
     const generation = ++searchGeneration.current;
     setLoadingMore(false);
-
-    if (cleanQuery.length < 2) {
-      setLoading(false);
-      setError(null);
-      setBooks([]);
-      setSearchedFor('');
-      setHasMore(true);
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    const timer = setTimeout(() => {
-      runSearch(cleanQuery, format, generation);
-    }, SEARCH_DELAY_MS);
-
-    return () => clearTimeout(timer);
-  }, [format, query, runSearch]);
+    void runSearch(cleanQuery, '', generation);
+  }, [params.q, runSearch]);
 
   const submitSearch = useCallback(() => {
     if (query.trim().length < 2) return;
@@ -139,6 +125,18 @@ export default function SearchScreen() {
     const generation = ++searchGeneration.current;
     runSearch(query, format, generation);
   }, [format, query, runSearch]);
+
+  const selectFormat = useCallback(
+    (nextFormat: string) => {
+      setFormat(nextFormat);
+      if (query.trim().length < 2) return;
+      Keyboard.dismiss();
+      const generation = ++searchGeneration.current;
+      setLoadingMore(false);
+      void runSearch(query, nextFormat, generation);
+    },
+    [query, runSearch]
+  );
 
   const clearSearch = useCallback(() => {
     searchGeneration.current += 1;
@@ -244,17 +242,25 @@ export default function SearchScreen() {
             placeholderTextColor={colors.textMuted}
             className="h-12 min-w-0 flex-1 pl-5 pr-2 text-[15px] font-medium text-white"
           />
+          {query.length ? (
+            <Pressable
+              onPress={clearSearch}
+              accessibilityLabel="Clear search"
+              accessibilityRole="button"
+              className="h-12 w-10 items-center justify-center"
+            >
+              <Feather name="x" size={19} color={colors.textMuted} />
+            </Pressable>
+          ) : null}
           <Pressable
-            onPress={query.length ? clearSearch : submitSearch}
-            accessibilityLabel={query.length ? 'Clear search' : 'Search'}
+            onPress={submitSearch}
+            disabled={query.trim().length < 2 || loading}
+            accessibilityLabel="Search"
             accessibilityRole="button"
-            className="h-12 w-12 items-center justify-center"
+            accessibilityState={{ disabled: query.trim().length < 2 || loading }}
+            className="h-12 w-12 items-center justify-center disabled:opacity-40"
           >
-            <Feather
-              name={query.length ? 'x' : 'search'}
-              size={20}
-              color={colors.textMuted}
-            />
+            <Feather name="search" size={20} color={colors.textMuted} />
           </Pressable>
         </View>
         <CatalogSelect
@@ -269,7 +275,7 @@ export default function SearchScreen() {
         title="Format"
         options={FORMATS}
         selectedValue={format}
-        onSelect={setFormat}
+        onSelect={selectFormat}
         onClose={() => setFormatPickerOpen(false)}
       />
 

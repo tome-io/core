@@ -22,6 +22,7 @@ import {
   type LibraryBook,
   type LibraryState,
 } from '@/lib/library';
+import { reconcileLibraryStateWithLocalCatalog } from '@/lib/library-state';
 import {
   clearMoonReaderCatalog,
   deleteLocalCatalogBook,
@@ -38,6 +39,7 @@ import {
   indexMoonReaderCatalog,
 } from '@/lib/moon-reader-sync';
 import { synchronizeProgressFolder } from '@/lib/progress-sync';
+import { deleteNativeProgressFolderFile } from '../../modules/expo-progress-folder/src';
 
 interface LibraryCatalogValue {
   downloaded: LibraryBook[];
@@ -67,8 +69,8 @@ interface LibraryActionsValue {
   syncCloudProgress: () => Promise<void>;
   refreshBookMetadata: (book: LibraryBook) => Promise<void>;
   markAsRead: (book: LibraryBook) => Promise<void>;
-  deleteLocalBook: (book: LibraryBook) => Promise<void>;
-  removeSyncedBook: (book: LibraryBook) => Promise<void>;
+  removeLocalFile: (book: LibraryBook) => Promise<void>;
+  removeLibraryBook: (book: LibraryBook) => Promise<void>;
   isOnReadingList: (key: string) => boolean;
   toggleReadingList: (book: LibraryBook) => Promise<boolean>;
   recordDownload: (book: LibraryBook, fileUri: string) => Promise<void>;
@@ -146,8 +148,8 @@ const LibraryActionsContext = createContext<LibraryActionsValue>({
   syncCloudProgress: async () => {},
   refreshBookMetadata: async () => {},
   markAsRead: async () => {},
-  deleteLocalBook: async () => {},
-  removeSyncedBook: async () => {},
+  removeLocalFile: async () => {},
+  removeLibraryBook: async () => {},
   isOnReadingList: () => false,
   toggleReadingList: async () => false,
   recordDownload: async () => {},
@@ -155,9 +157,8 @@ const LibraryActionsContext = createContext<LibraryActionsValue>({
 
 async function deleteSourceFile(uri: string): Promise<void> {
   if (uri.startsWith('content:')) {
-    throw new Error(
-      'Deleting files from a selected Android folder is disabled until it can be done safely. Delete this file with the device file manager, then refresh Library.'
-    );
+    await deleteNativeProgressFolderFile(uri);
+    return;
   }
   const info = await FileSystem.getInfoAsync(uri);
   if (!info.exists) return;
@@ -186,6 +187,25 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
   const localBookBatcher = useBookBatcher(setLocalBooks);
   const moonReaderBookBatcher = useBookBatcher(setMoonReaderBooks);
   const progressSyncBookBatcher = useBookBatcher(setProgressSyncBooks);
+
+  const commit = useCallback(
+    (update: (current: LibraryState) => LibraryState): Promise<void> => {
+      const operation = mutationQueue.current.then(async () => {
+        const next = update(stateRef.current);
+        if (next === stateRef.current) return;
+        await saveLibrary(next);
+        stateRef.current = next;
+        setState(next);
+        setError(null);
+      });
+      mutationQueue.current = operation.catch(() => {});
+      return operation.catch((err) => {
+        setError(err.message || String(err));
+        throw err;
+      });
+    },
+    []
+  );
 
   useEffect(() => {
     let active = true;
@@ -254,7 +274,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
   ]);
 
   const refreshLocalBooks = useCallback((): Promise<void> => {
-    if (!settingsReady) return Promise.resolve();
+    if (!settingsReady || !ready) return Promise.resolve();
 
     const localKey = settings.localLibraryLocation ?? '__app_downloads__';
     const moonReaderLocation = settings.moonReaderBackupLocation;
@@ -290,13 +310,21 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
 
       const warnings: string[] = [];
       let local = { books: cachedLocal, warnings: [] as string[] };
+      let localIndexSucceeded = false;
       try {
         local = await indexLocalLibrary({
           directoryKey: localKey,
           directoryUri: settings.localLibraryLocation,
         });
+        localIndexSucceeded = true;
       } catch (err: any) {
         warnings.push(`Local book indexing failed: ${err.message || String(err)}`);
+      }
+      if (scanGeneration.current !== generation) return;
+      if (localIndexSucceeded) {
+        await commit((current) =>
+          reconcileLibraryStateWithLocalCatalog(current, local.books)
+        );
       }
       if (scanGeneration.current !== generation) return;
       setLocalBooks(local.books);
@@ -403,12 +431,14 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     return promise;
   }, [
     localBookBatcher,
+    commit,
     moonReaderBookBatcher,
     progressSyncBookBatcher,
     settings.localLibraryLocation,
     settings.moonReaderBackupLocation,
     settings.progressSyncLocation,
     settingsReady,
+    ready,
     syncCloudProgress,
   ]);
 
@@ -434,24 +464,6 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       progressSyncBookBatcher.cancel();
     },
     [localBookBatcher, moonReaderBookBatcher, progressSyncBookBatcher]
-  );
-
-  const commit = useCallback(
-    (update: (current: LibraryState) => LibraryState): Promise<void> => {
-      const operation = mutationQueue.current.then(async () => {
-        const next = update(stateRef.current);
-        await saveLibrary(next);
-        stateRef.current = next;
-        setState(next);
-        setError(null);
-      });
-      mutationQueue.current = operation.catch(() => {});
-      return operation.catch((err) => {
-        setError(err.message || String(err));
-        throw err;
-      });
-    },
-    []
   );
 
   const toggleReadingList = useCallback(
@@ -513,7 +525,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     [commit, settings.progressSyncLocation, syncCloudProgress]
   );
 
-  const deleteLocalBook = useCallback(
+  const removeLocalFile = useCallback(
     async (book: LibraryBook) => {
       if (!book.local?.uri) throw new Error('This library item has no local source file.');
       try {
@@ -524,17 +536,25 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         throw new Error(message);
       }
 
-      setLocalBooks((current) => current.filter((item) => item.key !== book.key));
+      setLocalBooks((current) =>
+        current.filter(
+          (item) =>
+            item.key !== book.key && item.local?.uri !== book.local?.uri
+        )
+      );
       try {
         await deleteLocalCatalogBook(book.local.uri);
+        const markUnavailable = (item: LibraryBook) =>
+          item.key === book.key ||
+          (item.local?.uri ?? item.fileUri) === book.local?.uri
+            ? { ...item, availableLocally: false }
+            : item;
         await commit((current) => ({
-          downloaded: current.downloaded.filter(
-            (item) => item.key !== book.key && item.fileUri !== book.local?.uri
-          ),
-          readingList: current.readingList.filter((item) => item.key !== book.key),
+          downloaded: current.downloaded.map(markUnavailable),
+          readingList: current.readingList.map(markUnavailable),
         }));
       } catch (err: any) {
-        const message = `The file was deleted, but Library state could not be updated: ${err.message || String(err)}`;
+        const message = `The local file was removed, but Library state could not be updated: ${err.message || String(err)}`;
         setError(message);
         throw new Error(message);
       }
@@ -542,10 +562,20 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     [commit]
   );
 
-  const removeSyncedBook = useCallback(
+  const removeLibraryBook = useCallback(
     async (book: LibraryBook) => {
+      const uri = book.local?.uri ?? book.fileUri;
+      if (book.availableLocally !== false && book.local?.uri) {
+        await deleteSourceFile(book.local.uri);
+      }
+      if (book.local?.uri) await deleteLocalCatalogBook(book.local.uri);
       await removeProgressSyncBook(book);
       const identity = bookIdentity(book.title, book.author);
+      setLocalBooks((current) =>
+        current.filter(
+          (item) => item.key !== book.key && (!uri || item.local?.uri !== uri)
+        )
+      );
       setProgressSyncBooks((current) =>
         current.filter(
           (item) =>
@@ -556,13 +586,17 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         current.filter((item) => bookIdentity(item.title, item.author) !== identity)
       );
       await commit((current) => ({
-        ...current,
         downloaded: current.downloaded.filter(
           (item) =>
             item.key !== book.key &&
-            (item.local ||
-              item.moonReader?.availableLocally ||
-              bookIdentity(item.title, item.author) !== identity)
+            (!uri || (item.local?.uri ?? item.fileUri) !== uri) &&
+            bookIdentity(item.title, item.author) !== identity
+        ),
+        readingList: current.readingList.filter(
+          (item) =>
+            item.key !== book.key &&
+            (!uri || (item.local?.uri ?? item.fileUri) !== uri) &&
+            bookIdentity(item.title, item.author) !== identity
         ),
       }));
       if (settings.progressSyncLocation) await syncCloudProgress();
@@ -647,6 +681,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
               readingTimeMs: moonBook.readingTimeMs,
               wordsRead: moonBook.wordsRead,
               lastReadAt: moonBook.lastReadAt,
+              availableLocally: true,
               moonReader: { ...localBook.moonReader, ...moonBook.moonReader },
             }
           : moonBook
@@ -676,6 +711,8 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       const mergedBook: LibraryBook = {
         ...syncedBook,
         ...catalogBook,
+        availableLocally:
+          catalogBook.availableLocally ?? !!catalogBook.local,
         progress: mergedProgress,
         isRead: catalogBook.isRead || syncedBook.isRead || mergedProgress >= 100,
         readingTimeMs: Math.max(
@@ -761,20 +798,20 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       syncCloudProgress,
       refreshBookMetadata,
       markAsRead,
-      deleteLocalBook,
-      removeSyncedBook,
+      removeLocalFile,
+      removeLibraryBook,
       isOnReadingList,
       toggleReadingList,
       recordDownload,
     }),
     [
-      deleteLocalBook,
+      removeLocalFile,
       isOnReadingList,
       markAsRead,
       recordDownload,
       refreshBookMetadata,
       refreshLocalBooks,
-      removeSyncedBook,
+      removeLibraryBook,
       syncCloudProgress,
       toggleReadingList,
     ]

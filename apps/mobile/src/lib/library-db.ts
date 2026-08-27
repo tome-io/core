@@ -498,6 +498,7 @@ function mergeScannedBook(existing: LibraryBook | undefined, scanned: LibraryBoo
     format: scanned.format,
     size: scanned.size,
     downloadedAt: scanned.downloadedAt,
+    availableLocally: true,
     local: scanned.local,
     cover: catalogCoverIsLegacyIsbn ? scanned.cover : catalogBook.cover || scanned.cover,
     fallbackCover: scanned.fallbackCover || catalogBook.fallbackCover,

@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors } from '@/components/app-ui';
+import { canShowBookInFiles } from '@/lib/book-file-actions';
 import type { LibraryBook } from '@/lib/library';
 
 export type LibraryAction =
@@ -51,8 +52,11 @@ export function LibraryBookActions({
   onRefreshMetadata,
 }: ActionsProps) {
   const hasLocalFile =
-    !!(book.local?.uri ?? book.fileUri) && book.moonReader?.availableLocally !== false;
-  const canDeleteLocalFile = !!book.local?.uri && !book.local.uri.startsWith('content:');
+    !!(book.local?.uri ?? book.fileUri) &&
+    book.availableLocally !== false &&
+    book.moonReader?.availableLocally !== false;
+  const hasLocalRecord = !!(book.local?.uri ?? book.fileUri);
+  const canRemoveLocalFile = hasLocalFile && !!book.local?.uri;
   const canRemoveSyncedItem =
     !hasLocalFile &&
     (book.key.startsWith('progress:') ||
@@ -77,14 +81,11 @@ export function LibraryBookActions({
                 },
               ]
             : []),
-          ...(Platform.OS === 'android'
-            ? [{ key: 'files' as const, label: 'Show in Files', icon: 'folder' as const }]
-            : []),
-          ...(canDeleteLocalFile
+          ...(canRemoveLocalFile
             ? [
                 {
                   key: 'delete' as const,
-                  label: 'Delete local file',
+                  label: 'Remove local file',
                   icon: 'trash-2' as const,
                   destructive: true,
                 },
@@ -92,7 +93,10 @@ export function LibraryBookActions({
             : []),
         ]
       : []),
-    ...(canRemoveSyncedItem
+    ...(canShowBookInFiles(book)
+      ? [{ key: 'files' as const, label: 'Show in Files', icon: 'folder' as const }]
+      : []),
+    ...(hasLocalRecord || canRemoveSyncedItem
       ? [
           {
             key: 'remove' as const,

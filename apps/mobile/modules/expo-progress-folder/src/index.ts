@@ -28,6 +28,14 @@ interface ProgressFolderNativeModule {
   ): Promise<string>;
   writeTextFile(fileUri: string, contents: string): Promise<void>;
   getDirectoryDiagnostics(directoryUri: string): Promise<ProgressFolderDiagnostics>;
+  copyFileToDirectory(
+    sourceUri: string,
+    directoryUri: string,
+    filename: string,
+    mimeType: string
+  ): Promise<string>;
+  deleteFile(fileUri: string): Promise<void>;
+  openDirectory?(directoryUri: string): Promise<void>;
 }
 
 let nativeModule: ProgressFolderNativeModule | null = null;
@@ -45,7 +53,7 @@ export function hasNativeProgressFolder(): boolean {
 function requireProgressFolderModule(): ProgressFolderNativeModule {
   if (!nativeModule) {
     throw new Error(
-      'Google Drive progress sync requires the installed Tomeio development build. Run `bun run android` from the repository root.'
+      'Tomeio folder access requires the installed development build. Run `bun run android` from the repository root.'
     );
   }
   return nativeModule;
@@ -84,4 +92,32 @@ export function getNativeProgressFolderDiagnostics(
   directoryUri: string
 ): Promise<ProgressFolderDiagnostics> {
   return requireProgressFolderModule().getDirectoryDiagnostics(directoryUri);
+}
+
+export function copyNativeFileToDirectory(
+  sourceUri: string,
+  directoryUri: string,
+  filename: string,
+  mimeType: string
+): Promise<string> {
+  return requireProgressFolderModule().copyFileToDirectory(
+    sourceUri,
+    directoryUri,
+    filename,
+    mimeType
+  );
+}
+
+export function deleteNativeProgressFolderFile(fileUri: string): Promise<void> {
+  return requireProgressFolderModule().deleteFile(fileUri);
+}
+
+export function openNativeProgressFolder(directoryUri: string): Promise<void> {
+  const module = requireProgressFolderModule();
+  if (!module.openDirectory) {
+    throw new Error(
+      'Show in Files requires a rebuilt Tomeio Android app. Run `bun run android` from the repository root.'
+    );
+  }
+  return module.openDirectory(directoryUri);
 }

@@ -16,7 +16,6 @@ import { useLibraryCatalog } from '@/context/library-context';
 import { detailParams, type LibraryBook } from '@/lib/library';
 import { getSubject, getTrending, type FeedBook } from '@/lib/openlibrary';
 
-const SEARCH_DELAY_MS = 650;
 const MIN_CONTINUE_READING_PROGRESS = 1;
 
 interface FeedConfig {
@@ -51,31 +50,17 @@ function initialFeeds(): Record<string, FeedState> {
 function HomeSearchBar({ gutter }: { gutter: number }) {
   const router = useRouter();
   const [query, setQuery] = useState('');
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const openSearch = useCallback(
     (value: string) => {
       const cleanQuery = value.trim();
       if (cleanQuery.length < 2) return;
-      if (searchTimer.current) {
-        clearTimeout(searchTimer.current);
-        searchTimer.current = null;
-      }
       setQuery('');
       Keyboard.dismiss();
-      router.push({ pathname: '/search', params: { q: cleanQuery } });
+      router.push({ pathname: '/home/search', params: { q: cleanQuery } });
     },
     [router]
   );
-
-  useEffect(() => {
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    if (query.trim().length < 2) return;
-    searchTimer.current = setTimeout(() => openSearch(query), SEARCH_DELAY_MS);
-    return () => {
-      if (searchTimer.current) clearTimeout(searchTimer.current);
-    };
-  }, [openSearch, query]);
 
   return (
     <View className="pb-6" style={{ paddingHorizontal: gutter }}>
@@ -96,15 +81,22 @@ function HomeSearchBar({ gutter }: { gutter: number }) {
           <Pressable
             onPress={() => setQuery('')}
             accessibilityLabel="Clear search"
-            className="h-12 w-12 items-center justify-center"
+            accessibilityRole="button"
+            className="h-12 w-10 items-center justify-center"
           >
             <Feather name="x" size={19} color={colors.textMuted} />
           </Pressable>
-        ) : (
-          <View className="h-12 w-12 items-center justify-center">
-            <Feather name="search" size={20} color={colors.textMuted} />
-          </View>
-        )}
+        ) : null}
+        <Pressable
+          onPress={() => openSearch(query)}
+          disabled={query.trim().length < 2}
+          accessibilityLabel="Search"
+          accessibilityRole="button"
+          accessibilityState={{ disabled: query.trim().length < 2 }}
+          className="h-12 w-12 items-center justify-center disabled:opacity-40"
+        >
+          <Feather name="search" size={20} color={colors.textMuted} />
+        </Pressable>
       </View>
     </View>
   );

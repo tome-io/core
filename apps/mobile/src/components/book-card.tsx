@@ -17,6 +17,7 @@ export interface CardBook {
   metadataPending?: boolean;
   progress?: number;
   isRead?: boolean;
+  availableLocally?: boolean;
   moonReader?: { availableLocally?: boolean };
 }
 
@@ -86,7 +87,8 @@ export const BookCard = memo(function BookCard({ book, onPress, onLongPress, wid
             <Text style={styles.fallbackIcon}>📚</Text>
           </View>
         )}
-        {book.moonReader?.availableLocally === false && (
+        {(book.availableLocally === false ||
+          book.moonReader?.availableLocally === false) && (
           <View style={styles.notLocalBadge}>
             <Text style={styles.notLocalText}>Not local</Text>
           </View>

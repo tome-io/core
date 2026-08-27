@@ -4,6 +4,7 @@ import { usePathname, useRouter } from 'expo-router';
 import { Pressable, Text, View } from 'react-native';
 
 import { MOBILE_NAV_FADE_HEIGHT, MOBILE_NAV_HEIGHT } from '@/components/app-ui';
+import { useHomeNavigation } from '@/context/home-navigation-context';
 
 const ITEMS = [
   {
@@ -46,9 +47,11 @@ interface SidebarProps {
 export function Sidebar({ compact = false }: SidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const { searchActive } = useHomeNavigation();
 
   const renderItem = (item: (typeof ITEMS)[number] | typeof SETTINGS) => {
     const active = pathname.startsWith(item.route);
+    const targetRoute = item.route === '/home' && searchActive ? '/home/search' : item.route;
     return (
       <Pressable
         key={item.route}
@@ -56,7 +59,7 @@ export function Sidebar({ compact = false }: SidebarProps) {
         accessibilityRole="button"
         accessibilityState={{ selected: active }}
         onPress={() => {
-          if (!active) router.navigate(item.route as any);
+          if (!active) router.navigate(targetRoute as any);
         }}
         className={
           compact
