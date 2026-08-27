@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
-import type { ExtensionRegistrySnapshot } from '@readoi/extension-runtime';
+import type { ExtensionRegistrySnapshot } from '@tomeio/extension-runtime';
 
 const EMPTY_REGISTRY: ExtensionRegistrySnapshot = { bundled: [], thirdParty: [] };
 
@@ -40,7 +40,9 @@ export function App() {
   return (
     <main className="shell">
       <aside className="sidebar" aria-label="Primary navigation">
-        <div className="brand">R</div>
+        <div className="brand">
+          <img src={new URL('../../build/icon.png', import.meta.url).href} alt="Tomeio" />
+        </div>
         <nav>
           <button type="button" className="nav-item active">⌂ <span>Discover</span></button>
           <button type="button" className="nav-item">⌕ <span>Search</span></button>
@@ -55,7 +57,7 @@ export function App() {
           <p className="eyebrow">macOS preview</p>
           <h1>Extensions</h1>
           <p className="lede">
-            Official sources ship with Readio. Third-party sources are installed explicitly
+            Official sources ship with Tomeio. Third-party sources are installed explicitly
             from a repository or manifest URL.
           </p>
         </header>

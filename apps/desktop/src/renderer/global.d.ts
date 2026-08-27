@@ -1,4 +1,4 @@
-import type { DesktopBridge } from '@readoi/contracts';
+import type { DesktopBridge } from '@tomeio/contracts';
 
 declare global {
   interface Window {

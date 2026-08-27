@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { DESKTOP_IPC, type DesktopBridge } from '@readoi/contracts';
+import { DESKTOP_IPC, type DesktopBridge } from '@tomeio/contracts';
 
 const bridge: DesktopBridge = {
   library: {

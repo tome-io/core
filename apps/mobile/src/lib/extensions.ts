@@ -4,8 +4,8 @@ import {
   ExtensionRegistry,
   type ExtensionRegistryStore,
   type InstalledExtension,
-} from '@readoi/extension-runtime';
-import { officialExtensionManifests, officialExtensions } from '@readoi/official-extensions';
+} from '@tomeio/extension-runtime';
+import { officialExtensionManifests, officialExtensions } from '@tomeio/official-extensions';
 
 import { mobileScriptExtensionExecutor } from './script-extension-executor';
 

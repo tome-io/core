@@ -1,6 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { colors } from '@readoi/design';
+import { colors } from '@tomeio/design';
 import { App } from './app';
 import './styles.css';
 
@@ -14,6 +14,7 @@ document.documentElement.style.setProperty('--text', colors.text);
 document.documentElement.style.setProperty('--text-muted', colors.textMuted);
 document.documentElement.style.setProperty('--accent', colors.accent);
 document.documentElement.style.setProperty('--accent-muted', colors.accentMuted);
+document.documentElement.style.setProperty('--on-accent', colors.onAccent);
 
 createRoot(root).render(
   <StrictMode>

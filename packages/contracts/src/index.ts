@@ -1,5 +1,5 @@
-import type { BookMetadata, BookProgress } from '@readoi/domain';
-import type { ExtensionRegistrySnapshot, InstalledExtension } from '@readoi/extension-runtime';
+import type { BookMetadata, BookProgress } from '@tomeio/domain';
+import type { ExtensionRegistrySnapshot, InstalledExtension } from '@tomeio/extension-runtime';
 
 export interface LibrarySnapshot {
   books: BookMetadata[];

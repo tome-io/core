@@ -1,6 +1,6 @@
 import type { DiscoveryBook, FeedBook } from './openlibrary';
 import { loadPersistedLibrary, savePersistedLibrary } from './library-db';
-import type { BookAcquisition, BookMetadata } from '@readoi/domain';
+import type { BookAcquisition, BookMetadata } from '@tomeio/domain';
 import { metadataFromFilename } from './book-metadata';
 
 export interface LibraryBook extends FeedBook {

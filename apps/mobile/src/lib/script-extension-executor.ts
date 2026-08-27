@@ -5,8 +5,8 @@ import type {
   BookExtension,
   ExtensionManifest,
   ExtensionQuery,
-} from '@readoi/extension-protocol';
-import type { ScriptExtensionExecutor } from '@readoi/extension-runtime';
+} from '@tomeio/extension-protocol';
+import type { ScriptExtensionExecutor } from '@tomeio/extension-runtime';
 
 import { readExtensionConfiguration } from './extension-configuration';
 import { secureDelete, secureGet, secureSet } from './secure';

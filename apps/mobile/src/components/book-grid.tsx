@@ -1,44 +1,52 @@
 import type { ReactElement } from 'react';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  type LayoutChangeEvent,
   RefreshControl,
+  StyleSheet,
   useWindowDimensions,
   View,
 } from 'react-native';
+import { useSafeAreaFrame, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { colors } from '@/components/app-ui';
+import { colors, MOBILE_NAV_HEIGHT, usePageGutter } from '@/components/app-ui';
 import { BookCard, type CardBook } from './book-card';
+import { SkeletonPulse } from './skeleton-pulse';
 
 const SIDEBAR_WIDTH = 76;
-const IDEAL_CARD_WIDTH = 124;
-const HORIZONTAL_PADDING = 24;
-const COLUMN_GAP = 16;
-const ROW_GAP = 24;
-const MIN_COLUMNS = 2;
+const IDEAL_CARD_WIDTH = 108;
+const COLUMN_GAP = 12;
+const ROW_GAP = 20;
+const MIN_COLUMNS = 3;
 
-function getGridMetrics(width: number) {
-  const innerWidth = Math.max(0, width - HORIZONTAL_PADDING * 2);
+function getGridMetrics(width: number, horizontalPadding: number) {
+  const innerWidth = Math.max(0, width - horizontalPadding * 2);
   const columns = Math.max(
     MIN_COLUMNS,
     Math.floor((innerWidth + COLUMN_GAP) / (IDEAL_CARD_WIDTH + COLUMN_GAP))
   );
-  const cardWidth = (innerWidth - COLUMN_GAP * (columns - 1)) / columns;
+  const cardWidth = Math.max(0, (innerWidth - COLUMN_GAP * (columns - 1)) / columns);
   return { columns, cardWidth };
 }
 
 function useGridMetrics() {
   const { width: windowWidth } = useWindowDimensions();
-  const [measuredWidth, setMeasuredWidth] = useState(0);
-  const width = measuredWidth || Math.max(0, windowWidth - SIDEBAR_WIDTH);
-  const metrics = useMemo(() => getGridMetrics(width), [width]);
-  const onLayout = (event: LayoutChangeEvent) => {
-    const nextWidth = Math.round(event.nativeEvent.layout.width);
-    if (nextWidth > 0 && nextWidth !== measuredWidth) setMeasuredWidth(nextWidth);
+  const { width: safeAreaWidth } = useSafeAreaFrame();
+  const insets = useSafeAreaInsets();
+  const horizontalPadding = usePageGutter();
+  const compactNav = windowWidth < 700;
+  const availableWidth = Math.max(0, safeAreaWidth - insets.left - insets.right);
+  const width = compactNav ? availableWidth : Math.max(0, availableWidth - SIDEBAR_WIDTH);
+  const metrics = useMemo(
+    () => getGridMetrics(width, horizontalPadding),
+    [horizontalPadding, width]
+  );
+  return {
+    ...metrics,
+    horizontalPadding,
+    bottomPadding: compactNav ? MOBILE_NAV_HEIGHT + 24 : 40,
   };
-  return { ...metrics, onLayout };
 }
 
 interface BookGridProps<T extends CardBook> {
@@ -62,22 +70,41 @@ export function BookGrid<T extends CardBook>({
   ListFooterComponent,
   ListEmptyComponent,
 }: BookGridProps<T>) {
-  const { columns, cardWidth, onLayout } = useGridMetrics();
+  const { columns, cardWidth, horizontalPadding, bottomPadding } = useGridMetrics();
+  const contentContainerStyle = useMemo(
+    () => ({
+      gap: ROW_GAP,
+      paddingHorizontal: horizontalPadding,
+      paddingTop: 8,
+      paddingBottom: bottomPadding,
+    }),
+    [bottomPadding, horizontalPadding]
+  );
+  const renderItem = useCallback(
+    ({ item }: { item: T }) => (
+      <BookCard
+        book={item}
+        width={cardWidth}
+        onPress={onPressBook}
+        onLongPress={onLongPressBook}
+      />
+    ),
+    [cardWidth, onLongPressBook, onPressBook]
+  );
 
   return (
     <FlatList<T>
       key={`book-grid-${columns}`}
       data={books}
-      onLayout={onLayout}
-      keyExtractor={(book, index) => `${book.id}-${(book as any).hash ?? ''}-${index}`}
+      style={{ flex: 1 }}
+      keyExtractor={(book) => book.id}
       numColumns={columns}
       columnWrapperStyle={{ gap: COLUMN_GAP }}
-      contentContainerStyle={{
-        gap: ROW_GAP,
-        paddingHorizontal: HORIZONTAL_PADDING,
-        paddingTop: 20,
-        paddingBottom: 40,
-      }}
+      contentContainerStyle={contentContainerStyle}
+      initialNumToRender={9}
+      maxToRenderPerBatch={9}
+      windowSize={7}
+      updateCellsBatchingPeriod={50}
       onEndReached={onEndReached}
       onEndReachedThreshold={0.7}
       showsVerticalScrollIndicator={false}
@@ -91,55 +118,48 @@ export function BookGrid<T extends CardBook>({
           />
         ) : undefined
       }
-      renderItem={({ item }) => (
-        <BookCard
-          book={item}
-          width={cardWidth}
-          onPress={() => onPressBook(item)}
-          onLongPress={onLongPressBook ? () => onLongPressBook(item) : undefined}
-        />
-      )}
+      renderItem={renderItem}
       ListEmptyComponent={ListEmptyComponent}
       ListFooterComponent={ListFooterComponent ?? null}
     />
   );
 }
 
-export function BookGridSkeleton({ count = 18 }: { count?: number }) {
-  const { columns, cardWidth, onLayout } = useGridMetrics();
-  const rows = Math.ceil(count / columns);
+export function BookGridSkeleton({ count }: { count?: number }) {
+  const { columns, cardWidth, horizontalPadding } = useGridMetrics();
+  const itemCount = count ?? Math.min(18, columns * 3);
+  const rows = Math.ceil(itemCount / columns);
 
   return (
-    <View
-      className="flex-1"
-      onLayout={onLayout}
-      style={{ paddingHorizontal: HORIZONTAL_PADDING, paddingTop: 20, gap: ROW_GAP }}
-    >
+    <SkeletonPulse style={[styles.skeletonContainer, { paddingHorizontal: horizontalPadding }]}>
       {Array.from({ length: rows }, (_, row) => (
-        <View key={row} className="flex-row" style={{ gap: COLUMN_GAP }}>
-          {Array.from({ length: columns }, (_, column) => (
-            <View key={column} style={{ width: cardWidth }}>
-              <View
-                className="rounded-lg mb-2"
-                style={{
-                  width: cardWidth,
-                  height: Math.round(cardWidth * 1.5),
-                  backgroundColor: colors.surfaceRaised,
-                }}
-              />
-              <View
-                className="h-2.5 rounded-full mb-2"
-                style={{ width: '72%', backgroundColor: colors.surfaceRaised }}
-              />
-              <View
-                className="h-2 rounded-full"
-                style={{ width: '48%', backgroundColor: colors.surfaceRaised }}
-              />
-            </View>
-          ))}
+        <View key={row} style={styles.skeletonRow}>
+          {Array.from(
+            { length: Math.min(columns, itemCount - row * columns) },
+            (_, column) => (
+              <View key={column} style={{ width: cardWidth }}>
+                <View
+                  style={[
+                    styles.skeletonCover,
+                    {
+                      width: cardWidth,
+                      height: Math.round(cardWidth * 1.5),
+                      backgroundColor: colors.surfaceRaised,
+                    },
+                  ]}
+                />
+                <View
+                  style={[styles.skeletonTitle, { backgroundColor: colors.surfaceRaised }]}
+                />
+                <View
+                  style={[styles.skeletonAuthor, { backgroundColor: colors.surfaceRaised }]}
+                />
+              </View>
+            )
+          )}
         </View>
       ))}
-    </View>
+    </SkeletonPulse>
   );
 }
 
@@ -150,3 +170,30 @@ export function GridLoadingMore() {
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  skeletonContainer: {
+    flex: 1,
+    gap: ROW_GAP,
+    paddingTop: 8,
+  },
+  skeletonRow: {
+    flexDirection: 'row',
+    gap: COLUMN_GAP,
+  },
+  skeletonCover: {
+    marginBottom: 8,
+    borderRadius: 8,
+  },
+  skeletonTitle: {
+    width: '72%',
+    height: 10,
+    marginBottom: 8,
+    borderRadius: 999,
+  },
+  skeletonAuthor: {
+    width: '48%',
+    height: 8,
+    borderRadius: 999,
+  },
+});

@@ -1,5 +1,5 @@
 {
-  "name": "@readoi/workspace",
+  "name": "@tomeio/core",
   "version": "0.1.0",
   "private": true,
   "packageManager": "bun@1.4.0",
@@ -24,5 +24,10 @@
     "test": "bun --workspaces --if-present test",
     "typecheck": "bun --workspaces --if-present typecheck",
     "lint": "bun --workspaces --if-present lint"
+  },
+  "dependencies": {
+    "expo": "~57.0.14",
+    "react": "19.2.3",
+    "react-native": "0.86.2"
   }
 }

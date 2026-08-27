@@ -1,6 +1,6 @@
 export const PROGRESS_SYNC_KIND = 'reader-progress-sync';
-export const PROGRESS_SYNC_VERSION = 2;
-export type ProgressSyncVersion = 1 | typeof PROGRESS_SYNC_VERSION;
+export const PROGRESS_SYNC_VERSION = 3;
+export type ProgressSyncVersion = 1 | 2 | typeof PROGRESS_SYNC_VERSION;
 
 export interface ProgressSyncRecord {
   identity: string;
@@ -14,6 +14,7 @@ export interface ProgressSyncRecord {
   wordsRead?: number;
   lastReadAt?: number;
   updatedAt: number;
+  removedAt?: number;
 }
 
 export interface ProgressSyncDocument {
@@ -22,12 +23,6 @@ export interface ProgressSyncDocument {
   deviceId?: string;
   generatedAt: number;
   records: ProgressSyncRecord[];
-}
-
-function aliasesOverlap(left: ProgressSyncRecord, right: ProgressSyncRecord): boolean {
-  if (left.identity === right.identity) return true;
-  const aliases = new Set(left.aliases);
-  return right.aliases.some((alias) => aliases.has(alias));
 }
 
 function newerRecord(left: ProgressSyncRecord, right: ProgressSyncRecord): ProgressSyncRecord {
@@ -42,20 +37,38 @@ function greatestOptional(left?: number, right?: number): number | undefined {
   return Math.max(left, right);
 }
 
+export function isProgressRecordRemoved(record: ProgressSyncRecord): boolean {
+  return record.removedAt != null && record.removedAt >= record.updatedAt;
+}
+
 export function mergeProgressRecords(
   ...groups: ProgressSyncRecord[][]
 ): ProgressSyncRecord[] {
   const merged: ProgressSyncRecord[] = [];
+  const identityIndexes = new Map<string, number>();
+  const aliasIndexes = new Map<string, number>();
+
   for (const record of groups.flat()) {
-    const index = merged.findIndex((candidate) => aliasesOverlap(candidate, record));
-    if (index < 0) {
-      merged.push({ ...record, aliases: [...new Set(record.aliases)].sort() });
+    const matchingIndexes = [
+      identityIndexes.get(record.identity),
+      ...record.aliases.map((alias) => aliasIndexes.get(alias)),
+    ].filter((index): index is number => index != null);
+    const index = matchingIndexes.length ? Math.min(...matchingIndexes) : -1;
+    if (index === -1) {
+      const nextIndex = merged.length;
+      const next = { ...record, aliases: [...new Set(record.aliases)].sort() };
+      merged.push(next);
+      identityIndexes.set(next.identity, nextIndex);
+      for (const alias of next.aliases) {
+        if (!aliasIndexes.has(alias)) aliasIndexes.set(alias, nextIndex);
+      }
       continue;
     }
     const current = merged[index];
     if (!current) continue;
     const winner = newerRecord(current, record);
-    merged[index] = {
+    const removedAt = greatestOptional(current.removedAt, record.removedAt);
+    const next: ProgressSyncRecord = {
       ...winner,
       aliases: [...new Set([...current.aliases, ...record.aliases])].sort(),
       isRead: current.isRead || record.isRead,
@@ -68,6 +81,16 @@ export function mergeProgressRecords(
       lastReadAt: greatestOptional(current.lastReadAt, record.lastReadAt),
       updatedAt: Math.max(current.updatedAt, record.updatedAt),
     };
+    if (removedAt != null && removedAt >= next.updatedAt) next.removedAt = removedAt;
+    else delete next.removedAt;
+    merged[index] = next;
+    if (current.identity !== next.identity && identityIndexes.get(current.identity) === index) {
+      identityIndexes.delete(current.identity);
+    }
+    identityIndexes.set(next.identity, index);
+    for (const alias of next.aliases) {
+      if (!aliasIndexes.has(alias)) aliasIndexes.set(alias, index);
+    }
   }
   return merged.sort((left, right) => left.identity.localeCompare(right.identity));
 }

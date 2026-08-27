@@ -1,9 +1,11 @@
 import { Image } from 'expo-image';
-import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
+import { useCallback } from 'react';
+import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { colors, SectionHeader } from '@/components/app-ui';
+import { colors, SectionHeader, usePageGutter } from '@/components/app-ui';
 import type { DiscoveryBook, FeedBook } from '@/lib/openlibrary';
 import { RatingChip } from './rating-chip';
+import { SkeletonPulse } from './skeleton-pulse';
 
 export function toDiscoveryBook(b: FeedBook, genre = 'Open Library'): DiscoveryBook {
   return {
@@ -36,12 +38,13 @@ export function PosterCard<T extends FeedBook>({
   return (
     <Pressable
       onPress={() => onPress(book)}
-      style={{ width }}
-      className="active:opacity-80"
+      style={({ pressed }) => ({ width, opacity: pressed ? 0.8 : 1 })}
     >
       <View
-        style={{ width, height: Math.round(width * 1.5), backgroundColor: colors.surfaceRaised }}
-        className="rounded-lg overflow-hidden mb-2"
+        style={[
+          styles.cover,
+          { width, height: Math.round(width * 1.5), backgroundColor: colors.surfaceRaised },
+        ]}
       >
         {book.cover ? (
           <Image
@@ -49,11 +52,12 @@ export function PosterCard<T extends FeedBook>({
             style={{ width: '100%', height: '100%' }}
             contentFit="cover"
             cachePolicy="memory-disk"
-            transition={200}
+            recyclingKey={book.cover}
+            transition={150}
           />
         ) : (
-          <View className="flex-1 items-center justify-center px-2">
-            <Text numberOfLines={3} className="text-[11px] font-semibold text-neutral-500 text-center">
+          <View style={styles.fallbackCover}>
+            <Text numberOfLines={3} style={styles.fallbackTitle}>
               {book.title}
             </Text>
           </View>
@@ -61,31 +65,32 @@ export function PosterCard<T extends FeedBook>({
         <RatingChip rating={book.rating} />
         {progress > 0 ? (
           <>
-            <View className="absolute bottom-0 left-0 right-0 h-1.5 bg-black/70">
+            <View style={styles.progressTrack}>
               <View
-                className="h-full"
-                style={{ width: `${progress}%`, backgroundColor: colors.accent }}
+                style={{ height: '100%', width: `${progress}%`, backgroundColor: colors.accent }}
               />
             </View>
             <View
-              className="absolute bottom-2 left-1.5 rounded-md px-1.5 py-1"
-              style={{
-                backgroundColor: progressBook.isRead
-                  ? colors.success
-                  : 'rgba(73, 63, 145, 0.95)',
-              }}
+              style={[
+                styles.progressBadge,
+                {
+                  backgroundColor: progressBook.isRead
+                    ? colors.success
+                    : colors.accentMuted,
+                },
+              ]}
             >
-              <Text className="text-[9px] font-bold text-white">
+              <Text style={styles.progressText}>
                 {progressBook.isRead ? 'Read' : `${Math.max(1, Math.round(progress))}%`}
               </Text>
             </View>
           </>
         ) : null}
       </View>
-      <Text numberOfLines={1} className="text-[13px] font-medium" style={{ color: colors.text }}>
+      <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.title, { width }]}>
         {book.title}
       </Text>
-      <Text numberOfLines={1} className="mt-0.5 text-[11px]" style={{ color: colors.textMuted }}>
+      <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.author, { width }]}>
         {book.author}
       </Text>
     </Pressable>
@@ -96,20 +101,86 @@ export function PosterSkeleton({ width = 124 }: { width?: number }) {
   return (
     <View style={{ width }}>
       <View
-        style={{ width, height: Math.round(width * 1.5), backgroundColor: colors.surfaceRaised }}
-        className="rounded-lg mb-2"
+        style={[
+          styles.skeletonCover,
+          { width, height: Math.round(width * 1.5), backgroundColor: colors.surfaceRaised },
+        ]}
       />
-      <View
-        className="h-2.5 rounded-full mb-2"
-        style={{ width: '72%', backgroundColor: colors.surfaceRaised }}
-      />
-      <View
-        className="h-2 rounded-full"
-        style={{ width: '48%', backgroundColor: colors.surfaceRaised }}
-      />
+      <View style={[styles.skeletonTitle, { backgroundColor: colors.surfaceRaised }]} />
+      <View style={[styles.skeletonAuthor, { backgroundColor: colors.surfaceRaised }]} />
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  cover: {
+    marginBottom: 8,
+    overflow: 'hidden',
+    borderRadius: 8,
+  },
+  fallbackCover: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  fallbackTitle: {
+    color: '#737373',
+    fontSize: 11,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  progressTrack: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    left: 0,
+    height: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+  },
+  progressBadge: {
+    position: 'absolute',
+    bottom: 8,
+    left: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  progressText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  title: {
+    flexShrink: 1,
+    overflow: 'hidden',
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  author: {
+    flexShrink: 1,
+    overflow: 'hidden',
+    marginTop: 2,
+    color: colors.textMuted,
+    fontSize: 11,
+  },
+  skeletonCover: {
+    marginBottom: 8,
+    borderRadius: 8,
+  },
+  skeletonTitle: {
+    width: '72%',
+    height: 10,
+    marginBottom: 8,
+    borderRadius: 999,
+  },
+  skeletonAuthor: {
+    width: '48%',
+    height: 8,
+    borderRadius: 999,
+  },
+});
 
 /** Stremio-style horizontal rail with a section title. */
 export function Rail<T extends FeedBook>({
@@ -131,22 +202,29 @@ export function Rail<T extends FeedBook>({
   onRetry?: () => void;
   emptyLabel?: string;
 }) {
+  const gutter = usePageGutter();
+  const renderPoster = useCallback(
+    ({ item }: { item: T }) => <PosterCard book={item} onPress={onPressBook} />,
+    [onPressBook]
+  );
   return (
     <View className="mb-8">
       <SectionHeader title={title} actionLabel={onSeeAll ? 'See all' : undefined} onAction={onSeeAll} />
       {loading ? (
-        <ScrollView
-          horizontal
-          scrollEnabled={false}
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 24, gap: 16 }}
-        >
-          {Array.from({ length: 8 }, (_, index) => (
-            <PosterSkeleton key={index} />
-          ))}
-        </ScrollView>
+        <SkeletonPulse>
+          <ScrollView
+            horizontal
+            scrollEnabled={false}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: gutter, gap: 16 }}
+          >
+            {Array.from({ length: 8 }, (_, index) => (
+              <PosterSkeleton key={index} />
+            ))}
+          </ScrollView>
+        </SkeletonPulse>
       ) : error ? (
-        <View className="px-6 h-20 justify-center items-start gap-1">
+        <View className="h-20 justify-center items-start gap-1" style={{ paddingHorizontal: gutter }}>
           <Text numberOfLines={2} className="text-xs text-red-400">
             {error}
           </Text>
@@ -163,12 +241,15 @@ export function Rail<T extends FeedBook>({
           data={books}
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 24, gap: 16 }}
-          keyExtractor={(b) => b.id}
-          renderItem={({ item }) => <PosterCard book={item} onPress={onPressBook} />}
+          contentContainerStyle={{ paddingHorizontal: gutter, gap: 16 }}
+          keyExtractor={(book) => book.id}
+          initialNumToRender={6}
+          maxToRenderPerBatch={4}
+          windowSize={3}
+          renderItem={renderPoster}
         />
       ) : (
-        <View className="px-6 h-20 justify-center">
+        <View className="h-20 justify-center" style={{ paddingHorizontal: gutter }}>
           <Text className="text-xs text-neutral-500">{emptyLabel}</Text>
         </View>
       )}

@@ -1,6 +1,6 @@
 import '../global.css';
 
-import { colors } from '@readoi/design';
+import { colors } from '@tomeio/design';
 import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -82,7 +82,20 @@ export default function RootLayout() {
                   <View className="flex-1" style={{ backgroundColor: colors.background }}>
                     <Stack screenOptions={{ headerShown: false, animation: 'none' }} />
                   </View>
-                  {useBottomNavigation && <Sidebar compact />}
+                  {useBottomNavigation && (
+                    <View
+                      pointerEvents="box-none"
+                      style={{
+                        position: 'absolute',
+                        right: 0,
+                        bottom: 0,
+                        left: 0,
+                        zIndex: 20,
+                      }}
+                    >
+                      <Sidebar compact />
+                    </View>
+                  )}
                 </View>
               </SafeAreaView>
             </LibraryProvider>

@@ -2,19 +2,19 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'electron-vite';
 
 const workspacePackages = [
-  '@readoi/application',
-  '@readoi/contracts',
-  '@readoi/database',
-  '@readoi/design',
-  '@readoi/domain',
-  '@readoi/extension-internet-archive',
-  '@readoi/extension-open-library',
-  '@readoi/extension-project-gutenberg',
-  '@readoi/extension-protocol',
-  '@readoi/extension-runtime',
-  '@readoi/official-extensions',
-  '@readoi/sources',
-  '@readoi/sync',
+  '@tomeio/application',
+  '@tomeio/contracts',
+  '@tomeio/database',
+  '@tomeio/design',
+  '@tomeio/domain',
+  '@tomeio/extension-internet-archive',
+  '@tomeio/extension-open-library',
+  '@tomeio/extension-project-gutenberg',
+  '@tomeio/extension-protocol',
+  '@tomeio/extension-runtime',
+  '@tomeio/official-extensions',
+  '@tomeio/sources',
+  '@tomeio/sync',
 ];
 
 export default defineConfig({

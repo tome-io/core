@@ -3,4 +3,4 @@ export {
   filenameFromUri,
   metadataFromFilename,
   moonReaderCoverTarget,
-} from '@readoi/domain';
+} from '@tomeio/domain';

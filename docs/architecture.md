@@ -32,7 +32,7 @@ access; all requests cross a JSON message boundary where manifest host permissio
 
 - `main` owns filesystem, dialogs, persistence, networking credentials, and future
   SQLite access.
-- `preload` exposes a narrow typed API defined by `@readoi/contracts`.
+- `preload` exposes a narrow typed API defined by `@tomeio/contracts`.
 - `renderer` is a sandboxed React DOM client with no Node access.
 
 `contextIsolation`, sandboxing, and disabled Node integration are defaults. New desktop
@@ -40,7 +40,7 @@ capabilities must be added as explicit IPC methods rather than exposing `ipcRend
 
 ## Database evolution
 
-`@readoi/database` defines the portable driver and normalized core schema. The existing
+`@tomeio/database` defines the portable driver and normalized core schema. The existing
 mobile schema is not destructively migrated by this restructuring. The next database
 step is an Expo SQLite driver and an Electron main-process SQLite driver, followed by
 repository-by-repository migration of library orchestration out of React context.

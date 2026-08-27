@@ -1,16 +1,43 @@
-import { Feather } from '@expo/vector-icons';
-import { colors } from '@readoi/design';
+import { Ionicons } from '@expo/vector-icons';
+import { colors } from '@tomeio/design';
 import { usePathname, useRouter } from 'expo-router';
 import { Pressable, Text, View } from 'react-native';
 
+import { MOBILE_NAV_FADE_HEIGHT, MOBILE_NAV_HEIGHT } from '@/components/app-ui';
+
 const ITEMS = [
-  { route: '/home', label: 'Home', icon: 'home' as const },
-  { route: '/library', label: 'Library', icon: 'book-open' as const },
-  { route: '/reading-list', label: 'Reading list', icon: 'bookmark' as const },
-  { route: '/extensions', label: 'Add-ons', icon: 'package' as const },
+  {
+    route: '/home',
+    label: 'Home',
+    icon: 'home' as const,
+    outlineIcon: 'home-outline' as const,
+  },
+  {
+    route: '/library',
+    label: 'Library',
+    icon: 'library' as const,
+    outlineIcon: 'library-outline' as const,
+  },
+  {
+    route: '/reading-list',
+    label: 'Reading list',
+    icon: 'bookmark' as const,
+    outlineIcon: 'bookmark-outline' as const,
+  },
+  {
+    route: '/extensions',
+    label: 'Add-ons',
+    icon: 'extension-puzzle' as const,
+    outlineIcon: 'extension-puzzle-outline' as const,
+  },
 ];
 
-const SETTINGS = { route: '/settings', label: 'Settings', icon: 'settings' as const };
+const SETTINGS = {
+  route: '/settings',
+  label: 'Settings',
+  icon: 'settings' as const,
+  outlineIcon: 'settings-outline' as const,
+};
 
 interface SidebarProps {
   compact?: boolean;
@@ -29,41 +56,34 @@ export function Sidebar({ compact = false }: SidebarProps) {
         accessibilityRole="button"
         accessibilityState={{ selected: active }}
         onPress={() => {
-          if (!active) router.replace(item.route as any);
+          if (!active) router.navigate(item.route as any);
         }}
         className={
           compact
-            ? 'flex-1 h-full items-center justify-center gap-0.5 active:opacity-75'
+            ? 'h-full flex-1 items-center justify-center gap-1.5 active:scale-95 active:opacity-75'
             : 'h-12 w-12 items-center justify-center rounded-xl'
         }
         style={
           compact
             ? undefined
-            : { backgroundColor: active ? 'rgba(139,124,246,0.16)' : 'transparent' }
+            : { backgroundColor: active ? colors.accentMuted : 'transparent' }
         }
       >
-        <View
-          className="items-center justify-center rounded-xl"
-          style={
-            compact
-              ? {
-                  width: 42,
-                  height: 27,
-                  backgroundColor: active ? 'rgba(139,124,246,0.16)' : 'transparent',
-                }
-              : undefined
-          }
-        >
-          <Feather
-            name={item.icon}
-            size={compact ? 19 : 20}
-            color={active ? colors.accent : '#6b6b76'}
-          />
-        </View>
+        <Ionicons
+          name={active ? item.icon : item.outlineIcon}
+          size={compact ? 29 : 20}
+          color={active ? colors.accent : colors.text}
+          style={compact && !active ? { opacity: 0.35 } : undefined}
+        />
         {compact && (
           <Text
             numberOfLines={1}
-            style={{ color: active ? colors.accent : '#777782', fontSize: 9, fontWeight: '600' }}
+            style={{
+              color: active ? colors.accent : colors.text,
+              fontSize: 11,
+              fontWeight: '500',
+              opacity: active ? 1 : 0.6,
+            }}
           >
             {item.label}
           </Text>
@@ -75,15 +95,20 @@ export function Sidebar({ compact = false }: SidebarProps) {
   if (compact) {
     return (
       <View
-        className="w-full flex-row items-center"
+        pointerEvents="box-none"
+        className="w-full"
         style={{
-          height: 58,
-          backgroundColor: colors.background,
-          borderTopColor: colors.border,
-          borderTopWidth: 1,
+          height: MOBILE_NAV_FADE_HEIGHT,
+          backgroundColor: 'transparent',
+          experimental_backgroundImage: `linear-gradient(to top, ${colors.background} 0%, rgba(16, 11, 8, 0.96) 24%, rgba(16, 11, 8, 0.78) 48%, rgba(16, 11, 8, 0.46) 70%, rgba(16, 11, 8, 0.16) 88%, rgba(16, 11, 8, 0) 100%)`,
         }}
       >
-        {[...ITEMS, SETTINGS].map(renderItem)}
+        <View
+          className="absolute right-0 bottom-0 left-0 flex-row items-stretch"
+          style={{ height: MOBILE_NAV_HEIGHT, paddingHorizontal: 16 }}
+        >
+          {[...ITEMS, SETTINGS].map(renderItem)}
+        </View>
       </View>
     );
   }

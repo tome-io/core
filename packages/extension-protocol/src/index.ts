@@ -1,4 +1,4 @@
-import type { BookAcquisition, BookMetadata } from '@readoi/domain';
+import type { BookAcquisition, BookMetadata } from '@tomeio/domain';
 
 export const EXTENSION_MANIFEST_VERSION = 1 as const;
 

@@ -73,7 +73,9 @@ function validRecord(value: unknown): value is ProgressSyncRecord {
     Number.isFinite(record.progress) &&
     typeof record.isRead === 'boolean' &&
     typeof record.updatedAt === 'number' &&
-    Number.isFinite(record.updatedAt)
+    Number.isFinite(record.updatedAt) &&
+    (record.removedAt == null ||
+      (typeof record.removedAt === 'number' && Number.isFinite(record.removedAt)))
   );
 }
 
@@ -95,11 +97,11 @@ function parseSyncDocument(contents: string, required: boolean): ProgressSyncDoc
     if (!required) return null;
     throw new Error('The selected sync progress file belongs to another application.');
   }
-  if (document.version !== 1 && document.version !== PROGRESS_SYNC_VERSION) {
+  if (document.version !== 1 && document.version !== 2 && document.version !== PROGRESS_SYNC_VERSION) {
     throw new Error(`Sync progress version ${String(document.version)} is not supported.`);
   }
   if (
-    document.version === PROGRESS_SYNC_VERSION &&
+    document.version >= 2 &&
     (typeof document.deviceId !== 'string' || !document.deviceId)
   ) {
     throw new Error('The sync progress file has no device identifier.');

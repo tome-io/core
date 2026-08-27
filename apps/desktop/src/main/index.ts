@@ -6,9 +6,9 @@ import {
   ipcMain,
   type OpenDialogOptions,
 } from 'electron';
-import { DESKTOP_IPC, type LibrarySnapshot } from '@readoi/contracts';
-import { ExtensionRegistry } from '@readoi/extension-runtime';
-import { officialExtensionManifests } from '@readoi/official-extensions';
+import { DESKTOP_IPC, type LibrarySnapshot } from '@tomeio/contracts';
+import { ExtensionRegistry } from '@tomeio/extension-runtime';
+import { officialExtensionManifests } from '@tomeio/official-extensions';
 import { JsonExtensionStore } from './extension-store';
 
 let mainWindow: BrowserWindow | null = null;

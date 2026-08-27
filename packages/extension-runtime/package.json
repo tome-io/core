@@ -1,5 +1,5 @@
 {
-  "name": "@readoi/extension-runtime",
+  "name": "@tomeio/extension-runtime",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@readoi/domain": "workspace:*",
-    "@readoi/extension-protocol": "workspace:*"
+    "@tomeio/domain": "workspace:*",
+    "@tomeio/extension-protocol": "workspace:*"
   }
 }

@@ -21,7 +21,7 @@ function isGoogleDriveFolder(uri: string): boolean {
 function requireSupportedProvider(directoryUri: string): void {
   if (isGoogleDriveFolder(directoryUri) && !hasNativeProgressFolder()) {
     throw new Error(
-      'Google Drive progress sync requires the installed Readio development build. Run `bun run android` from the repository root; Expo Go cannot load the native Drive folder module.'
+      'Google Drive progress sync requires the installed Tomeio development build. Run `bun run android` from the repository root; Expo Go cannot load the native Drive folder module.'
     );
   }
 }

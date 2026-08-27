@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
-import { useRef, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { memo, useRef, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { colors } from '@/components/app-ui';
 import { RatingChip } from './rating-chip';
@@ -27,7 +27,7 @@ interface Props {
   width: number;
 }
 
-export function BookCard({ book, onPress, onLongPress, width }: Props) {
+export const BookCard = memo(function BookCard({ book, onPress, onLongPress, width }: Props) {
   const height = Math.round(width * 1.5); // fixed 2:3 cover ratio
   const progress = book.isRead ? 100 : book.progress;
   const longPressed = useRef(false);
@@ -56,18 +56,17 @@ export function BookCard({ book, onPress, onLongPress, width }: Props) {
         longPressed.current = false;
       }}
       delayLongPress={350}
-      style={{ width, opacity: book.isRead ? 0.68 : 1 }}
-      className="active:opacity-70"
+      style={({ pressed }) => ({
+        width,
+        opacity: pressed ? 0.7 : book.isRead ? 0.68 : 1,
+      })}
     >
-      <View
-        style={{ width, height, backgroundColor: colors.surfaceRaised }}
-        className="rounded-lg overflow-hidden mb-2"
-      >
+      <View style={[styles.cover, { width, height, backgroundColor: colors.surfaceRaised }]}>
         {activeCover ? (
           <Image
             source={{ uri: activeCover }}
             style={{ width: '100%', height: '100%' }}
-            contentFit="contain"
+            contentFit="cover"
             cachePolicy="memory-disk"
             recyclingKey={activeCover}
             onError={() =>
@@ -77,61 +76,138 @@ export function BookCard({ book, onPress, onLongPress, width }: Props) {
             }
           />
         ) : allCoversFailed ? (
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ fontSize: 28 }}>📚</Text>
+          <View style={styles.fallbackCover}>
+            <Text style={styles.fallbackIcon}>📚</Text>
           </View>
         ) : book.metadataPending ? (
-          <View className="flex-1" style={{ backgroundColor: colors.surfaceRaised }} />
+          <View style={[styles.fill, { backgroundColor: colors.surfaceRaised }]} />
         ) : (
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ fontSize: 28 }}>📚</Text>
+          <View style={styles.fallbackCover}>
+            <Text style={styles.fallbackIcon}>📚</Text>
           </View>
         )}
         {book.moonReader?.availableLocally === false && (
-          <View className="absolute left-1.5 top-1.5 rounded-md bg-black/80 px-1.5 py-1">
-            <Text className="text-[9px] font-semibold text-neutral-200">Not local</Text>
+          <View style={styles.notLocalBadge}>
+            <Text style={styles.notLocalText}>Not local</Text>
           </View>
         )}
         <RatingChip rating={book.rating} />
         {typeof progress === 'number' && progress > 0 && (
           <>
-            <View className="absolute left-0 right-0 bottom-0 h-1.5 bg-black/80">
+            <View style={styles.progressTrack}>
               <View
-                className="h-full"
                 style={{
+                  height: '100%',
                   width: `${Math.max(0, Math.min(100, progress))}%`,
                   backgroundColor: colors.accent,
                 }}
               />
             </View>
             <View
-              className="absolute left-1.5 bottom-3 rounded-md px-1.5 py-1"
-              style={{
-                backgroundColor: book.isRead ? colors.success : 'rgba(73, 63, 145, 0.95)',
-              }}
+              style={[
+                styles.progressBadge,
+                {
+                  backgroundColor: book.isRead
+                    ? colors.success
+                    : colors.accentMuted,
+                },
+              ]}
             >
-              <Text className="text-[9px] font-bold text-white">
+              <Text style={styles.progressText}>
                 {book.isRead ? 'Read' : `${Math.max(1, Math.round(progress))}%`}
               </Text>
             </View>
           </>
         )}
       </View>
-      <Text numberOfLines={1} className="text-[13px] font-medium" style={{ color: colors.text }}>
+      <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.title, { width }]}>
         {book.title || 'Untitled'}
       </Text>
-      <Text numberOfLines={1} className="mt-0.5 text-[11px]" style={{ color: colors.textMuted }}>
+      <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.author, { width }]}>
         {book.author}
       </Text>
       {(book.format || book.year) && (
-        <Text
-          numberOfLines={1}
-          className="mt-1 text-[10px] uppercase tracking-wide"
-          style={{ color: colors.textMuted }}
-        >
+        <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.metadata, { width }]}>
           {[book.format, book.year].filter(Boolean).join(' · ')}
         </Text>
       )}
     </Pressable>
   );
-}
+});
+
+const styles = StyleSheet.create({
+  cover: {
+    marginBottom: 8,
+    overflow: 'hidden',
+    borderRadius: 8,
+  },
+  fill: {
+    flex: 1,
+  },
+  fallbackCover: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fallbackIcon: {
+    fontSize: 28,
+  },
+  notLocalBadge: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+  },
+  notLocalText: {
+    color: '#e5e5e5',
+    fontSize: 9,
+    fontWeight: '600',
+  },
+  progressTrack: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    left: 0,
+    height: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+  },
+  progressBadge: {
+    position: 'absolute',
+    bottom: 12,
+    left: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  progressText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  title: {
+    flexShrink: 1,
+    overflow: 'hidden',
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  author: {
+    flexShrink: 1,
+    overflow: 'hidden',
+    marginTop: 2,
+    color: colors.textMuted,
+    fontSize: 11,
+  },
+  metadata: {
+    flexShrink: 1,
+    overflow: 'hidden',
+    marginTop: 4,
+    color: colors.textMuted,
+    fontSize: 10,
+    letterSpacing: 0.25,
+    textTransform: 'uppercase',
+  },
+});

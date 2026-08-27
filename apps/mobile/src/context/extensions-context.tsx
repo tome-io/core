@@ -13,11 +13,11 @@ import type {
   ExtensionManifest,
   ExtensionPage,
   ExtensionQuery,
-} from '@readoi/extension-protocol';
+} from '@tomeio/extension-protocol';
 import type {
   ExtensionRegistrySnapshot,
   InstalledExtension,
-} from '@readoi/extension-runtime';
+} from '@tomeio/extension-runtime';
 
 import { ExtensionSandboxes } from '@/components/extension-sandboxes';
 import {
@@ -51,7 +51,7 @@ interface ExtensionsContextValue extends ExtensionRegistrySnapshot {
     values: Record<string, ExtensionConfigValue>
   ): Promise<void>;
   load(id: string): Promise<BookExtension>;
-  search(id: string, query: ExtensionQuery): Promise<ExtensionPage<import('@readoi/domain').BookMetadata>>;
+  search(id: string, query: ExtensionQuery): Promise<ExtensionPage<import('@tomeio/domain').BookMetadata>>;
 }
 
 const EMPTY: ExtensionsContextValue = {

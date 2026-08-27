@@ -3,7 +3,7 @@ import type {
   ExtensionConfigField,
   ExtensionConfigValue,
   ExtensionManifest,
-} from '@readoi/extension-protocol';
+} from '@tomeio/extension-protocol';
 
 import { secureDelete, secureGet, secureSet } from './secure';
 

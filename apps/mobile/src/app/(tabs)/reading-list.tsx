@@ -2,10 +2,13 @@ import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Text, View } from 'react-native';
 
-import { colors } from '@/components/app-ui';
+import { colors, usePageGutter } from '@/components/app-ui';
 import { BookGrid, BookGridSkeleton } from '@/components/book-grid';
 import { CatalogToolbar, type CatalogOption } from '@/components/catalog-toolbar';
-import { useLibrary } from '@/context/library-context';
+import {
+  useLibraryReadingList,
+  useLibraryUiStatus,
+} from '@/context/library-context';
 import { detailParams, type LibraryBook } from '@/lib/library';
 
 type ReadingSort = 'recent' | 'title' | 'author' | 'rating';
@@ -18,8 +21,10 @@ const SORTS: CatalogOption<ReadingSort>[] = [
 ];
 
 export default function ReadingListScreen() {
+  const gutter = usePageGutter();
   const router = useRouter();
-  const { readingList, ready, error } = useLibrary();
+  const { readingList, ready } = useLibraryReadingList();
+  const { error } = useLibraryUiStatus();
   const [genre, setGenre] = useState('all');
   const [sort, setSort] = useState<ReadingSort>('recent');
 
@@ -46,14 +51,20 @@ export default function ReadingListScreen() {
   return (
     <View className="flex-1" style={{ backgroundColor: colors.background }}>
       <CatalogToolbar
+        filterLabel="Category"
         filters={filters}
         selectedFilter={genre}
         onFilter={setGenre}
         sorts={SORTS}
         selectedSort={sort}
         onSort={setSort}
+        sortLabel="Sort by"
       />
-      {!!error && <Text className="px-6 py-2 text-xs leading-4 text-red-400">{error}</Text>}
+      {!!error && (
+        <Text className="py-2 text-xs leading-4 text-red-400" style={{ paddingHorizontal: gutter }}>
+          {error}
+        </Text>
+      )}
       {!ready ? (
         <BookGridSkeleton />
       ) : (

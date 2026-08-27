@@ -5,8 +5,8 @@ import {
   type ExtensionQuery,
   type ExtensionManifest,
   type ExtensionResourceName,
-} from '@readoi/extension-protocol';
-import type { BookAcquisition, BookMetadata } from '@readoi/domain';
+} from '@tomeio/extension-protocol';
+import type { BookAcquisition, BookMetadata } from '@tomeio/domain';
 
 export interface InstalledExtension {
   manifest: ExtensionManifest;
@@ -124,7 +124,7 @@ async function fetchManifest(
 function assertThirdPartyTransport(manifest: ExtensionManifest): void {
   if (manifest.transport.kind === 'bundled') {
     throw new ExtensionInstallError(
-      'Bundled transports are reserved for extensions shipped with Readio.'
+      'Bundled transports are reserved for extensions shipped with Tomeio.'
     );
   }
 }

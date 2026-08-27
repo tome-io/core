@@ -5,6 +5,7 @@ import { openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
 import { bookIdentity } from './book-metadata';
 import type { LibraryBook, LibraryState } from './library';
 import {
+  isProgressRecordRemoved,
   mergeProgressRecords,
   type ProgressSyncRecord,
 } from './progress-sync-model';
@@ -17,6 +18,10 @@ export type MetadataSource = 'catalog' | 'embedded' | 'filename' | 'moonreader';
 
 interface CatalogRow {
   book_json: string;
+}
+
+interface ProgressTombstoneRow {
+  record_json: string;
 }
 
 interface ProgressCatalogRow extends CatalogRow {
@@ -209,6 +214,12 @@ async function initializeDatabase(): Promise<SQLiteDatabase> {
     );
     CREATE INDEX IF NOT EXISTS progress_sync_items_order ON progress_sync_items(sort_at DESC);
 
+    CREATE TABLE IF NOT EXISTS progress_sync_tombstones (
+      identity TEXT PRIMARY KEY NOT NULL,
+      record_json TEXT NOT NULL,
+      removed_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS metadata_sources (
       book_key TEXT NOT NULL REFERENCES catalog_books(book_key) ON DELETE CASCADE,
       source TEXT NOT NULL,
@@ -254,7 +265,7 @@ async function initializeDatabase(): Promise<SQLiteDatabase> {
       value TEXT NOT NULL
     );
 
-    PRAGMA user_version = 4;
+    PRAGMA user_version = 5;
   `);
   await migrateLegacyLibrary(database);
   await database.runAsync('DELETE FROM content_cache WHERE expires_at <= ?', Date.now());
@@ -398,7 +409,22 @@ export async function loadMoonReaderCatalog(sourceKey: string): Promise<LibraryB
      ORDER BY moon.sort_at DESC`,
     sourceKey
   );
-  return Promise.all(rows.map((row) => withValidGeneratedCover(withProgress(row))));
+  const tombstones = await loadProgressTombstones(database);
+  const removedAtByAlias = new Map<string, number>();
+  for (const record of tombstones) {
+    if (!isProgressRecordRemoved(record)) continue;
+    const removedAt = record.removedAt ?? 0;
+    for (const alias of [record.identity, ...record.aliases]) {
+      removedAtByAlias.set(alias, Math.max(removedAtByAlias.get(alias) ?? 0, removedAt));
+    }
+  }
+  const books = rows.map(withProgress).filter((book) => {
+    const activityAt = Math.max(book.lastReadAt ?? 0, book.addedAt ?? 0);
+    return ![bookIdentity(book.title, book.author), ...syncAliases(book)].some(
+      (alias) => (removedAtByAlias.get(alias) ?? 0) >= activityAt
+    );
+  });
+  return Promise.all(books.map(withValidGeneratedCover));
 }
 
 export async function loadProgressSyncCatalog(): Promise<LibraryBook[]> {
@@ -885,7 +911,7 @@ function rowProgressRecord(row: ProgressSnapshotRow): ProgressSyncRecord | null 
   const isRead = row.override_is_read === 1 || row.is_read === 1;
   if (row.progress == null && !isRead) return null;
   const updatedAt = Math.max(
-    row.progress_synced_at ?? 0,
+    row.sync_identity ? row.progress_synced_at ?? 0 : 0,
     row.last_read_at ?? 0,
     row.override_updated_at ?? 0
   );
@@ -900,7 +926,7 @@ function rowProgressRecord(row: ProgressSnapshotRow): ProgressSyncRecord | null 
     readingTimeMs: row.reading_time_ms ?? undefined,
     wordsRead: row.words_read ?? undefined,
     lastReadAt: row.last_read_at ?? undefined,
-    updatedAt: updatedAt || Date.now(),
+    updatedAt: updatedAt || book.addedAt,
   };
 }
 
@@ -917,16 +943,29 @@ async function progressSnapshotRows(database: SQLiteDatabase): Promise<ProgressS
      FROM catalog_books AS books
      LEFT JOIN reading_progress AS progress ON progress.book_key = books.book_key
      LEFT JOIN reading_overrides AS manual ON manual.book_key = books.book_key
-     LEFT JOIN progress_sync_items AS synced ON synced.book_key = books.book_key`
+     LEFT JOIN progress_sync_items AS synced ON synced.book_key = books.book_key
+     WHERE progress.book_key IS NOT NULL
+        OR manual.book_key IS NOT NULL
+        OR synced.book_key IS NOT NULL`
   );
 }
 
 export async function loadProgressSyncRecords(): Promise<ProgressSyncRecord[]> {
   const database = await getLibraryDatabase();
-  const records = (await progressSnapshotRows(database))
+  const activeRecords = (await progressSnapshotRows(database))
     .map(rowProgressRecord)
     .filter((record): record is ProgressSyncRecord => !!record);
-  return mergeProgressRecords(records);
+  const tombstones = await loadProgressTombstones(database);
+  return mergeProgressRecords(activeRecords, tombstones);
+}
+
+async function loadProgressTombstones(
+  database: SQLiteDatabase
+): Promise<ProgressSyncRecord[]> {
+  const rows = await database.getAllAsync<ProgressTombstoneRow>(
+    'SELECT record_json FROM progress_sync_tombstones'
+  );
+  return rows.map((row) => JSON.parse(row.record_json) as ProgressSyncRecord);
 }
 
 export async function applyProgressSyncRecords(
@@ -934,6 +973,14 @@ export async function applyProgressSyncRecords(
 ): Promise<number> {
   const database = await getLibraryDatabase();
   const rows = await progressSnapshotRows(database);
+  const tombstoneIdentitiesByAlias = new Map<string, Set<string>>();
+  for (const tombstone of await loadProgressTombstones(database)) {
+    for (const alias of [tombstone.identity, ...tombstone.aliases]) {
+      const identities = tombstoneIdentitiesByAlias.get(alias) ?? new Set<string>();
+      identities.add(tombstone.identity);
+      tombstoneIdentitiesByAlias.set(alias, identities);
+    }
+  }
   const rowsByAlias = new Map<string, ProgressSnapshotRow[]>();
   for (const row of rows) {
     const book = parseBook(row.book_json);
@@ -955,6 +1002,56 @@ export async function applyProgressSyncRecords(
       const matches = new Map<string, ProgressSnapshotRow>();
       for (const alias of [record.identity, ...record.aliases]) {
         for (const row of rowsByAlias.get(alias) ?? []) matches.set(row.book_key, row);
+      }
+      if (isProgressRecordRemoved(record)) {
+        const removedAt = record.removedAt ?? record.updatedAt;
+        await transaction.runAsync(
+          `INSERT INTO progress_sync_tombstones (identity, record_json, removed_at)
+           VALUES (?, ?, ?)
+           ON CONFLICT(identity) DO UPDATE SET
+             record_json = CASE
+               WHEN excluded.removed_at >= progress_sync_tombstones.removed_at
+                 THEN excluded.record_json
+               ELSE progress_sync_tombstones.record_json
+             END,
+             removed_at = MAX(progress_sync_tombstones.removed_at, excluded.removed_at)`,
+          record.identity,
+          JSON.stringify(record),
+          removedAt
+        );
+        for (const row of matches.values()) {
+          await transaction.runAsync(
+            'DELETE FROM progress_sync_items WHERE book_key = ?',
+            row.book_key
+          );
+          await transaction.runAsync(
+            "DELETE FROM reading_progress WHERE book_key = ? AND source = 'cloud'",
+            row.book_key
+          );
+          await transaction.runAsync(
+            `DELETE FROM catalog_books
+             WHERE book_key = ?
+               AND book_key NOT IN (SELECT book_key FROM collections)
+               AND book_key NOT IN (SELECT book_key FROM local_files)
+               AND book_key NOT IN (SELECT book_key FROM moonreader_items)
+               AND book_key NOT IN (SELECT book_key FROM progress_sync_items)`,
+            row.book_key
+          );
+        }
+        updated += 1;
+        continue;
+      }
+      const matchedTombstoneIdentities = new Set<string>();
+      for (const alias of [record.identity, ...record.aliases]) {
+        for (const identity of tombstoneIdentitiesByAlias.get(alias) ?? []) {
+          matchedTombstoneIdentities.add(identity);
+        }
+      }
+      for (const identity of matchedTombstoneIdentities) {
+        await transaction.runAsync(
+          'DELETE FROM progress_sync_tombstones WHERE identity = ?',
+          identity
+        );
       }
       if (!matches.size) {
         const book = progressSyncBook(record);
@@ -1046,6 +1143,84 @@ export async function applyProgressSyncRecords(
     }
   });
   return updated;
+}
+
+export async function removeProgressSyncBook(book: LibraryBook): Promise<void> {
+  const database = await getLibraryDatabase();
+  const rows = await progressSnapshotRows(database);
+  const identity = bookIdentity(book.title, book.author);
+  const aliases = new Set([identity, ...syncAliases(book)]);
+  const matches = rows.filter((row) => {
+    if (row.book_key === book.key) return true;
+    const rowBook = parseBook(row.book_json);
+    const rowRecord = rowProgressRecord(row);
+    const rowAliases = [
+      row.sync_identity ?? '',
+      bookIdentity(rowBook.title, rowBook.author),
+      ...syncAliases(rowBook),
+      ...(rowRecord?.aliases ?? []),
+    ].filter(Boolean);
+    return rowRecord?.identity === identity || rowAliases.some((alias) => aliases.has(alias));
+  });
+  const matchedRecord = matches
+    .map(rowProgressRecord)
+    .find((record): record is ProgressSyncRecord => !!record);
+  const updatedAt =
+    matchedRecord?.updatedAt ?? Math.max(book.lastReadAt ?? 0, book.addedAt ?? 0, 1);
+  // A removal is a sync event. It must be at least as new as the record it
+  // removes, including when another device's clock is slightly ahead.
+  const removedAt = Math.max(Date.now(), updatedAt);
+  const tombstone: ProgressSyncRecord = {
+    identity: matchedRecord?.identity ?? identity,
+    aliases: [...new Set([...(matchedRecord?.aliases ?? []), ...aliases])].sort(),
+    title: matchedRecord?.title ?? book.title,
+    author: matchedRecord?.author ?? book.author,
+    format: matchedRecord?.format ?? book.format ?? book.local?.format ?? '',
+    progress: matchedRecord?.progress ?? Math.max(0, Math.min(100, book.progress ?? 0)),
+    isRead: matchedRecord?.isRead ?? !!book.isRead,
+    readingTimeMs: matchedRecord?.readingTimeMs ?? book.readingTimeMs,
+    wordsRead: matchedRecord?.wordsRead ?? book.wordsRead,
+    lastReadAt: matchedRecord?.lastReadAt ?? book.lastReadAt,
+    updatedAt,
+    removedAt,
+  };
+
+  await database.withExclusiveTransactionAsync(async (transaction) => {
+    await transaction.runAsync(
+      `INSERT INTO progress_sync_tombstones (identity, record_json, removed_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(identity) DO UPDATE SET
+         record_json = CASE
+           WHEN excluded.removed_at >= progress_sync_tombstones.removed_at
+             THEN excluded.record_json
+           ELSE progress_sync_tombstones.record_json
+         END,
+         removed_at = MAX(progress_sync_tombstones.removed_at, excluded.removed_at)`,
+      tombstone.identity,
+      JSON.stringify(tombstone),
+      removedAt
+    );
+    await transaction.runAsync(
+      'DELETE FROM progress_sync_items WHERE identity = ?',
+      tombstone.identity
+    );
+    for (const row of matches) {
+      await transaction.runAsync('DELETE FROM progress_sync_items WHERE book_key = ?', row.book_key);
+      await transaction.runAsync(
+        "DELETE FROM reading_progress WHERE book_key = ? AND source = 'cloud'",
+        row.book_key
+      );
+      await transaction.runAsync(
+        `DELETE FROM catalog_books
+         WHERE book_key = ?
+           AND book_key NOT IN (SELECT book_key FROM collections)
+           AND book_key NOT IN (SELECT book_key FROM local_files)
+           AND book_key NOT IN (SELECT book_key FROM moonreader_items)
+           AND book_key NOT IN (SELECT book_key FROM progress_sync_items)`,
+        row.book_key
+      );
+    }
+  });
 }
 
 export async function invalidateCatalogMetadata(bookKey: string): Promise<void> {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
 import { BookGrid, BookGridSkeleton, GridLoadingMore } from '@/components/book-grid';
+import { colors } from '@/components/app-ui';
 import { toDiscoveryBook } from '@/components/poster';
 import {
   getSubjectPage,
@@ -12,7 +13,7 @@ import {
 } from '@/lib/openlibrary';
 
 const PAGE_SIZE = 48;
-const BG = '#0b0b0f';
+const BG = colors.background;
 
 export default function CategoryScreen() {
   const router = useRouter();
@@ -109,7 +110,7 @@ export default function CategoryScreen() {
     <View className="items-center gap-2 py-5">
       <Text className="text-xs text-red-400">{error}</Text>
       <Pressable onPress={loadMore}>
-        <Text className="text-xs font-semibold text-[#8b7cf6]">Retry</Text>
+        <Text className="text-xs font-semibold" style={{ color: colors.accent }}>Retry</Text>
       </Pressable>
     </View>
   ) : null;
@@ -121,11 +122,17 @@ export default function CategoryScreen() {
           onPress={goBack}
           accessibilityLabel="Go back"
           accessibilityRole="button"
-          className="h-10 w-10 rounded-full items-center justify-center bg-[#17171c]"
+          className="h-10 w-10 shrink-0 rounded-full items-center justify-center bg-[#17171c]"
         >
           <Feather name="chevron-left" color="#d4d4d8" size={21} />
         </Pressable>
-        <Text className="text-lg font-semibold text-neutral-100">{title || subject}</Text>
+        <Text
+          numberOfLines={1}
+          ellipsizeMode="tail"
+          className="min-w-0 flex-1 text-lg font-semibold text-neutral-100"
+        >
+          {title || subject}
+        </Text>
       </View>
 
       {loading ? (
@@ -134,7 +141,7 @@ export default function CategoryScreen() {
         <View className="flex-1 items-center justify-center gap-2 px-8">
           <Text className="text-sm text-red-400 text-center">{error}</Text>
           <Pressable onPress={loadFirstPage}>
-            <Text className="text-sm font-semibold text-[#8b7cf6]">Retry</Text>
+            <Text className="text-sm font-semibold" style={{ color: colors.accent }}>Retry</Text>
           </Pressable>
         </View>
       ) : (

@@ -4,8 +4,8 @@ import type {
   ExtensionConfigValue,
   ExtensionManifest,
   ExtensionResourceName,
-} from '@readoi/extension-protocol';
-import type { InstalledExtension } from '@readoi/extension-runtime';
+} from '@tomeio/extension-protocol';
+import type { InstalledExtension } from '@tomeio/extension-runtime';
 import {
   useEffect,
   useMemo,
@@ -28,9 +28,11 @@ import {
   AppDialog,
   colors,
   FilterChip,
+  MOBILE_PAGE_GUTTER,
   PillButton,
   SearchField,
   SelectField,
+  usePageBottomPadding,
 } from '@/components/app-ui';
 import { useExtensions } from '@/context/extensions-context';
 
@@ -72,21 +74,21 @@ const BRANDING: Record<string, ExtensionBranding> = {
     color: '#f4f1e8',
     icon: 'book-open',
     mark: 'OL',
-    logo: require('../../assets/images/extensions/open-library.png'),
+    logo: require('../../../assets/images/extensions/open-library.png'),
     logoScale: 0.88,
   },
   'org.readoi.internet-archive': {
     color: '#f2f2f2',
     icon: 'archive',
     mark: 'IA',
-    logo: require('../../assets/images/extensions/internet-archive.png'),
+    logo: require('../../../assets/images/extensions/internet-archive.png'),
     logoScale: 0.68,
   },
   'org.readoi.project-gutenberg': {
     color: '#dce8ec',
     icon: 'feather',
     mark: 'PG',
-    logo: require('../../assets/images/extensions/project-gutenberg.jpg'),
+    logo: require('../../../assets/images/extensions/project-gutenberg.jpg'),
     logoScale: 0.94,
   },
   'community.readoi.zlibrary': { color: '#8a3945', icon: 'book', mark: 'Z' },
@@ -381,12 +383,13 @@ function ConfigurationSheet({
           <Pressable
             onPress={save}
             disabled={saving}
-            className="mt-1 h-12 rounded-xl bg-[#8b7cf6] items-center justify-center disabled:opacity-50"
+            className="mt-1 h-12 rounded-xl items-center justify-center disabled:opacity-50"
+            style={{ backgroundColor: colors.accent }}
           >
             {saving ? (
-              <ActivityIndicator color="white" />
+              <ActivityIndicator color={colors.onAccent} />
             ) : (
-              <Text className="font-semibold text-white">Save configuration</Text>
+              <Text className="font-semibold" style={{ color: colors.onAccent }}>Save configuration</Text>
             )}
           </Pressable>
         </ScrollView>
@@ -457,6 +460,7 @@ function FilterDialog({
 export default function ExtensionsScreen() {
   const extensions = useExtensions();
   const { width } = useWindowDimensions();
+  const bottomPadding = usePageBottomPadding(42);
   const wide = width >= 1050;
   const [scope, setScope] = useState<ScopeFilter>('all');
   const [resource, setResource] = useState<ResourceFilter>('all');
@@ -519,9 +523,9 @@ export default function ExtensionsScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
-          paddingHorizontal: wide ? 24 : 18,
-          paddingTop: wide ? 32 : 20,
-          paddingBottom: 42,
+          paddingHorizontal: wide ? 24 : MOBILE_PAGE_GUTTER,
+          paddingTop: wide ? 32 : 12,
+          paddingBottom: bottomPadding,
         }}
       >
         <View
@@ -620,7 +624,7 @@ export default function ExtensionsScreen() {
       >
         <Text className="mb-4 text-sm leading-5 text-neutral-400">
           Paste a trusted GitHub repository or manifest URL. Third-party add-ons are not reviewed
-          or browsable inside Readio.
+          or browsable inside Tomeio.
         </Text>
         <TextInput
           value={repositoryUrl}

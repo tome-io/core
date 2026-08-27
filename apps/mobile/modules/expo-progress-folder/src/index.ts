@@ -45,7 +45,7 @@ export function hasNativeProgressFolder(): boolean {
 function requireProgressFolderModule(): ProgressFolderNativeModule {
   if (!nativeModule) {
     throw new Error(
-      'Google Drive progress sync requires the installed Readio development build. Run `bun run android` from the repository root.'
+      'Google Drive progress sync requires the installed Tomeio development build. Run `bun run android` from the repository root.'
     );
   }
   return nativeModule;

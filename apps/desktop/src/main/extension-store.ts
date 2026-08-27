@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import type {
   ExtensionRegistryStore,
   InstalledExtension,
-} from '@readoi/extension-runtime';
+} from '@tomeio/extension-runtime';
 
 export class JsonExtensionStore implements ExtensionRegistryStore {
   private readonly path: string;

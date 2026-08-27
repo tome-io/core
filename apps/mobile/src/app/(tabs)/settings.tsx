@@ -1,6 +1,7 @@
 import { Feather } from '@expo/vector-icons';
-import type { ExtensionManifest } from '@readoi/extension-protocol';
-import { useMemo, useRef, useState } from 'react';
+import { Image } from 'expo-image';
+import type { ExtensionManifest } from '@tomeio/extension-protocol';
+import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -21,26 +22,60 @@ import {
   SelectField,
   SettingsOption,
   SettingsSection,
+  usePageBottomPadding,
+  usePageGutter,
 } from '@/components/app-ui';
 import { useExtensions } from '@/context/extensions-context';
-import { useLibrary } from '@/context/library-context';
+import {
+  useLibraryActions,
+  useLibrarySyncStatus,
+} from '@/context/library-context';
 import { useSettings } from '@/context/settings-context';
 import { isSafLocation, pickDownloadFolder } from '@/lib/download';
 import { beginFolderPicker, endFolderPicker } from '@/lib/folder-picker-lock';
+import {
+  getNativeLauncherIcon,
+  hasNativeLauncherIcon,
+  setNativeLauncherIcon,
+  type LauncherIcon,
+} from '@/lib/launcher-icon';
 import { validateProgressFolder } from '@/lib/progress-folder-provider';
 import { forgetProgressSyncFolder } from '@/lib/progress-sync';
 
 type ProviderRole = 'search' | 'acquisition';
-type SettingsSectionId = 'providers' | 'library' | 'sync';
+type SettingsSectionId = 'appearance' | 'providers' | 'library' | 'sync';
 type LocationSetting =
   | 'localLibraryLocation'
   | 'moonReaderBackupLocation'
   | 'progressSyncLocation';
 
 const SECTIONS: { id: SettingsSectionId; label: string }[] = [
+  ...(Platform.OS === 'android'
+    ? [{ id: 'appearance' as const, label: 'Appearance' }]
+    : []),
   { id: 'providers', label: 'Providers' },
   { id: 'library', label: 'Library' },
   { id: 'sync', label: 'Progress sync' },
+];
+
+const LAUNCHER_ICONS: {
+  id: LauncherIcon;
+  label: string;
+  detail: string;
+  source: number;
+}[] = [
+  {
+    id: 'full',
+    label: 'Full colour',
+    detail: 'The complete orange Tomeio artwork.',
+    source: require('../../../assets/images/icon.png'),
+  },
+  {
+    id: 'monochrome',
+    label: 'Monochrome',
+    detail: 'The simplified book mark on a golden background.',
+    source: require('../../../assets/images/android-icon-monochrome.png'),
+  },
 ];
 
 function SettingsMenu({
@@ -73,7 +108,7 @@ function SettingsMenu({
       })}
       <View className="flex-1" />
       <Text className="px-6 text-xs" style={{ color: colors.textMuted, opacity: 0.45 }}>
-        Readio
+        Tomeio
       </Text>
     </View>
   );
@@ -136,18 +171,93 @@ function ProviderPicker({
   );
 }
 
+function LauncherIconPicker({
+  visible,
+  selected,
+  busy,
+  onSelect,
+  onClose,
+}: {
+  visible: boolean;
+  selected: LauncherIcon;
+  busy: boolean;
+  onSelect: (icon: LauncherIcon) => void;
+  onClose: () => void;
+}) {
+  return (
+    <AppDialog visible={visible} title="App icon" onClose={onClose}>
+      <View className="gap-2">
+        {LAUNCHER_ICONS.map((option) => {
+          const active = option.id === selected;
+          return (
+            <Pressable
+              key={option.id}
+              onPress={() => onSelect(option.id)}
+              disabled={busy}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: active, disabled: busy }}
+              className="min-h-20 flex-row items-center gap-4 border px-4 py-3 active:opacity-75 disabled:opacity-50"
+              style={{
+                borderRadius: 16,
+                borderColor: active ? colors.accent : colors.border,
+                backgroundColor: active ? colors.accentMuted : colors.surfaceRaised,
+              }}
+            >
+              <View
+                className="h-14 w-14 overflow-hidden rounded-2xl"
+                style={{
+                  backgroundColor: option.id === 'monochrome' ? '#FFB511' : colors.surface,
+                }}
+              >
+                <Image
+                  source={option.source}
+                  contentFit={option.id === 'monochrome' ? 'contain' : 'cover'}
+                  style={{ width: '100%', height: '100%' }}
+                />
+              </View>
+              <View className="flex-1">
+                <Text className="text-sm font-semibold" style={{ color: colors.text }}>
+                  {option.label}
+                </Text>
+                <Text className="mt-1 text-xs" style={{ color: colors.textMuted }}>
+                  {option.detail}
+                </Text>
+              </View>
+              {busy && active ? (
+                <ActivityIndicator size="small" color={colors.accent} />
+              ) : (
+                <Feather
+                  name={active ? 'check-circle' : 'circle'}
+                  size={20}
+                  color={active ? colors.accent : colors.textMuted}
+                />
+              )}
+            </Pressable>
+          );
+        })}
+      </View>
+      <Text className="mt-4 text-xs leading-5" style={{ color: colors.textMuted }}>
+        Android launchers can take a few seconds to refresh the home-screen icon. System themed
+        icons may still apply the wallpaper palette.
+      </Text>
+    </AppDialog>
+  );
+}
+
 function FolderField({
   location,
   emptyLabel,
   onChoose,
   onReset,
   resetLabel,
+  resetIcon,
 }: {
   location: string | null;
   emptyLabel: string;
   onChoose: () => void;
   onReset?: () => void;
   resetLabel: string;
+  resetIcon: ComponentProps<typeof Feather>['name'];
 }) {
   const label = !location
     ? emptyLabel
@@ -155,14 +265,10 @@ function FolderField({
       ? decodeURIComponent(location.split('/').pop() || location)
       : location;
   return (
-    <View className="gap-1.5">
+    <View className="gap-2">
       <SelectField label={label} icon="folder" onPress={onChoose} />
       {onReset ? (
-        <Pressable onPress={onReset} className="self-end px-3 py-1.5 active:opacity-70">
-          <Text className="text-xs font-medium" style={{ color: colors.accent }}>
-            {resetLabel}
-          </Text>
-        </Pressable>
+        <PillButton label={resetLabel} icon={resetIcon} variant="overlay" onPress={onReset} />
       ) : null}
     </View>
   );
@@ -170,16 +276,23 @@ function FolderField({
 
 export default function SettingsScreen() {
   const { width } = useWindowDimensions();
+  const gutter = usePageGutter();
+  const bottomPadding = usePageBottomPadding(54);
   const showMenu = width >= 800;
   const availableSectionWidth = width - (width >= 700 ? 76 : 0) - (showMenu ? 360 : 48);
   const compactOptions = availableSectionWidth < 560;
   const scrollRef = useRef<ScrollView>(null);
   const sectionOffsets = useRef<Partial<Record<SettingsSectionId, number>>>({});
-  const [selectedSection, setSelectedSection] = useState<SettingsSectionId>('providers');
+  const [selectedSection, setSelectedSection] = useState<SettingsSectionId>(SECTIONS[0].id);
   const [providerPicker, setProviderPicker] = useState<ProviderRole | null>(null);
+  const [launcherIconPicker, setLauncherIconPicker] = useState(false);
+  const [launcherIcon, setLauncherIcon] = useState<LauncherIcon>('full');
+  const [launcherIconBusy, setLauncherIconBusy] = useState(false);
+  const [launcherIconError, setLauncherIconError] = useState<string | null>(null);
   const extensions = useExtensions();
   const { settings, update } = useSettings();
-  const { cloudLastSyncedAt, cloudSyncing, syncCloudProgress } = useLibrary();
+  const { cloudLastSyncedAt, cloudSyncing } = useLibrarySyncStatus();
+  const { syncCloudProgress } = useLibraryActions();
 
   const enabledManifests = useMemo(
     () => [
@@ -212,6 +325,18 @@ export default function SettingsScreen() {
   const selectedAcquisition = acquisitionProviders.find(
     (manifest) => manifest.id === extensions.acquisitionExtensionId
   );
+
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !hasNativeLauncherIcon()) return;
+    getNativeLauncherIcon()
+      .then((icon) => {
+        setLauncherIcon(icon);
+        setLauncherIconError(null);
+      })
+      .catch((cause) => {
+        setLauncherIconError(cause instanceof Error ? cause.message : String(cause));
+      });
+  }, []);
 
   const scrollToSection = (section: SettingsSectionId) => {
     setSelectedSection(section);
@@ -277,6 +402,29 @@ export default function SettingsScreen() {
     }
   };
 
+  const chooseLauncherIcon = async (icon: LauncherIcon) => {
+    if (icon === launcherIcon) {
+      setLauncherIconPicker(false);
+      return;
+    }
+    setLauncherIconBusy(true);
+    try {
+      const selected = await setNativeLauncherIcon(icon);
+      setLauncherIcon(selected);
+      setLauncherIconError(null);
+      setLauncherIconPicker(false);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setLauncherIconError(message);
+      Alert.alert(
+        'Could not change app icon',
+        message
+      );
+    } finally {
+      setLauncherIconBusy(false);
+    }
+  };
+
   const syncProgressNow = async () => {
     try {
       await syncCloudProgress();
@@ -295,13 +443,41 @@ export default function SettingsScreen() {
         showsVerticalScrollIndicator={false}
         className="flex-1"
         contentContainerStyle={{
-          paddingLeft: showMenu ? 48 : 24,
-          paddingRight: 24,
-          paddingBottom: 54,
+          paddingLeft: showMenu ? 48 : gutter,
+          paddingRight: gutter,
+          paddingBottom: bottomPadding,
         }}
       >
+        {Platform.OS === 'android' ? (
+          <SettingsSection
+            title="Appearance"
+            compact={compactOptions}
+            onLayout={(event) => {
+              sectionOffsets.current.appearance = event.nativeEvent.layout.y;
+            }}
+          >
+            <SettingsOption
+              compact={compactOptions}
+              label="App icon"
+              detail={
+                launcherIconError ?? 'Choose the Tomeio icon shown by the Android launcher.'
+              }
+            >
+              <SelectField
+                label={
+                  LAUNCHER_ICONS.find((option) => option.id === launcherIcon)?.label ??
+                  'Full colour'
+                }
+                icon="book-open"
+                onPress={() => setLauncherIconPicker(true)}
+              />
+            </SettingsOption>
+          </SettingsSection>
+        ) : null}
+
         <SettingsSection
           title="Providers"
+          compact={compactOptions}
           onLayout={(event) => {
             sectionOffsets.current.providers = event.nativeEvent.layout.y;
           }}
@@ -330,6 +506,7 @@ export default function SettingsScreen() {
 
         <SettingsSection
           title="Library"
+          compact={compactOptions}
           onLayout={(event) => {
             sectionOffsets.current.library = event.nativeEvent.layout.y;
           }}
@@ -349,6 +526,7 @@ export default function SettingsScreen() {
                   : undefined
               }
               resetLabel="Use app folder"
+              resetIcon="home"
             />
           </SettingsOption>
           <SettingsOption
@@ -366,12 +544,14 @@ export default function SettingsScreen() {
                   : undefined
               }
               resetLabel="Disconnect"
+              resetIcon="x"
             />
           </SettingsOption>
         </SettingsSection>
 
         <SettingsSection
           title="Progress sync"
+          compact={compactOptions}
           onLayout={(event) => {
             sectionOffsets.current.sync = event.nativeEvent.layout.y;
           }}
@@ -379,7 +559,7 @@ export default function SettingsScreen() {
           <SettingsOption
             compact={compactOptions}
             label="Sync folder"
-            detail="Use Google Drive directly or a local folder mirrored by FolderSync. Readio keeps the furthest progress from each device."
+            detail="Use Google Drive directly or a local folder mirrored by FolderSync. Tomeio keeps the furthest progress from each device."
           >
             <FolderField
               location={settings.progressSyncLocation}
@@ -391,6 +571,7 @@ export default function SettingsScreen() {
                   : undefined
               }
               resetLabel="Disable sync"
+              resetIcon="slash"
             />
           </SettingsOption>
           {settings.progressSyncLocation ? (
@@ -434,6 +615,15 @@ export default function SettingsScreen() {
         }
         onSelect={(id) => providerPicker && void setProvider(providerPicker, id)}
         onClose={() => setProviderPicker(null)}
+      />
+      <LauncherIconPicker
+        visible={launcherIconPicker}
+        selected={launcherIcon}
+        busy={launcherIconBusy}
+        onSelect={(icon) => void chooseLauncherIcon(icon)}
+        onClose={() => {
+          if (!launcherIconBusy) setLauncherIconPicker(false);
+        }}
       />
     </View>
   );

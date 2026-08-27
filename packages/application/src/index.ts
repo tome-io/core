@@ -3,8 +3,8 @@ import {
   type BookMetadata,
   type BookProgress,
   type MetadataCandidate,
-} from '@readoi/domain';
-import type { BookExtension, ExtensionPage, ExtensionQuery } from '@readoi/extension-protocol';
+} from '@tomeio/domain';
+import type { BookExtension, ExtensionPage, ExtensionQuery } from '@tomeio/extension-protocol';
 
 export interface BookRepository {
   list(): Promise<BookMetadata[]>;

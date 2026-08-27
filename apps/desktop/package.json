@@ -1,5 +1,5 @@
 {
-  "name": "@readoi/desktop",
+  "name": "@tomeio/desktop",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,11 +12,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@readoi/contracts": "workspace:*",
-    "@readoi/design": "workspace:*",
-    "@readoi/domain": "workspace:*",
-    "@readoi/extension-runtime": "workspace:*",
-    "@readoi/official-extensions": "workspace:*",
+    "@tomeio/contracts": "workspace:*",
+    "@tomeio/design": "workspace:*",
+    "@tomeio/domain": "workspace:*",
+    "@tomeio/extension-runtime": "workspace:*",
+    "@tomeio/official-extensions": "workspace:*",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },
@@ -33,13 +33,14 @@
   },
   "build": {
     "appId": "org.readoi.reader",
-    "productName": "Readio",
+    "productName": "Tomeio",
     "asar": true,
     "files": [
       "out/**/*",
       "package.json"
     ],
     "mac": {
+      "icon": "build/icon.png",
       "category": "public.app-category.books",
       "target": [
         "dmg",

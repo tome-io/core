@@ -1,11 +1,12 @@
 export {
+  isProgressRecordRemoved,
   mergeProgressRecords,
   PROGRESS_SYNC_KIND,
   PROGRESS_SYNC_VERSION,
-} from '@readoi/sync';
+} from '@tomeio/sync';
 
 export type {
   ProgressSyncDocument,
   ProgressSyncRecord,
   ProgressSyncVersion,
-} from '@readoi/sync';
+} from '@tomeio/sync';

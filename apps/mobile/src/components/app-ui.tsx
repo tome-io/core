@@ -1,5 +1,5 @@
 import { Feather } from '@expo/vector-icons';
-import { colors, radii } from '@readoi/design';
+import { colors, radii } from '@tomeio/design';
 import {
   KeyboardAvoidingView,
   Modal,
@@ -16,24 +16,44 @@ import type { ComponentProps, ReactNode } from 'react';
 
 export { colors, radii };
 
+export const MOBILE_PAGE_GUTTER = 12;
+export const WIDE_PAGE_GUTTER = 24;
+export const MOBILE_NAV_HEIGHT = 80;
+export const MOBILE_NAV_FADE_HEIGHT = 132;
+
+export function usePageGutter() {
+  const { width } = useWindowDimensions();
+  return width < 700 ? MOBILE_PAGE_GUTTER : WIDE_PAGE_GUTTER;
+}
+
+export function usePageBottomPadding(basePadding = 40) {
+  const { width } = useWindowDimensions();
+  return width < 700 ? MOBILE_NAV_HEIGHT + 24 : basePadding;
+}
+
 type FeatherName = ComponentProps<typeof Feather>['name'];
 
 export function SettingsSection({
   title,
   children,
   onLayout,
+  compact = false,
 }: {
   title: string;
   children: ReactNode;
   onLayout?: ComponentProps<typeof View>['onLayout'];
+  compact?: boolean;
 }) {
   return (
     <View
       onLayout={onLayout}
-      className="w-full border-b py-10"
+      className={`w-full border-b ${compact ? 'py-6' : 'py-10'}`}
       style={{ maxWidth: 560, borderBottomColor: colors.border }}
     >
-      <Text className="mb-8 text-[29px] font-light" style={{ color: colors.text }}>
+      <Text
+        className={`${compact ? 'mb-6' : 'mb-8'} text-[29px] font-light`}
+        style={{ color: colors.text }}
+      >
         {title}
       </Text>
       <View className="gap-6">{children}</View>
@@ -149,7 +169,7 @@ export function FilterChip({
       <Text
         className="text-xs"
         style={{
-          color: selected ? colors.text : colors.textMuted,
+          color: selected ? colors.onAccent : colors.textMuted,
           fontWeight: selected ? '600' : '500',
         }}
       >
@@ -186,8 +206,9 @@ export function SectionHeader({
   actionLabel?: string;
   onAction?: () => void;
 }) {
+  const gutter = usePageGutter();
   return (
-    <View className="mb-3 flex-row items-center px-6">
+    <View className="mb-3 flex-row items-center" style={{ paddingHorizontal: gutter }}>
       <Text
         numberOfLines={1}
         className="flex-1 pr-3 text-[15px] font-semibold uppercase tracking-[1.4px]"
@@ -221,6 +242,7 @@ export function PillButton({
         : variant === 'overlay'
           ? colors.surfaceRaised
           : 'transparent';
+  const foregroundColor = variant === 'accent' ? colors.onAccent : colors.text;
   return (
     <Pressable
       onPress={onPress}
@@ -233,8 +255,8 @@ export function PillButton({
         borderWidth: variant === 'outline' ? 1 : 0,
       }}
     >
-      {icon ? <Feather name={icon} size={18} color={colors.text} /> : null}
-      <Text className="text-sm font-semibold" style={{ color: colors.text }}>
+      {icon ? <Feather name={icon} size={18} color={foregroundColor} /> : null}
+      <Text className="text-sm font-semibold" style={{ color: foregroundColor }}>
         {label}
       </Text>
     </Pressable>

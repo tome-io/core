@@ -1,11 +1,10 @@
 import { Feather } from '@expo/vector-icons';
-import type { BookMetadata } from '@readoi/domain';
+import type { BookMetadata } from '@tomeio/domain';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Keyboard,
   Pressable,
-  ScrollView,
   Text,
   TextInput,
   useWindowDimensions,
@@ -14,13 +13,17 @@ import {
 
 import { BookGrid, BookGridSkeleton, GridLoadingMore } from '@/components/book-grid';
 import type { CardBook } from '@/components/book-card';
-import { colors, FilterChip } from '@/components/app-ui';
+import { colors, usePageGutter } from '@/components/app-ui';
+import {
+  CatalogOptionsDialog,
+  CatalogSelect,
+} from '@/components/catalog-toolbar';
 import { useExtensions } from '@/context/extensions-context';
 
 const SEARCH_DELAY_MS = 500;
 
 const FORMATS = [
-  { label: 'Any', value: '' },
+  { label: 'All', value: '' },
   { label: 'EPUB', value: 'epub' },
   { label: 'PDF', value: 'pdf' },
   { label: 'MOBI', value: 'mobi' },
@@ -55,11 +58,12 @@ export default function SearchScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ q?: string }>();
   const extensions = useExtensions();
+  const gutter = usePageGutter();
   const { width } = useWindowDimensions();
-  const wideHeader = width >= 900;
   const searchGeneration = useRef(0);
   const [query, setQuery] = useState(params.q ?? '');
   const [format, setFormat] = useState('');
+  const [formatPickerOpen, setFormatPickerOpen] = useState(false);
   const [books, setBooks] = useState<SearchBook[]>([]);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -68,6 +72,7 @@ export default function SearchScreen() {
   const [error, setError] = useState<string | null>(null);
   const [searchedFor, setSearchedFor] = useState('');
   const [searchedFormat, setSearchedFormat] = useState('');
+  const selectedFormat = FORMATS.find((option) => option.value === format) ?? FORMATS[0];
 
   useEffect(() => {
     const nextQuery = typeof params.q === 'string' ? params.q : '';
@@ -206,64 +211,69 @@ export default function SearchScreen() {
   return (
     <View className="flex-1" style={{ backgroundColor: colors.background }}>
       <View
-        className={wideHeader ? 'px-6 pt-4 pb-1 flex-row items-center gap-3' : 'px-6 pt-4 pb-1 gap-3'}
+        style={{
+          flexGrow: 0,
+          flexShrink: 0,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 12,
+          paddingTop: 12,
+          paddingBottom: 8,
+          paddingHorizontal: gutter,
+        }}
       >
-        <View className="flex-1 flex-row items-center gap-3">
-          <Pressable
-            onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}
-            accessibilityLabel="Back to home"
-            className="h-10 w-10 items-center justify-center rounded-full"
-            style={{ backgroundColor: colors.surfaceRaised }}
-          >
-            <Feather name="chevron-left" size={22} color={colors.textMuted} />
-          </Pressable>
-          <View
-            className="h-12 rounded-full flex-row items-center flex-1"
-            style={{ backgroundColor: colors.surfaceRaised }}
-          >
-            <TextInput
-              value={query}
-              onChangeText={setQuery}
-              onSubmitEditing={submitSearch}
-              returnKeyType="search"
-              autoFocus={!params.q}
-              placeholder="Search books, authors or ISBNs"
-              placeholderTextColor={colors.textMuted}
-              className="flex-1 h-12 pl-5 pr-2 text-[15px] font-medium text-white"
-            />
-            <Pressable
-              onPress={query.length ? clearSearch : submitSearch}
-              accessibilityLabel={query.length ? 'Clear search' : 'Search'}
-              accessibilityRole="button"
-              className="h-12 w-14 items-center justify-center"
-            >
-              <Feather
-                name={query.length ? 'x' : 'search'}
-                size={20}
-                color={colors.textMuted}
-              />
-            </Pressable>
-          </View>
-        </View>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ gap: 8 }}
-          style={wideHeader ? { flexGrow: 0, maxWidth: Math.min(470, width * 0.42) } : undefined}
+        <Pressable
+          onPress={() => router.dismissTo('/home')}
+          accessibilityLabel="Back to home"
+          className="h-12 w-12 shrink-0 items-center justify-center rounded-full"
+          style={{ backgroundColor: colors.surfaceRaised }}
         >
-          {FORMATS.map((item) => (
-            <FilterChip
-              key={item.label}
-              label={item.label}
-              selected={item.value === format}
-              onPress={() => setFormat(item.value)}
+          <Feather name="chevron-left" size={22} color={colors.textMuted} />
+        </Pressable>
+        <View
+          className="h-12 min-w-0 flex-1 flex-row items-center rounded-full"
+          style={{ backgroundColor: colors.surfaceRaised }}
+        >
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            onSubmitEditing={submitSearch}
+            returnKeyType="search"
+            autoFocus={!params.q}
+            placeholder="Search books, authors or ISBNs"
+            placeholderTextColor={colors.textMuted}
+            className="h-12 min-w-0 flex-1 pl-5 pr-2 text-[15px] font-medium text-white"
+          />
+          <Pressable
+            onPress={query.length ? clearSearch : submitSearch}
+            accessibilityLabel={query.length ? 'Clear search' : 'Search'}
+            accessibilityRole="button"
+            className="h-12 w-12 items-center justify-center"
+          >
+            <Feather
+              name={query.length ? 'x' : 'search'}
+              size={20}
+              color={colors.textMuted}
             />
-          ))}
-        </ScrollView>
+          </Pressable>
+        </View>
+        <CatalogSelect
+          label="Format"
+          value={selectedFormat.label}
+          onPress={() => setFormatPickerOpen(true)}
+          style={{ width: width >= 700 ? 148 : 112, flexShrink: 0 }}
+        />
       </View>
+      <CatalogOptionsDialog
+        visible={formatPickerOpen}
+        title="Format"
+        options={FORMATS}
+        selectedValue={format}
+        onSelect={setFormat}
+        onClose={() => setFormatPickerOpen(false)}
+      />
 
-      {loading ? (
+      {loading && books.length === 0 ? (
         <BookGridSkeleton />
       ) : error && books.length === 0 ? (
         <View className="flex-1 items-center justify-center px-8">

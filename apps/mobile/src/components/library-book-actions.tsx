@@ -1,68 +1,125 @@
 import { Feather } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { ActivityIndicator, Modal, Pressable, Text, useWindowDimensions, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Modal,
+  Platform,
+  Pressable,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { colors } from '@/components/app-ui';
 import type { LibraryBook } from '@/lib/library';
 
-export type LibraryAction = 'open' | 'delete' | 'read' | 'metadata';
+export type LibraryAction =
+  | 'moon'
+  | 'openWith'
+  | 'files'
+  | 'delete'
+  | 'remove'
+  | 'read'
+  | 'metadata';
 
 interface ActionsProps {
   book: LibraryBook;
   busyAction?: LibraryAction | null;
   compact?: boolean;
-  onOpen: () => void;
+  moonReaderConfigured: boolean;
+  onOpenMoonReader: () => void;
+  onOpenWith: () => void;
+  onShowInFiles: () => void;
   onDelete: () => void;
+  onRemove: () => void;
   onMarkRead: () => void;
   onRefreshMetadata: () => void;
 }
-
-const ACTIONS: {
-  key: LibraryAction;
-  label: string;
-  icon: keyof typeof Feather.glyphMap;
-  destructive?: boolean;
-}[] = [
-  { key: 'open', label: 'Open in Moon+ Reader', icon: 'book-open' },
-  { key: 'delete', label: 'Delete local file', icon: 'trash-2', destructive: true },
-  { key: 'read', label: 'Mark as read', icon: 'check-circle' },
-  { key: 'metadata', label: 'Refresh metadata', icon: 'refresh-cw' },
-];
 
 export function LibraryBookActions({
   book,
   busyAction = null,
   compact = false,
-  onOpen,
+  moonReaderConfigured,
+  onOpenMoonReader,
+  onOpenWith,
+  onShowInFiles,
   onDelete,
+  onRemove,
   onMarkRead,
   onRefreshMetadata,
 }: ActionsProps) {
-  const hasLocalFile = !!book.local?.uri && book.moonReader?.availableLocally !== false;
-  const safDeleteUnavailable = book.local?.uri.startsWith('content:') === true;
+  const hasLocalFile =
+    !!(book.local?.uri ?? book.fileUri) && book.moonReader?.availableLocally !== false;
+  const canDeleteLocalFile = !!book.local?.uri && !book.local.uri.startsWith('content:');
+  const canRemoveSyncedItem =
+    !hasLocalFile &&
+    (book.key.startsWith('progress:') ||
+      (!!book.moonReader && typeof book.progress === 'number'));
+  const actions: {
+    key: LibraryAction;
+    label: string;
+    icon: keyof typeof Feather.glyphMap;
+    destructive?: boolean;
+  }[] = [
+    ...(Platform.OS === 'android' && moonReaderConfigured && hasLocalFile
+      ? [{ key: 'moon' as const, label: 'Open in Moon+ Reader', icon: 'book-open' as const }]
+      : []),
+    ...(hasLocalFile
+      ? [
+          ...(Platform.OS !== 'web'
+            ? [
+                {
+                  key: 'openWith' as const,
+                  label: 'Open with another app',
+                  icon: 'share-2' as const,
+                },
+              ]
+            : []),
+          ...(Platform.OS === 'android'
+            ? [{ key: 'files' as const, label: 'Show in Files', icon: 'folder' as const }]
+            : []),
+          ...(canDeleteLocalFile
+            ? [
+                {
+                  key: 'delete' as const,
+                  label: 'Delete local file',
+                  icon: 'trash-2' as const,
+                  destructive: true,
+                },
+              ]
+            : []),
+        ]
+      : []),
+    ...(canRemoveSyncedItem
+      ? [
+          {
+            key: 'remove' as const,
+            label: 'Remove from Tomeio',
+            icon: 'trash-2' as const,
+            destructive: true,
+          },
+        ]
+      : []),
+    { key: 'read', label: book.isRead ? 'Finished' : 'Mark as finished', icon: 'check-circle' },
+    { key: 'metadata', label: 'Refresh metadata', icon: 'refresh-cw' },
+  ];
   const handlers: Record<LibraryAction, () => void> = {
-    open: onOpen,
+    moon: onOpenMoonReader,
+    openWith: onOpenWith,
+    files: onShowInFiles,
     delete: onDelete,
+    remove: onRemove,
     read: onMarkRead,
     metadata: onRefreshMetadata,
   };
 
   return (
     <View className={compact ? 'flex-row flex-wrap gap-2' : 'gap-2'}>
-      {ACTIONS.map((action) => {
-        const disabled =
-          !!busyAction ||
-          (action.key === 'open' && !hasLocalFile) ||
-          (action.key === 'delete' && (!hasLocalFile || safDeleteUnavailable)) ||
-          (action.key === 'read' && book.isRead === true);
-        const subtitle =
-          action.key === 'delete' && safDeleteUnavailable
-            ? 'Use the device file manager'
-            : action.key === 'open' && !hasLocalFile
-              ? 'Download required'
-              : action.key === 'read' && book.isRead
-                ? 'Already read'
-                : '';
+      {actions.map((action) => {
+        const disabled = !!busyAction || (action.key === 'read' && book.isRead === true);
+        const subtitle = action.key === 'read' && book.isRead ? 'Already finished' : '';
         const color = action.destructive ? '#f87171' : '#d4d4d8';
 
         return (
@@ -76,7 +133,7 @@ export function LibraryBookActions({
             style={compact ? { minWidth: 164, flexGrow: 1 } : undefined}
           >
             {busyAction === action.key ? (
-              <ActivityIndicator size="small" color="#8b7cf6" />
+              <ActivityIndicator size="small" color={colors.accent} />
             ) : (
               <Feather name={action.icon} size={17} color={color} />
             )}

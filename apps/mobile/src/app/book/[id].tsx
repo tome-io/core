@@ -1,5 +1,5 @@
 import { Feather } from '@expo/vector-icons';
-import type { BookAcquisition, BookMetadata } from '@readoi/domain';
+import type { BookAcquisition, BookMetadata } from '@tomeio/domain';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -19,10 +19,16 @@ import {
   LibraryBookActions,
   type LibraryAction,
 } from '@/components/library-book-actions';
+import { colors, usePageBottomPadding } from '@/components/app-ui';
 import { RatingChip } from '@/components/rating-chip';
 import { useExtensions } from '@/context/extensions-context';
-import { useLibrary } from '@/context/library-context';
+import {
+  useLibraryActions,
+  useLibraryCatalog,
+  useLibraryReadingList,
+} from '@/context/library-context';
 import { useSettings } from '@/context/settings-context';
+import { openBookWithAnotherApp, showBookInFiles } from '@/lib/book-file-actions';
 import { bookFilename, downloadBook, type DownloadProgress } from '@/lib/download';
 import {
   fromDiscoveryBook,
@@ -88,6 +94,7 @@ export default function BookDetailScreen() {
   const { acquisitionExtensionId, load: loadExtension } = extensions;
   const { width } = useWindowDimensions();
   const compactLayout = width < 700;
+  const bottomPadding = usePageBottomPadding(48);
   const params = useLocalSearchParams<{
     id: string;
     extensionId?: string;
@@ -98,15 +105,16 @@ export default function BookDetailScreen() {
     moon?: string;
   }>();
   const { settings } = useSettings();
+  const { downloaded } = useLibraryCatalog();
+  const { readingList } = useLibraryReadingList();
   const {
     deleteLocalBook,
-    downloaded,
-    isOnReadingList,
     markAsRead,
     recordDownload,
+    removeSyncedBook,
     refreshBookMetadata,
     toggleReadingList,
-  } = useLibrary();
+  } = useLibraryActions();
 
   const extensionBook = useMemo(
     () => parseParam<BookMetadata>(params.extensionBook),
@@ -332,7 +340,9 @@ export default function BookDetailScreen() {
   const [descriptionOpen, setDescriptionOpen] = useState(false);
   const [failedCovers, setFailedCovers] = useState<string[]>([]);
   const [phases, setPhases] = useState<Record<string, Phase>>({});
-  const onReadingList = readingListBook ? isOnReadingList(readingListBook.key) : false;
+  const onReadingList = readingListBook
+    ? readingList.some((book) => book.key === readingListBook.key)
+    : false;
 
   const toggleSaved = useCallback(async () => {
     if (!readingListBook || libraryBusy) return;
@@ -432,7 +442,7 @@ export default function BookDetailScreen() {
       <View className="flex-1 items-center justify-center gap-3 bg-[#0b0b0f]">
         <Text className="text-sm text-neutral-400">Book details unavailable.</Text>
         <Pressable onPress={goBack}>
-          <Text className="text-sm font-semibold text-[#8b7cf6]">Go back</Text>
+          <Text className="text-sm font-semibold" style={{ color: colors.accent }}>Go back</Text>
         </Pressable>
       </View>
     );
@@ -470,7 +480,7 @@ export default function BookDetailScreen() {
             : localBook?.progress
               ? `${Math.round(localBook.progress)}% read`
               : '',
-          'Local file',
+          localBook?.local?.uri || localBook?.fileUri ? 'Local file' : 'Synced progress',
         ].filter(Boolean);
   const activeCover = coverUrl && !failedCovers.includes(coverUrl) ? coverUrl : null;
   const coverWidth = compactLayout ? Math.min(180, Math.max(144, width * 0.42)) : 128;
@@ -485,7 +495,7 @@ export default function BookDetailScreen() {
         <Image
           source={{ uri: activeCover }}
           style={{ width: '100%', height: '100%' }}
-          contentFit="contain"
+          contentFit="cover"
           cachePolicy="memory-disk"
           onError={() => setFailedCovers((current) => [...current, activeCover])}
         />
@@ -496,15 +506,29 @@ export default function BookDetailScreen() {
       )}
       <RatingChip rating={rating} />
       {typeof progress === 'number' && progress > 0 ? (
-        <View className="absolute left-2 right-2 bottom-2 h-1.5 overflow-hidden rounded-full bg-black/70">
+        <>
+          <View className="absolute bottom-0 left-0 right-0 h-1.5 bg-black/80">
+            <View
+              className="h-full"
+              style={{
+                width: `${Math.max(0, Math.min(100, progress))}%`,
+                backgroundColor: trackedBook?.isRead ? colors.success : colors.accent,
+              }}
+            />
+          </View>
           <View
-            className="h-full rounded-full"
+            className="absolute bottom-3 left-1.5 rounded-md px-1.5 py-1"
             style={{
-              width: `${Math.max(0, Math.min(100, progress))}%`,
-              backgroundColor: trackedBook?.isRead ? '#059669' : '#8b7cf6',
+              backgroundColor: trackedBook?.isRead
+                ? colors.success
+                : colors.accentMuted,
             }}
-          />
-        </View>
+          >
+            <Text className="text-[9px] font-bold text-white">
+              {trackedBook?.isRead ? 'Read' : `${Math.max(1, Math.round(progress))}%`}
+            </Text>
+          </View>
+        </>
       ) : null}
     </View>
   );
@@ -515,12 +539,12 @@ export default function BookDetailScreen() {
       disabled={libraryBusy}
       className={`${compactLayout ? 'h-11 mt-4 self-stretch' : 'h-9 px-3'} rounded-lg flex-row items-center justify-center gap-2 border disabled:opacity-60`}
       style={{
-        backgroundColor: onReadingList ? 'rgba(139,124,246,0.16)' : 'transparent',
-        borderColor: onReadingList ? '#8b7cf6' : '#34343d',
+        backgroundColor: onReadingList ? colors.accentMuted : 'transparent',
+        borderColor: onReadingList ? colors.accent : colors.border,
       }}
     >
       {libraryBusy ? (
-        <ActivityIndicator color="#8b7cf6" size="small" />
+        <ActivityIndicator color={colors.accent} size="small" />
       ) : (
         <Feather name={onReadingList ? 'bookmark' : 'plus'} color="#b4b4bf" size={15} />
       )}
@@ -544,7 +568,10 @@ export default function BookDetailScreen() {
   const libraryActionBook = localBook ?? moonBook;
   return (
     <>
-      <ScrollView className="flex-1 bg-[#0b0b0f]" contentContainerClassName="pb-12">
+      <ScrollView
+        className="flex-1 bg-[#0b0b0f]"
+        contentContainerStyle={{ paddingBottom: bottomPadding }}
+      >
         <View className="h-16 px-4 flex-row items-center gap-3">
           <Pressable
             onPress={goBack}
@@ -604,7 +631,7 @@ export default function BookDetailScreen() {
             </Text>
             {options === null && !optionsError ? (
               <View className="flex-row items-center gap-3 py-4">
-                <ActivityIndicator color="#8b7cf6" size="small" />
+                <ActivityIndicator color={colors.accent} size="small" />
                 <Text className="text-sm text-neutral-400">Loading provider options…</Text>
               </View>
             ) : null}
@@ -634,21 +661,51 @@ export default function BookDetailScreen() {
               compact
               book={libraryActionBook}
               busyAction={busyAction}
-              onOpen={() => void runLibraryAction('open', () => openInMoonReader(libraryActionBook))}
+              moonReaderConfigured={!!settings.moonReaderBackupLocation}
+              onOpenMoonReader={() =>
+                void runLibraryAction('moon', () => openInMoonReader(libraryActionBook))
+              }
+              onOpenWith={() =>
+                void runLibraryAction('openWith', () => openBookWithAnotherApp(libraryActionBook))
+              }
+              onShowInFiles={() =>
+                void runLibraryAction('files', () => showBookInFiles(libraryActionBook))
+              }
               onDelete={() => {
-                if (!localBook) return;
-                Alert.alert('Delete local file?', `This permanently deletes “${localBook.title}”.`, [
-                  { text: 'Cancel', style: 'cancel' },
-                  {
-                    text: 'Delete',
-                    style: 'destructive',
-                    onPress: () =>
-                      void runLibraryAction('delete', async () => {
-                        await deleteLocalBook(localBook);
-                        router.replace('/library');
-                      }),
-                  },
-                ]);
+                Alert.alert(
+                  'Delete local file?',
+                  `This permanently deletes “${libraryActionBook.title}”.`,
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Delete',
+                      style: 'destructive',
+                      onPress: () =>
+                        void runLibraryAction('delete', async () => {
+                          await deleteLocalBook(libraryActionBook);
+                          router.replace('/library');
+                        }),
+                    },
+                  ]
+                );
+              }}
+              onRemove={() => {
+                Alert.alert(
+                  'Remove synced book?',
+                  `Remove “${libraryActionBook.title}” from Tomeio on every synced device? Newer Moon+ Reader activity can add it again.`,
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Remove',
+                      style: 'destructive',
+                      onPress: () =>
+                        void runLibraryAction('remove', async () => {
+                          await removeSyncedBook(libraryActionBook);
+                          router.replace('/library');
+                        }),
+                    },
+                  ]
+                );
               }}
               onMarkRead={() => void runLibraryAction('read', () => markAsRead(libraryActionBook))}
               onRefreshMetadata={() =>
@@ -774,16 +831,17 @@ function AcquisitionRow({
         </View>
       ) : phase.kind === 'downloading' || phase.kind === 'resolving' ? (
         <View className="min-w-[76px] items-center gap-1">
-          <ActivityIndicator color="#8b7cf6" size="small" />
+          <ActivityIndicator color={colors.accent} size="small" />
           {progress !== null ? <Text className="text-[10px] text-neutral-400">{progress}%</Text> : null}
         </View>
       ) : (
         <Pressable
           onPress={onDownload}
-          className="h-10 rounded-xl bg-[#8b7cf6] px-4 flex-row items-center justify-center gap-2 active:opacity-80"
+          className="h-10 rounded-xl px-4 flex-row items-center justify-center gap-2 active:opacity-80"
+          style={{ backgroundColor: colors.accent }}
         >
-          <Feather name={acquisition.downloadUrl ? 'download' : 'external-link'} size={15} color="white" />
-          <Text className="text-xs font-semibold text-white">
+          <Feather name={acquisition.downloadUrl ? 'download' : 'external-link'} size={15} color={colors.onAccent} />
+          <Text className="text-xs font-semibold" style={{ color: colors.onAccent }}>
             {acquisition.downloadUrl ? 'Download' : 'Open'}
           </Text>
         </Pressable>

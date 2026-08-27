@@ -1,8 +1,11 @@
-# Readio
+# Tomeio
 
-Readio is a book discovery, download, and library companion inspired by Stremio.
-The repository is a Bun workspace containing the Expo mobile client, an Electron
+Tomeio is a book discovery, download, and library companion inspired by Stremio.
+This `tomeio/core` repository is a Bun workspace containing the Expo mobile client, an Electron
 macOS client, shared application packages, and bundled official source extensions.
+
+Compatibility-sensitive identifiers inherited from earlier releases—including
+`reado-extension.json`, `org.readoi.*`, and the desktop `window.readio` bridge—remain stable.
 
 ## Repository layout
 

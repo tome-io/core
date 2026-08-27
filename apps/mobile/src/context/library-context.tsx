@@ -1,4 +1,14 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 import * as FileSystem from 'expo-file-system/legacy';
 import { AppState } from 'react-native';
 
@@ -20,6 +30,7 @@ import {
   loadMoonReaderCatalog,
   loadProgressSyncCatalog,
   markCatalogBookRead,
+  removeProgressSyncBook,
 } from '@/lib/library-db';
 import { enrichIndexedLocalLibrary, indexLocalLibrary } from '@/lib/library-sync';
 import {
@@ -28,40 +39,115 @@ import {
 } from '@/lib/moon-reader-sync';
 import { synchronizeProgressFolder } from '@/lib/progress-sync';
 
-interface LibraryContextValue extends LibraryState {
+interface LibraryCatalogValue {
+  downloaded: LibraryBook[];
   ready: boolean;
+}
+
+interface LibraryReadingListValue {
+  readingList: LibraryBook[];
+  ready: boolean;
+}
+
+interface LibraryUiStatusValue {
   scanning: boolean;
-  cloudSyncing: boolean;
-  cloudLastSyncedAt: number | null;
   error: string | null;
   warning: string | null;
   dismissWarning: () => void;
   showWarning: (message: string) => void;
+}
+
+interface LibrarySyncStatusValue {
+  cloudSyncing: boolean;
+  cloudLastSyncedAt: number | null;
+}
+
+interface LibraryActionsValue {
   refreshLocalBooks: () => Promise<void>;
   syncCloudProgress: () => Promise<void>;
   refreshBookMetadata: (book: LibraryBook) => Promise<void>;
   markAsRead: (book: LibraryBook) => Promise<void>;
   deleteLocalBook: (book: LibraryBook) => Promise<void>;
+  removeSyncedBook: (book: LibraryBook) => Promise<void>;
   isOnReadingList: (key: string) => boolean;
   toggleReadingList: (book: LibraryBook) => Promise<boolean>;
   recordDownload: (book: LibraryBook, fileUri: string) => Promise<void>;
 }
 
-const LibraryContext = createContext<LibraryContextValue>({
-  ...EMPTY_LIBRARY,
+interface LibraryContextValue
+  extends LibraryCatalogValue,
+    LibraryReadingListValue,
+    LibraryUiStatusValue,
+    LibrarySyncStatusValue,
+    LibraryActionsValue {}
+
+function createBookBatcher(setBooks: Dispatch<SetStateAction<LibraryBook[]>>) {
+  let pending = new Map<string, LibraryBook>();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const flush = () => {
+    timer = null;
+    if (pending.size === 0) return;
+    const updates = pending;
+    pending = new Map();
+    setBooks((current) => {
+      let changed = false;
+      const next = current.map((item) => {
+        const updated = updates.get(item.key);
+        if (!updated || updated === item) return item;
+        changed = true;
+        return updated;
+      });
+      return changed ? next : current;
+    });
+  };
+
+  return {
+    update(book: LibraryBook) {
+      pending.set(book.key, book);
+      if (!timer) timer = setTimeout(flush, 120);
+    },
+    cancel() {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      pending = new Map();
+    },
+  };
+}
+
+function useBookBatcher(setBooks: Dispatch<SetStateAction<LibraryBook[]>>) {
+  const [batcher] = useState(() => createBookBatcher(setBooks));
+  return batcher;
+}
+
+const LibraryCatalogContext = createContext<LibraryCatalogValue>({
+  downloaded: [],
   ready: false,
+});
+const LibraryReadingListContext = createContext<LibraryReadingListValue>({
+  readingList: [],
+  ready: false,
+});
+const LibraryUiStatusContext = createContext<LibraryUiStatusValue>({
   scanning: false,
-  cloudSyncing: false,
-  cloudLastSyncedAt: null,
   error: null,
   warning: null,
   dismissWarning: () => {},
   showWarning: () => {},
+});
+const LibrarySyncStatusContext = createContext<LibrarySyncStatusValue>({
+  cloudSyncing: false,
+  cloudLastSyncedAt: null,
+});
+const LibraryActionsContext = createContext<LibraryActionsValue>({
   refreshLocalBooks: async () => {},
   syncCloudProgress: async () => {},
   refreshBookMetadata: async () => {},
   markAsRead: async () => {},
   deleteLocalBook: async () => {},
+  removeSyncedBook: async () => {},
   isOnReadingList: () => false,
   toggleReadingList: async () => false,
   recordDownload: async () => {},
@@ -97,6 +183,9 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
   const lastScanKey = useRef<string | null>(null);
   const pendingScan = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const pendingCloudSync = useRef<Promise<void> | null>(null);
+  const localBookBatcher = useBookBatcher(setLocalBooks);
+  const moonReaderBookBatcher = useBookBatcher(setMoonReaderBooks);
+  const progressSyncBookBatcher = useBookBatcher(setProgressSyncBooks);
 
   useEffect(() => {
     let active = true;
@@ -130,6 +219,9 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
             : Promise.resolve([]),
           loadProgressSyncCatalog(),
         ]);
+        localBookBatcher.cancel();
+        moonReaderBookBatcher.cancel();
+        progressSyncBookBatcher.cancel();
         setLocalBooks(syncedLocal);
         setMoonReaderBooks(syncedMoonReader);
         setProgressSyncBooks(syncedProgressBooks);
@@ -152,6 +244,9 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     pendingCloudSync.current = promise;
     return promise;
   }, [
+    localBookBatcher,
+    moonReaderBookBatcher,
+    progressSyncBookBatcher,
     settings.localLibraryLocation,
     settings.moonReaderBackupLocation,
     settings.progressSyncLocation,
@@ -169,6 +264,9 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     if (pendingScan.current?.key === key) return pendingScan.current.promise;
 
     const generation = ++scanGeneration.current;
+    localBookBatcher.cancel();
+    moonReaderBookBatcher.cancel();
+    progressSyncBookBatcher.cancel();
     const directoryChanged = lastScanKey.current !== key;
     lastScanKey.current = key;
     setScanning(true);
@@ -254,9 +352,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
           books: localWithMoonReaderMetadata,
           onBookUpdated: (enriched) => {
             if (scanGeneration.current !== generation) return;
-            setLocalBooks((current) =>
-              current.map((book) => (book.key === enriched.key ? enriched : book))
-            );
+            localBookBatcher.update(enriched);
           },
         }).catch((err: any) => ({
           books: localWithMoonReaderMetadata,
@@ -264,24 +360,23 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         })),
         enrichIndexedMoonReaderCatalog(enrichmentMoonReaderBooks, (enriched) => {
           if (scanGeneration.current !== generation) return;
-          setMoonReaderBooks((current) =>
-            current.map((book) => (book.key === enriched.key ? enriched : book))
-          );
+          moonReaderBookBatcher.update(enriched);
         }).catch((err: any) => ({
           books: enrichmentMoonReaderBooks,
           warnings: [`Moon+ Reader metadata enrichment failed: ${err.message || String(err)}`],
         })),
         enrichIndexedMoonReaderCatalog(enrichmentProgressBooks, (enriched) => {
           if (scanGeneration.current !== generation) return;
-          setProgressSyncBooks((current) =>
-            current.map((book) => (book.key === enriched.key ? enriched : book))
-          );
+          progressSyncBookBatcher.update(enriched);
         }).catch((err: any) => ({
           books: enrichmentProgressBooks,
           warnings: [`Synced library metadata enrichment failed: ${err.message || String(err)}`],
         })),
       ]);
       if (scanGeneration.current !== generation) return;
+      localBookBatcher.cancel();
+      moonReaderBookBatcher.cancel();
+      progressSyncBookBatcher.cancel();
       setLocalBooks(enrichedLocal.books);
       setMoonReaderBooks(enrichedMoonReader.books);
       setProgressSyncBooks(enrichedProgress.books);
@@ -307,6 +402,9 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     pendingScan.current = { key, promise };
     return promise;
   }, [
+    localBookBatcher,
+    moonReaderBookBatcher,
+    progressSyncBookBatcher,
     settings.localLibraryLocation,
     settings.moonReaderBackupLocation,
     settings.progressSyncLocation,
@@ -331,8 +429,11 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
   useEffect(
     () => () => {
       scanGeneration.current += 1;
+      localBookBatcher.cancel();
+      moonReaderBookBatcher.cancel();
+      progressSyncBookBatcher.cancel();
     },
-    []
+    [localBookBatcher, moonReaderBookBatcher, progressSyncBookBatcher]
   );
 
   const commit = useCallback(
@@ -388,6 +489,30 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     [commit, refreshLocalBooks]
   );
 
+  const isOnReadingList = useCallback(
+    (key: string) => stateRef.current.readingList.some((item) => item.key === key),
+    []
+  );
+  const dismissWarning = useCallback(() => setWarning(null), []);
+  const showWarning = useCallback((message: string) => setWarning(message), []);
+
+  const markAsRead = useCallback(
+    async (book: LibraryBook) => {
+      await markCatalogBookRead(book.key);
+      const applyRead = (item: LibraryBook) =>
+        item.key === book.key ? { ...item, isRead: true, progress: 100 } : item;
+      setLocalBooks((current) => current.map(applyRead));
+      setMoonReaderBooks((current) => current.map(applyRead));
+      setProgressSyncBooks((current) => current.map(applyRead));
+      await commit((current) => ({
+        downloaded: current.downloaded.map(applyRead),
+        readingList: current.readingList.map(applyRead),
+      }));
+      if (settings.progressSyncLocation) await syncCloudProgress();
+    },
+    [commit, settings.progressSyncLocation, syncCloudProgress]
+  );
+
   const deleteLocalBook = useCallback(
     async (book: LibraryBook) => {
       if (!book.local?.uri) throw new Error('This library item has no local source file.');
@@ -417,24 +542,28 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     [commit]
   );
 
-  const isOnReadingList = useCallback(
-    (key: string) => state.readingList.some((item) => item.key === key),
-    [state.readingList]
-  );
-  const dismissWarning = useCallback(() => setWarning(null), []);
-  const showWarning = useCallback((message: string) => setWarning(message), []);
-
-  const markAsRead = useCallback(
+  const removeSyncedBook = useCallback(
     async (book: LibraryBook) => {
-      await markCatalogBookRead(book.key);
-      const applyRead = (item: LibraryBook) =>
-        item.key === book.key ? { ...item, isRead: true, progress: 100 } : item;
-      setLocalBooks((current) => current.map(applyRead));
-      setMoonReaderBooks((current) => current.map(applyRead));
-      setProgressSyncBooks((current) => current.map(applyRead));
+      await removeProgressSyncBook(book);
+      const identity = bookIdentity(book.title, book.author);
+      setProgressSyncBooks((current) =>
+        current.filter(
+          (item) =>
+            item.key !== book.key && bookIdentity(item.title, item.author) !== identity
+        )
+      );
+      setMoonReaderBooks((current) =>
+        current.filter((item) => bookIdentity(item.title, item.author) !== identity)
+      );
       await commit((current) => ({
-        downloaded: current.downloaded.map(applyRead),
-        readingList: current.readingList.map(applyRead),
+        ...current,
+        downloaded: current.downloaded.filter(
+          (item) =>
+            item.key !== book.key &&
+            (item.local ||
+              item.moonReader?.availableLocally ||
+              bookIdentity(item.title, item.author) !== identity)
+        ),
       }));
       if (settings.progressSyncLocation) await syncCloudProgress();
     },
@@ -604,35 +733,94 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     });
   }, [downloaded, state.readingList]);
 
+  const catalogValue = useMemo<LibraryCatalogValue>(
+    () => ({ downloaded, ready }),
+    [downloaded, ready]
+  );
+  const readingListValue = useMemo<LibraryReadingListValue>(
+    () => ({ readingList, ready }),
+    [readingList, ready]
+  );
+  const uiStatusValue = useMemo<LibraryUiStatusValue>(
+    () => ({
+      scanning,
+      error: error || syncError,
+      warning,
+      dismissWarning,
+      showWarning,
+    }),
+    [dismissWarning, error, scanning, showWarning, syncError, warning]
+  );
+  const syncStatusValue = useMemo<LibrarySyncStatusValue>(
+    () => ({ cloudSyncing, cloudLastSyncedAt }),
+    [cloudLastSyncedAt, cloudSyncing]
+  );
+  const actionsValue = useMemo<LibraryActionsValue>(
+    () => ({
+      refreshLocalBooks,
+      syncCloudProgress,
+      refreshBookMetadata,
+      markAsRead,
+      deleteLocalBook,
+      removeSyncedBook,
+      isOnReadingList,
+      toggleReadingList,
+      recordDownload,
+    }),
+    [
+      deleteLocalBook,
+      isOnReadingList,
+      markAsRead,
+      recordDownload,
+      refreshBookMetadata,
+      refreshLocalBooks,
+      removeSyncedBook,
+      syncCloudProgress,
+      toggleReadingList,
+    ]
+  );
+
   return (
-    <LibraryContext.Provider
-      value={{
-        ...state,
-        downloaded,
-        readingList,
-        ready,
-        scanning,
-        cloudSyncing,
-        cloudLastSyncedAt,
-        error: error || syncError,
-        warning,
-        dismissWarning,
-        showWarning,
-        refreshLocalBooks,
-        syncCloudProgress,
-        refreshBookMetadata,
-        markAsRead,
-        deleteLocalBook,
-        isOnReadingList,
-        toggleReadingList,
-        recordDownload,
-      }}
-    >
-      {children}
-    </LibraryContext.Provider>
+    <LibraryCatalogContext.Provider value={catalogValue}>
+      <LibraryReadingListContext.Provider value={readingListValue}>
+        <LibraryUiStatusContext.Provider value={uiStatusValue}>
+          <LibrarySyncStatusContext.Provider value={syncStatusValue}>
+            <LibraryActionsContext.Provider value={actionsValue}>
+              {children}
+            </LibraryActionsContext.Provider>
+          </LibrarySyncStatusContext.Provider>
+        </LibraryUiStatusContext.Provider>
+      </LibraryReadingListContext.Provider>
+    </LibraryCatalogContext.Provider>
   );
 }
 
+export function useLibraryCatalog(): LibraryCatalogValue {
+  return useContext(LibraryCatalogContext);
+}
+
+export function useLibraryReadingList(): LibraryReadingListValue {
+  return useContext(LibraryReadingListContext);
+}
+
+export function useLibraryUiStatus(): LibraryUiStatusValue {
+  return useContext(LibraryUiStatusContext);
+}
+
+export function useLibrarySyncStatus(): LibrarySyncStatusValue {
+  return useContext(LibrarySyncStatusContext);
+}
+
+export function useLibraryActions(): LibraryActionsValue {
+  return useContext(LibraryActionsContext);
+}
+
 export function useLibrary(): LibraryContextValue {
-  return useContext(LibraryContext);
+  return {
+    ...useLibraryCatalog(),
+    ...useLibraryReadingList(),
+    ...useLibraryUiStatus(),
+    ...useLibrarySyncStatus(),
+    ...useLibraryActions(),
+  };
 }

@@ -1,15 +1,16 @@
 export const colors = {
-  background: '#08090c',
-  surface: '#14161d',
-  surfaceRaised: '#1a1c24',
-  border: '#2b2e38',
-  text: '#f4f2fa',
-  textMuted: '#8d8b96',
-  accent: '#8b7cff',
-  accentMuted: '#25213f',
+  background: '#100b08',
+  surface: '#1a120d',
+  surfaceRaised: '#241811',
+  border: '#3a281c',
+  text: '#fff2cf',
+  textMuted: '#b8a58f',
+  accent: '#ff6a00',
+  accentMuted: '#3a1c0b',
+  onAccent: '#1a0c04',
   success: '#159a76',
-  danger: '#ef6c6c',
-  rating: '#ffc83d',
+  danger: '#ef6b4a',
+  rating: '#ffc21c',
 } as const;
 
 export const radii = {
