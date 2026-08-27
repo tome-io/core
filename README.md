@@ -1,60 +1,114 @@
-# Tomeio
+<p align="center">
+  <img src="apps/mobile/assets/images/icon.png" width="152" alt="Tomeio logo" />
+</p>
 
-Tomeio is a book discovery, download, and library companion inspired by Stremio.
-This `tomeio/core` repository is a Bun workspace containing the Expo mobile client, an Electron
-macOS client, shared application packages, and bundled official source extensions.
+<h1 align="center">Tomeio</h1>
 
-Compatibility-sensitive identifiers inherited from earlier releases—including
-`reado-extension.json`, `org.readoi.*`, and the desktop `window.readio` bridge—remain stable.
+<p align="center">
+  A book discovery, download, and library app built around extensions.
+</p>
 
-## Repository layout
+Tomeio brings catalogs, search, downloads, reading lists, and a local book library into one
+application. It is inspired by [Stremio](https://www.stremio.com/), with book sources taking the
+place of media add-ons.
+
+## tomeio-core
+
+`tomeio-core` contains the shared application logic, platform clients, and official extensions used
+to build Tomeio. It is a Bun workspace with an Expo client for Android, iOS, and web, plus an early
+Electron client for macOS.
+
+### Goals
+
+- Share book, library, extension, and progress-sync logic between clients.
+- Keep operating-system APIs behind platform-specific adapters.
+- Make catalogs and downloads extensible through a small resource protocol.
+- Keep shared packages independent of React Native, Electron, and Node APIs.
+- Preserve deterministic data and sync behavior across platforms.
+
+### Apps
+
+- `apps/mobile` — Expo Router client for Android, iOS, and web.
+- `apps/desktop` — Electron main/preload processes and React renderer for macOS.
+
+### Modules
+
+- `application` — platform-neutral use cases and ports.
+- `contracts` — typed IPC contracts shared by Electron processes.
+- `database` — portable database driver contract and core schema.
+- `design` — shared colors and design tokens.
+- `domain` — book metadata, identity, acquisition, and progress models.
+- `extension-protocol` — manifest, resource, query, and response types.
+- `extension-runtime` — extension installation, registry, and transport loading.
+- `official-extensions` — registry of extensions bundled with Tomeio.
+- `sources` — shared provider HTTP and cache utilities.
+- `sync` — progress documents and deterministic merge rules.
+
+The main dependency direction is:
 
 ```text
-apps/
-  mobile/                 Expo Router app for Android, iOS, and the current web build
-  desktop/                Electron main/preload processes and React DOM renderer
-packages/
-  application/            Platform-neutral use cases and ports
-  contracts/              Typed desktop IPC contracts
-  database/               Database driver contract and shared schema migrations
-  design/                 Cross-platform design tokens
-  domain/                 Book models, identity, and metadata utilities
-  extension-protocol/     Extension manifest and book resource contracts
-  extension-runtime/      Installation registry and transport loading
-  official-extensions/    Bundled source registry
-  sources/                Shared source HTTP/cache primitives
-  sync/                   Progress sync document and merge rules
-extensions/
-  official/               Project Gutenberg, Internet Archive, and Open Library
+Expo screens ──────┐
+                   ├── application ── domain
+Electron renderer ─┘        │
+                            ├── extension protocol/runtime
+Platform adapters ──────────┴── database and sync contracts
 ```
 
-Platform code owns platform capabilities. Expo adapters continue to own Android SAF,
-Moon+ Reader, SecureStore, and `expo-sqlite`. Electron owns macOS filesystem access,
-native dialogs, and its future SQLite adapter in the main process. Neither the DOM
-renderer nor shared packages import Node or Expo APIs.
+Platform integrations stay in their clients. Expo owns Android Storage Access Framework,
+SecureStore, external reader integration, and Expo SQLite. Electron's main process owns filesystem,
+dialog, and native persistence access; its renderer does not have Node access.
+
+## Extensions
+
+Tomeio extensions expose four book resources:
+
+- `catalog` — discovery shelves and paged catalogs.
+- `search` — provider search.
+- `meta` — book details and metadata enrichment.
+- `acquisition` — downloadable formats or external open actions.
+
+The official extensions are Open Library, Project Gutenberg, and Internet Archive — Open Books.
+They implement the common extension contract and are compiled with the app.
+
+See [extensions/README.md](extensions/README.md) for the source layout and
+[docs/extensions.md](docs/extensions.md) for the protocol.
 
 ## Development
 
-Install [Bun](https://bun.sh/) and install workspace dependencies from the repository
-root:
+Tomeio uses [Bun](https://bun.sh/) `1.4.x` and
+[Expo SDK 57](https://docs.expo.dev/versions/v57.0.0/).
 
 ```bash
 bun install
 ```
 
-Useful commands:
+Common commands:
 
 ```bash
-bun mobile
+bun mobile:start
 bun mobile:android
-bun mobile:android:release
+bun mobile:ios
 bun mobile:web
-bun desktop:install
 bun desktop
 bun desktop:package
 ```
 
-The package manager is Bun. Application runtimes remain Hermes on native Expo,
-Chromium in web/renderer code, and Node in Electron's main process.
+Workspace validation:
 
-See [Architecture](docs/architecture.md) and [Extensions](docs/extensions.md).
+```bash
+bun test
+bun typecheck
+bun lint
+```
+
+## Compatibility
+
+Tomeio was previously named Readio. Compatibility-sensitive identifiers such as
+`reado-extension.json`, `org.readoi.*`, the script extension `reado` API, and the desktop
+`window.readio` bridge remain unchanged.
+
+More detail is available in [docs/architecture.md](docs/architecture.md).
+
+## License
+
+See [LICENSE](LICENSE).

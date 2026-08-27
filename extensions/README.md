@@ -1,29 +1,81 @@
 # Tomeio extensions
 
-`official/` contains source providers shipped with Tomeio. They implement the same
-manifest and resource contracts used by third-party extensions, but are compiled
-with the application so they work without downloading executable code.
+`extensions/official` contains the book-source extensions bundled with Tomeio. Each extension owns
+its provider-specific API code and exposes a common set of book resources to the rest of the app.
 
-Third-party extensions are not listed or browsed in the app. A user explicitly
-installs one by pasting its HTTPS repository or `reado-extension.json` URL. A
-repository URL resolves to the manifest at its root.
+## Resources
 
-Third-party manifests can use declarative or HTTP transports. Script transports
-must reference an immutable bundle and include its SHA-256 digest; each platform
-must provide a sandbox before such a bundle can run. Tomeio never executes a raw
-TypeScript file or an unverified branch-head script.
+- `catalog(query)` returns discovery rows or paged catalogs.
+- `search(query)` returns books matching a query.
+- `meta(id)` returns details for a provider book ID.
+- `acquisition(id)` returns downloadable formats or external open actions.
 
-The future public extension repository belongs in the `tomeio` GitHub organization
-as a separate repository. It is intentionally not hard-coded here and is not an
-in-app community catalog.
+An extension implements only the resources it supports. The declared resources and catalogs live
+in its versioned `reado-extension.json` manifest.
 
-ManyBooks is not bundled because it does not currently provide a documented public
-API suitable for this client. Project Gutenberg, Internet Archive, and Open Library
-are the initial official sources.
+## Official extensions
 
-The bundled Internet Archive provider exposes native downloads only when an item has
-an explicit permissive Creative Commons/public-domain URL, belongs to a trusted
-institutional collection, and is not access restricted. Other records open on
-archive.org instead. The independently maintained unrestricted provider is available
-at `https://github.com/imprisonedmind/tomeio-internet-archive` and is never bundled or
-listed in the app.
+| Extension | Resources | Purpose |
+| --- | --- | --- |
+| [Open Library](official/open-library) | `catalog`, `search`, `meta` | Discovery and metadata |
+| [Project Gutenberg](official/project-gutenberg) | `catalog`, `search`, `acquisition` | Public-domain catalog and downloads |
+| [Internet Archive — Open Books](official/internet-archive) | `catalog`, `search`, `meta`, `acquisition` | Open-book records and available formats |
+
+## Structure
+
+```text
+official/provider-name/
+├── package.json
+├── reado-extension.json
+├── src/index.ts
+└── test/
+```
+
+Each package exports:
+
+- an `ExtensionManifest` describing its resources, catalogs, transport, and network hosts;
+- a factory that accepts its HTTP dependencies for testing;
+- a default `BookExtension` instance for the application registry.
+
+`packages/official-extensions` imports the default instances and exposes the bundled registry to
+the mobile and desktop clients.
+
+## How extension loading works
+
+1. `@tomeio/extension-protocol` validates the manifest.
+2. `@tomeio/extension-runtime` selects a loader from the manifest transport.
+3. The loader calls the requested `catalog`, `search`, `meta`, or `acquisition` resource.
+4. The extension maps provider responses to the models in `@tomeio/domain`.
+
+Supported transports are:
+
+- `bundled` for extensions compiled into Tomeio;
+- `http` for servers implementing the resource routes;
+- `declarative` for manifest-defined endpoint templates;
+- `script` for SHA-256-pinned JavaScript bundles executed by a platform sandbox.
+
+## Adding an official extension
+
+1. Create a workspace under `extensions/official/<provider>`.
+2. Add a valid `reado-extension.json` and matching exported manifest.
+3. Implement a `BookExtension` using the shared domain types.
+4. Add focused tests for mapping, pagination, empty responses, and provider failures.
+5. Register the default instance in `packages/official-extensions`.
+
+Use `@tomeio/sources` for the shared JSON client and cache primitives. Keep raw provider response
+types inside the extension package rather than exposing them to application code.
+
+## Testing
+
+From the repository root:
+
+```bash
+bun test
+bun typecheck
+```
+
+Providers with live integration tests expose a `test:live` script in their package. These tests
+contact the provider API and are separate from the normal workspace test command.
+
+The `reado-extension.json` filename remains unchanged for compatibility with extensions installed
+before the project was renamed to Tomeio.
