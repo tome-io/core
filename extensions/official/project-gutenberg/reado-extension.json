@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "name": "Project Gutenberg",
   "description": "Public-domain books and downloads from Project Gutenberg.",
-  "author": "Readio",
+  "author": "Tomeio",
   "homepage": "https://www.gutenberg.org",
   "types": ["book"],
   "resources": [
@@ -15,7 +15,7 @@
   "catalogs": [
     { "id": "popular", "name": "Popular on Project Gutenberg", "resource": "catalog" }
   ],
-  "transport": { "kind": "bundled", "module": "@readoi/extension-project-gutenberg" },
+  "transport": { "kind": "bundled", "module": "@tomeio/extension-project-gutenberg" },
   "permissions": {
     "hosts": ["https://www.gutenberg.org"]
   }

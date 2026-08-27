@@ -1,6 +1,6 @@
 {
-  "name": "@readoi/extension-open-library",
-  "version": "0.1.0",
+  "name": "@tomeio/extension-open-library",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "exports": {
@@ -10,8 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@readoi/domain": "workspace:*",
-    "@readoi/extension-protocol": "workspace:*",
-    "@readoi/sources": "workspace:*"
+    "@tomeio/domain": "workspace:*",
+    "@tomeio/extension-protocol": "workspace:*",
+    "@tomeio/sources": "workspace:*"
   }
 }

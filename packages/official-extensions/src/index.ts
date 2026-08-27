@@ -1,6 +1,6 @@
-import { internetArchiveExtension } from '@readoi/extension-internet-archive';
-import { openLibraryExtension } from '@readoi/extension-open-library';
-import { projectGutenbergExtension } from '@readoi/extension-project-gutenberg';
+import { internetArchiveExtension } from '@tomeio/extension-internet-archive';
+import { openLibraryExtension } from '@tomeio/extension-open-library';
+import { projectGutenbergExtension } from '@tomeio/extension-project-gutenberg';
 
 export const officialExtensions = [
   openLibraryExtension,

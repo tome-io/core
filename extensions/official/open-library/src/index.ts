@@ -1,19 +1,19 @@
-import type { BookMetadata } from '@readoi/domain';
+import type { BookMetadata } from '@tomeio/domain';
 import type {
   BookExtension,
   ExtensionManifest,
   ExtensionPage,
   ExtensionQuery,
-} from '@readoi/extension-protocol';
-import { createSourceHttpClient, type SourceHttpOptions } from '@readoi/sources';
+} from '@tomeio/extension-protocol';
+import { createSourceHttpClient, type SourceHttpOptions } from '@tomeio/sources';
 
 export const manifest: ExtensionManifest = {
   manifestVersion: 1,
   id: 'org.readoi.open-library',
-  version: '0.1.0',
+  version: '0.1.1',
   name: 'Open Library',
   description: 'Trending catalogs and book metadata from Open Library.',
-  author: 'Readio',
+  author: 'Tomeio',
   homepage: 'https://openlibrary.org',
   types: ['book'],
   resources: [
@@ -26,7 +26,7 @@ export const manifest: ExtensionManifest = {
     { id: 'fantasy', name: 'Fantasy', resource: 'catalog' },
     { id: 'science-fiction', name: 'Science fiction', resource: 'catalog' },
   ],
-  transport: { kind: 'bundled', module: '@readoi/extension-open-library' },
+  transport: { kind: 'bundled', module: '@tomeio/extension-open-library' },
   permissions: {
     hosts: ['https://openlibrary.org', 'https://covers.openlibrary.org'],
   },
@@ -37,6 +37,7 @@ interface SearchDocument {
   title?: string;
   author_name?: string[];
   cover_i?: number;
+  cover_edition_key?: string;
   first_publish_year?: number;
   subject?: string[];
   isbn?: string[];
@@ -46,6 +47,87 @@ interface SearchDocument {
 
 interface SearchResponse {
   docs?: SearchDocument[];
+  numFound?: number;
+  start?: number;
+}
+
+const SEARCH_FIELDS =
+  'key,title,author_name,cover_i,cover_edition_key,first_publish_year,subject,isbn,ratings_average,ratings_count';
+const SECONDARY_TITLE =
+  /\b(summary|summaries|workbook|study guide|cliff.?notes|sparknotes|notes on|discussions of|coloring book)\b/i;
+
+function isIsbnQuery(value: string): boolean {
+  return /^(97[89])?\d{9}[\dXx]$/.test(value.replace(/[-\s]/g, ''));
+}
+
+function escapeSolrPhrase(value: string): string {
+  return value.replace(/["\\]/g, '\\$&');
+}
+
+function escapeSolrTerms(value: string): string {
+  return value.replace(/[+\-!(){}[\]^"~*?:\\/]/g, '\\$&');
+}
+
+function openLibraryQuery(raw: string | undefined): string {
+  const query = raw?.trim() ?? '';
+  if (!query || query === '*:*') return query || '*:*';
+  const isbn = query.replace(/[-\s]/g, '');
+  if (isIsbnQuery(query)) return `isbn:${isbn}`;
+  const phrase = escapeSolrPhrase(query);
+  const terms = escapeSolrTerms(query);
+  return `title:"${phrase}"^5 OR author:"${phrase}"^4 OR title:(${terms})^3 OR author:(${terms})^2 OR ${terms}`;
+}
+
+function coverUrl(document: SearchDocument): string | undefined {
+  if (document.cover_i) return `https://covers.openlibrary.org/b/id/${document.cover_i}-L.jpg`;
+  if (document.cover_edition_key) {
+    return `https://covers.openlibrary.org/b/olid/${document.cover_edition_key}-L.jpg`;
+  }
+  return undefined;
+}
+
+function normalizeMatch(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function relevanceScore(book: BookMetadata, query: string): number {
+  const needle = normalizeMatch(query);
+  const tokens = [...new Set(needle.split(/\s+/).filter((token) => token.length > 1))];
+  const title = normalizeMatch(book.title);
+  const authors = normalizeMatch(book.authors.join(' '));
+  let score = 0;
+  if (title === needle) score += 220;
+  else if (title.startsWith(needle)) score += 160;
+  else if (title.includes(needle)) score += 120;
+  const titleHits = tokens.filter((token) => title.includes(token)).length;
+  const authorHits = tokens.filter((token) => authors.includes(token)).length;
+  score += titleHits * 24;
+  if (tokens.length > 1 && titleHits === tokens.length) score += 50;
+  if (tokens.length >= 2 && titleHits < tokens.length) {
+    score -= (tokens.length - titleHits) * 30;
+  }
+  score += authorHits * 18;
+  if (book.coverUrl) score += 10;
+  if (typeof book.rating === 'number') score += Math.min(12, book.rating * 2);
+  if (typeof book.ratingsCount === 'number' && book.ratingsCount > 0) {
+    score += Math.min(20, Math.log10(book.ratingsCount + 1) * 8);
+  }
+  if (SECONDARY_TITLE.test(book.title)) score -= 120;
+  if (titleHits === 0 && authorHits === 0) score -= 100;
+  return score;
+}
+
+function rankSearchResults(items: BookMetadata[], query: string): BookMetadata[] {
+  const needle = query.trim();
+  if (!needle || needle === '*:*' || isIsbnQuery(needle)) return items;
+  return [...items].sort(
+    (left, right) => relevanceScore(right, needle) - relevanceScore(left, needle)
+  );
 }
 
 function mapDocument(document: SearchDocument): BookMetadata | null {
@@ -56,9 +138,7 @@ function mapDocument(document: SearchDocument): BookMetadata | null {
     id,
     title,
     authors: document.author_name?.filter(Boolean) ?? [],
-    coverUrl: document.cover_i
-      ? `https://covers.openlibrary.org/b/id/${document.cover_i}-L.jpg`
-      : undefined,
+    coverUrl: coverUrl(document),
     publishedYear: document.first_publish_year,
     subjects: document.subject?.slice(0, 12) ?? [],
     identifiers: {
@@ -72,26 +152,47 @@ function mapDocument(document: SearchDocument): BookMetadata | null {
 
 export function createOpenLibraryExtension(options: SourceHttpOptions = {}): BookExtension {
   const http = createSourceHttpClient(options);
-  const search = async (query: ExtensionQuery): Promise<ExtensionPage<BookMetadata>> => {
+
+  const requestPage = async (
+    query: ExtensionQuery,
+    q: string,
+    sort?: string
+  ): Promise<ExtensionPage<BookMetadata>> => {
     const page = Math.max(1, query.page ?? 1);
     const limit = Math.min(50, Math.max(1, query.limit ?? 30));
     const parameters = new URLSearchParams({
-      q: query.query?.trim() || '*:*',
-      fields:
-        'key,title,author_name,cover_i,first_publish_year,subject,isbn,ratings_average,ratings_count',
+      q,
+      fields: SEARCH_FIELDS,
       page: String(page),
       limit: String(limit),
-      sort: 'trending',
       lang: query.language ?? 'en',
     });
+    if (sort) parameters.set('sort', sort);
     const response = await http.json<SearchResponse>(
       `https://openlibrary.org/search.json?${parameters}`
     );
+    const documents = response.docs ?? [];
+    const items = documents
+      .map(mapDocument)
+      .filter((book): book is BookMetadata => book != null);
+    const returnedThrough =
+      (response.start ?? (page - 1) * limit) + documents.length;
+    const hasMore =
+      typeof response.numFound === 'number'
+        ? returnedThrough < response.numFound
+        : documents.length >= limit;
     return {
-      items: (response.docs ?? [])
-        .map(mapDocument)
-        .filter((book): book is BookMetadata => book != null),
-      nextPage: page + 1,
+      items,
+      nextPage: hasMore ? page + 1 : undefined,
+    };
+  };
+
+  const search = async (query: ExtensionQuery): Promise<ExtensionPage<BookMetadata>> => {
+    const rawQuery = query.query?.trim() ?? '';
+    const result = await requestPage(query, openLibraryQuery(rawQuery));
+    return {
+      ...result,
+      items: rankSearchResults(result.items, rawQuery),
     };
   };
 
@@ -103,7 +204,7 @@ export function createOpenLibraryExtension(options: SourceHttpOptions = {}): Boo
         query.catalogId && query.catalogId !== 'trending'
           ? `subject_key:${query.catalogId.replaceAll('-', '_')}`
           : '*:*';
-      return search({ ...query, query: catalogQuery });
+      return requestPage(query, catalogQuery, 'trending');
     },
     meta: async (id) => {
       const response = await http.json<{

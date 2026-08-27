@@ -1,5 +1,5 @@
 {
-  "name": "@readoi/official-extensions",
+  "name": "@tomeio/official-extensions",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,8 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@readoi/extension-internet-archive": "workspace:*",
-    "@readoi/extension-open-library": "workspace:*",
-    "@readoi/extension-project-gutenberg": "workspace:*"
+    "@tomeio/extension-internet-archive": "workspace:*",
+    "@tomeio/extension-open-library": "workspace:*",
+    "@tomeio/extension-project-gutenberg": "workspace:*"
   }
 }

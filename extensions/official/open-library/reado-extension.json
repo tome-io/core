@@ -1,10 +1,10 @@
 {
   "manifestVersion": 1,
   "id": "org.readoi.open-library",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "name": "Open Library",
   "description": "Trending catalogs and book metadata from Open Library.",
-  "author": "Readio",
+  "author": "Tomeio",
   "homepage": "https://openlibrary.org",
   "types": ["book"],
   "resources": [
@@ -17,7 +17,7 @@
     { "id": "fantasy", "name": "Fantasy", "resource": "catalog" },
     { "id": "science-fiction", "name": "Science fiction", "resource": "catalog" }
   ],
-  "transport": { "kind": "bundled", "module": "@readoi/extension-open-library" },
+  "transport": { "kind": "bundled", "module": "@tomeio/extension-open-library" },
   "permissions": {
     "hosts": ["https://openlibrary.org", "https://covers.openlibrary.org"]
   }

@@ -7,6 +7,7 @@ export interface SourceHttpOptions {
   fetchFn?: typeof fetch;
   cache?: SourceCache;
   timeoutMs?: number;
+  headers?: Record<string, string>;
 }
 
 export interface SourceHttpClient {
@@ -48,8 +49,10 @@ export function createSourceHttpClient(options: SourceHttpOptions = {}): SourceH
 
       let response: Response;
       try {
+        const headers = new Headers(options.headers);
+        headers.set('Accept', kind === 'json' ? 'application/json' : '*/*');
         response = await fetchFn(url, {
-          headers: { Accept: kind === 'json' ? 'application/json' : '*/*' },
+          headers,
           signal: AbortSignal.timeout(timeoutMs),
         });
       } catch (cause) {

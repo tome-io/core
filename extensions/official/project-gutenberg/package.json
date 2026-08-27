@@ -1,5 +1,5 @@
 {
-  "name": "@readoi/extension-project-gutenberg",
+  "name": "@tomeio/extension-project-gutenberg",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,11 +7,13 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "test": "bun test test/index.test.ts",
+    "test:live": "bun test test/live.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@readoi/domain": "workspace:*",
-    "@readoi/extension-protocol": "workspace:*",
-    "@readoi/sources": "workspace:*"
+    "@tomeio/domain": "workspace:*",
+    "@tomeio/extension-protocol": "workspace:*",
+    "@tomeio/sources": "workspace:*"
   }
 }
