@@ -18,6 +18,7 @@ const BUNDLE_CACHE_PREFIX = 'extension_bundle_v1';
 const EXTENSION_STORE_PREFIX = 'extension_store_v1';
 const EXTENSION_SECURE_PREFIX = 'extension_secure_v1';
 const EXTENSION_SECURE_INDEX_PREFIX = 'extension_secure_index_v1';
+const MAX_EXTENSION_FETCH_TIMEOUT_MS = 20_000;
 
 interface SandboxMessage {
   type: 'ready' | 'result' | 'host-call' | 'boot-error';
@@ -375,7 +376,7 @@ export class MobileScriptExtensionExecutor implements ScriptExtensionExecutor {
       if (url.protocol !== 'https:' || !allowedOrigin(manifest, url)) {
         throw new Error(`Extension is not permitted to access ${url.origin}.`);
       }
-      const options = (args[1] ?? {}) as RequestInit;
+      const options = (args[1] ?? {}) as RequestInit & { timeoutMs?: unknown };
       const headers = new Headers(options.headers);
       if (Platform.OS === 'web' && headers.has('cookie')) {
         headers.set('x-tomeio-cookie', headers.get('cookie') ?? '');
@@ -385,12 +386,29 @@ export class MobileScriptExtensionExecutor implements ScriptExtensionExecutor {
         Platform.OS === 'web'
           ? `/tomeio-proxy/${encodeURIComponent(url.toString())}`
           : url.toString();
-      const response = await fetch(requestUrl, {
-        method: options.method,
-        headers,
-        body: typeof options.body === 'string' ? options.body : undefined,
-        redirect: 'manual',
-      });
+      const requestedTimeout = Number(options.timeoutMs);
+      const timeoutMs = Number.isFinite(requestedTimeout)
+        ? Math.max(1_000, Math.min(requestedTimeout, MAX_EXTENSION_FETCH_TIMEOUT_MS))
+        : MAX_EXTENSION_FETCH_TIMEOUT_MS;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      let response: Response;
+      try {
+        response = await fetch(requestUrl, {
+          method: options.method,
+          headers,
+          body: typeof options.body === 'string' ? options.body : undefined,
+          redirect: 'manual',
+          signal: controller.signal,
+        });
+      } catch (error) {
+        if (controller.signal.aborted) {
+          throw new Error(`Extension request timed out after ${timeoutMs}ms for ${url.origin}.`);
+        }
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+      }
       const body = await response.text();
       if (new TextEncoder().encode(body).byteLength > MAX_RESPONSE_BYTES) {
         throw new Error(`Extension response exceeds the ${MAX_RESPONSE_BYTES} byte limit.`);

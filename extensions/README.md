@@ -10,6 +10,10 @@ its provider-specific API code and exposes a common set of book resources to the
 - `meta(id)` returns details for a provider book ID.
 - `acquisition(id)` returns downloadable formats or external open actions.
 
+Search results may include `BookMetadata.acquisitions` when the provider already returned usable
+download metadata. Clients use those inline acquisitions directly and call `acquisition(id)` only
+when a search result does not include them.
+
 An extension implements only the resources it supports. The declared resources and catalogs live
 in its versioned `tomeio-extension.json` manifest.
 

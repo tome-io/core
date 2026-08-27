@@ -564,6 +564,11 @@ export default function ExtensionsScreen() {
         {extensions.error ? (
           <Text className="mb-4 text-xs text-red-400">{extensions.error}</Text>
         ) : null}
+        {extensions.updateError ? (
+          <Text className="mb-4 text-xs text-amber-400">
+            Add-on update check failed: {extensions.updateError}
+          </Text>
+        ) : null}
         {!extensions.ready ? (
           <View className="h-48 items-center justify-center">
             <ActivityIndicator color={colors.accent} />

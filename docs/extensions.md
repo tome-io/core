@@ -36,6 +36,13 @@ A GitHub repository resolves to `tomeio-extension.json` at its root. Tomeio stor
 manifest snapshot, source URL, enabled state, and install/update timestamps locally.
 Official ids cannot be replaced by third-party manifests.
 
+On app startup, Tomeio checks enabled third-party manifest URLs in the background. A manifest is
+updated only when its id is unchanged, both versions are valid semantic versions, and the published
+version is newer. Script extensions are downloaded and verified against the new manifest's SHA-256
+digest before the installed snapshot changes. Configuration and provider-role selections are
+preserved. A failed update check leaves the working installed version in place and is reported on
+the Add-ons page.
+
 Third-party extensions can be declarative, expose the HTTP resource protocol, or provide an
 integrity-checked JavaScript bundle. Script extensions execute in an isolated WebView/iframe with
 direct network access disabled. The host exposes scoped configuration, normal storage, secure

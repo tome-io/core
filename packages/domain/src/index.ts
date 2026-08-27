@@ -9,6 +9,7 @@ export interface BookMetadata {
   identifiers: Record<string, string>;
   rating?: number;
   ratingsCount?: number;
+  acquisitions?: BookAcquisition[];
 }
 
 export interface BookAcquisition {

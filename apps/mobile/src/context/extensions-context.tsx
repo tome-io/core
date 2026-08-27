@@ -38,6 +38,7 @@ import { mobileScriptExtensionExecutor } from '@/lib/script-extension-executor';
 interface ExtensionsContextValue extends ExtensionRegistrySnapshot {
   ready: boolean;
   error: string | null;
+  updateError: string | null;
   searchExtensionId: string | null;
   acquisitionExtensionId: string | null;
   install(repositoryUrl: string): Promise<InstalledExtension>;
@@ -59,6 +60,7 @@ const EMPTY: ExtensionsContextValue = {
   thirdParty: [],
   ready: false,
   error: null,
+  updateError: null,
   searchExtensionId: null,
   acquisitionExtensionId: null,
   install: async () => {
@@ -91,6 +93,7 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
   });
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const [searchExtensionId, setSearchExtensionId] = useState<string | null>(null);
   const [acquisitionExtensionId, setAcquisitionExtensionId] = useState<string | null>(null);
 
@@ -142,15 +145,51 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
     setError(null);
   }, []);
 
-  useEffect(() => {
-    refresh()
-      .catch((cause) => {
-        const message = cause instanceof Error ? cause.message : String(cause);
-        setError(message);
-        console.error('Could not load extension registry:', cause);
-      })
-      .finally(() => setReady(true));
+  const checkForUpdates = useCallback(async () => {
+    const result = await extensionRegistry.updateEnabled(async (manifest) => {
+      const values = await readExtensionConfiguration(manifest);
+      const missing = missingRequiredConfiguration(manifest, values);
+      if (missing.length) {
+        throw new Error(`Update requires configuration: ${missing.join(', ')}.`);
+      }
+      await extensionLoader.load(manifest);
+    });
+    setUpdateError(
+      result.failures.length
+        ? result.failures
+            .map((failure) => `${failure.name}: ${failure.message}`)
+            .join('\n')
+        : null
+    );
+    if (result.updated.length) await refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    let active = true;
+    const start = async () => {
+      try {
+        await refresh();
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        if (active) setError(message);
+        console.error('Could not load extension registry:', cause);
+      } finally {
+        if (active) setReady(true);
+      }
+      if (!active) return;
+      try {
+        await checkForUpdates();
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        if (active) setUpdateError(message);
+        console.error('Could not check extension updates:', cause);
+      }
+    };
+    void start();
+    return () => {
+      active = false;
+    };
+  }, [checkForUpdates, refresh]);
 
   const install = useCallback(
     async (repositoryUrl: string) => {
@@ -282,6 +321,7 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       ...snapshot,
       ready,
       error,
+      updateError,
       searchExtensionId,
       acquisitionExtensionId,
       install,
@@ -298,6 +338,7 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       snapshot,
       ready,
       error,
+      updateError,
       searchExtensionId,
       acquisitionExtensionId,
       install,

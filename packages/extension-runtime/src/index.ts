@@ -27,6 +27,71 @@ export interface ExtensionRegistrySnapshot {
   thirdParty: InstalledExtension[];
 }
 
+export interface ExtensionUpdateFailure {
+  id: string;
+  name: string;
+  message: string;
+}
+
+export interface ExtensionUpdateResult {
+  updated: InstalledExtension[];
+  failures: ExtensionUpdateFailure[];
+}
+
+interface ExtensionUpdateCheck {
+  extension: InstalledExtension;
+  updated?: InstalledExtension;
+  failure?: ExtensionUpdateFailure;
+}
+
+interface SemanticVersion {
+  major: number;
+  minor: number;
+  patch: number;
+  prerelease: string[];
+}
+
+function semanticVersion(value: string): SemanticVersion | null {
+  const match = value.trim().match(
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/
+  );
+  if (!match) return null;
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+    prerelease: match[4]?.split('.') ?? [],
+  };
+}
+
+export function compareExtensionVersions(left: string, right: string): number | null {
+  const a = semanticVersion(left);
+  const b = semanticVersion(right);
+  if (!a || !b) return null;
+  for (const key of ['major', 'minor', 'patch'] as const) {
+    if (a[key] !== b[key]) return a[key] > b[key] ? 1 : -1;
+  }
+  if (!a.prerelease.length || !b.prerelease.length) {
+    if (a.prerelease.length === b.prerelease.length) return 0;
+    return a.prerelease.length ? -1 : 1;
+  }
+  const length = Math.max(a.prerelease.length, b.prerelease.length);
+  for (let index = 0; index < length; index += 1) {
+    const leftPart = a.prerelease[index];
+    const rightPart = b.prerelease[index];
+    if (leftPart == null) return -1;
+    if (rightPart == null) return 1;
+    if (leftPart === rightPart) continue;
+    const leftNumber = /^\d+$/.test(leftPart) ? Number(leftPart) : null;
+    const rightNumber = /^\d+$/.test(rightPart) ? Number(rightPart) : null;
+    if (leftNumber != null && rightNumber != null) return leftNumber > rightNumber ? 1 : -1;
+    if (leftNumber != null) return -1;
+    if (rightNumber != null) return 1;
+    return leftPart.localeCompare(rightPart) > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
 function validateInstalledExtension(value: InstalledExtension): InstalledExtension {
   if (
     typeof value !== 'object' ||
@@ -183,6 +248,62 @@ export class ExtensionRegistry {
       next,
     ]);
     return next;
+  }
+
+  async updateEnabled(
+    validate?: (manifest: ExtensionManifest) => Promise<void>
+  ): Promise<ExtensionUpdateResult> {
+    const installed = await this.installed();
+    const checks = await Promise.all(
+      installed.map(async (extension): Promise<ExtensionUpdateCheck> => {
+        if (!extension.enabled) return { extension };
+        try {
+          const { manifest, manifestUrl } = await fetchManifest(
+            extension.manifestUrl,
+            this.fetchFn
+          );
+          assertThirdPartyTransport(manifest);
+          if (manifest.id !== extension.manifest.id) {
+            throw new ExtensionInstallError(
+              `Update changed extension id from "${extension.manifest.id}" to "${manifest.id}".`
+            );
+          }
+          const comparison = compareExtensionVersions(
+            manifest.version,
+            extension.manifest.version
+          );
+          if (comparison == null) {
+            throw new ExtensionInstallError(
+              `Cannot compare extension versions "${extension.manifest.version}" and "${manifest.version}".`
+            );
+          }
+          if (comparison <= 0) return { extension };
+          await validate?.(manifest);
+          const updated: InstalledExtension = {
+            ...extension,
+            manifest,
+            manifestUrl,
+            updatedAt: Date.now(),
+          };
+          return { extension: updated, updated };
+        } catch (cause) {
+          return {
+            extension,
+            failure: {
+              id: extension.manifest.id,
+              name: extension.manifest.name,
+              message: cause instanceof Error ? cause.message : String(cause),
+            },
+          };
+        }
+      })
+    );
+    const updated = checks.flatMap((check) => (check.updated ? [check.updated] : []));
+    if (updated.length) await this.store.write(checks.map((check) => check.extension));
+    return {
+      updated,
+      failures: checks.flatMap((check) => (check.failure ? [check.failure] : [])),
+    };
   }
 
   async remove(id: string): Promise<void> {
