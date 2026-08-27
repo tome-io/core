@@ -289,21 +289,51 @@ export default function BookDetailScreen() {
     readingList,
   ]);
 
+  const localCopyUnavailable =
+    !!localBook &&
+    (localBook.availableLocally === false ||
+      localBook.moonReader?.availableLocally === false);
+  const sourceDiscoveryBook =
+    discoveryBook ?? (localCopyUnavailable ? localBook?.discovery ?? null : null);
+  const acquisitionExtension = useMemo(() => {
+    if (extensionBook) {
+      return { extensionId, book: extensionBook };
+    }
+    if (!localCopyUnavailable || !localBook?.extension) return null;
+
+    const { acquisition, book, extensionId: storedExtensionId } = localBook.extension;
+    if (
+      !acquisition ||
+      book.acquisitions?.some((candidate) => candidate.id === acquisition.id)
+    ) {
+      return { extensionId: storedExtensionId, book };
+    }
+    return {
+      extensionId: storedExtensionId,
+      book: {
+        ...book,
+        acquisitions: [...(book.acquisitions ?? []), acquisition],
+      },
+    };
+  }, [extensionBook, extensionId, localBook, localCopyUnavailable]);
+
   const [remoteDescription, setRemoteDescription] = useState('');
   const [genreLabel, setGenreLabel] = useState('');
   const [metadataError, setMetadataError] = useState<string | null>(null);
   useEffect(() => {
-    if (!discoveryBook) return;
+    if (!sourceDiscoveryBook) return;
     let cancelled = false;
-    const suppliedDescription = plainText(discoveryBook.description);
+    const suppliedDescription = plainText(sourceDiscoveryBook.description);
     setRemoteDescription(suppliedDescription);
-    setGenreLabel(discoveryBook.genre);
+    setGenreLabel(sourceDiscoveryBook.genre);
     setMetadataError(null);
     if (
-      (!suppliedDescription || !discoveryBook.genre || discoveryBook.genre === 'Open Library') &&
-      discoveryBook.id.startsWith('/works/')
+      (!suppliedDescription ||
+        !sourceDiscoveryBook.genre ||
+        sourceDiscoveryBook.genre === 'Open Library') &&
+      sourceDiscoveryBook.id.startsWith('/works/')
     ) {
-      getWorkDetails(discoveryBook.id)
+      getWorkDetails(sourceDiscoveryBook.id)
         .then((details) => {
           if (cancelled) return;
           if (details.description) setRemoteDescription(plainText(details.description));
@@ -318,25 +348,42 @@ export default function BookDetailScreen() {
     return () => {
       cancelled = true;
     };
-  }, [discoveryBook]);
+  }, [sourceDiscoveryBook]);
 
   const currentDiscovery = useMemo<DiscoveryBook | null>(() => {
-    if (!discoveryBook) return null;
+    if (!sourceDiscoveryBook) return null;
     return {
-      ...discoveryBook,
-      description: remoteDescription || discoveryBook.description,
-      genre: genreLabel || discoveryBook.genre || 'Other',
+      ...sourceDiscoveryBook,
+      description: remoteDescription || sourceDiscoveryBook.description,
+      genre: genreLabel || sourceDiscoveryBook.genre || 'Other',
     };
-  }, [discoveryBook, genreLabel, remoteDescription]);
+  }, [genreLabel, remoteDescription, sourceDiscoveryBook]);
 
   const [options, setOptions] = useState<AcquisitionEntry[] | null>(null);
   const [optionsError, setOptionsError] = useState<string | null>(null);
   const [nextOptionsPage, setNextOptionsPage] = useState<number | null>(null);
   const [loadingMoreOptions, setLoadingMoreOptions] = useState(false);
   const optionsGeneration = useRef(0);
-  const lookupTitle = extensionBook?.title ?? currentDiscovery?.title ?? '';
-  const lookupAuthor = extensionBook?.authors[0] ?? currentDiscovery?.author ?? '';
-  const hasAcquisitionLookup = !!extensionBook || !!currentDiscovery;
+  const acquisitionExtensionBook = acquisitionExtension?.book ?? null;
+  const acquisitionSourceExtensionId = acquisitionExtension?.extensionId ?? null;
+  const missingReadingListBook =
+    localCopyUnavailable &&
+    localBook &&
+    readingList.some((book) => book.key === localBook.key)
+      ? localBook
+      : null;
+  const lookupTitle =
+    acquisitionExtensionBook?.title ??
+    currentDiscovery?.title ??
+    missingReadingListBook?.title ??
+    '';
+  const lookupAuthor =
+    acquisitionExtensionBook?.authors[0] ??
+    currentDiscovery?.author ??
+    missingReadingListBook?.author ??
+    '';
+  const hasAcquisitionLookup =
+    !!acquisitionExtensionBook || !!currentDiscovery || !!missingReadingListBook;
 
   const loadOptionsPage = useCallback(
     async (page: number): Promise<AcquisitionOptionPage> => {
@@ -345,17 +392,20 @@ export default function BookDetailScreen() {
       if (!provider.acquisition) {
         throw new Error(`${provider.manifest.name} does not provide downloads.`);
       }
-      if (extensionBook && extensionId === acquisitionExtensionId) {
+      if (
+        acquisitionExtensionBook &&
+        acquisitionSourceExtensionId === acquisitionExtensionId
+      ) {
         if (page !== 1) return { items: [], nextPage: null };
-        if (extensionBook.acquisitions?.length) {
+        if (acquisitionExtensionBook.acquisitions?.length) {
           return {
-            items: extensionBook.acquisitions.map((acquisition) => ({
+            items: acquisitionExtensionBook.acquisitions.map((acquisition) => ({
               kind: 'option' as const,
               matchesCurrentBook: true,
-              key: `${acquisitionExtensionId}:${extensionBook.id}:${acquisition.id}`,
+              key: `${acquisitionExtensionId}:${acquisitionExtensionBook.id}:${acquisition.id}`,
               extensionId: acquisitionExtensionId,
               providerName: provider.manifest.name,
-              book: extensionBook,
+              book: acquisitionExtensionBook,
               acquisition,
             })),
             nextPage: null,
@@ -365,10 +415,10 @@ export default function BookDetailScreen() {
           items: [{
             kind: 'candidate' as const,
             matchesCurrentBook: true,
-            key: `${acquisitionExtensionId}:${extensionBook.id}`,
+            key: `${acquisitionExtensionId}:${acquisitionExtensionBook.id}`,
             extensionId: acquisitionExtensionId,
             providerName: provider.manifest.name,
-            book: extensionBook,
+            book: acquisitionExtensionBook,
           }],
           nextPage: null,
         };
@@ -410,8 +460,8 @@ export default function BookDetailScreen() {
     },
     [
       acquisitionExtensionId,
-      extensionBook,
-      extensionId,
+      acquisitionExtensionBook,
+      acquisitionSourceExtensionId,
       loadExtension,
       lookupAuthor,
       lookupTitle,
@@ -485,8 +535,9 @@ export default function BookDetailScreen() {
           }
         : moonBook;
     }
+    if (localBook) return localBook;
     if (currentDiscovery) return fromDiscoveryBook(currentDiscovery);
-    return localBook;
+    return null;
   }, [currentDiscovery, extensionBook, extensionId, localBook, moonBook]);
 
   const [libraryBusy, setLibraryBusy] = useState(false);
@@ -823,7 +874,7 @@ export default function BookDetailScreen() {
           </View>
         ) : null}
 
-        {extensionBook || currentDiscovery ? (
+        {hasAcquisitionLookup ? (
           <View className="px-6 mt-8 gap-3">
             <Text className="text-xs font-bold uppercase tracking-widest text-neutral-400">
               Download options
