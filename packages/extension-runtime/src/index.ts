@@ -3,12 +3,12 @@ import {
   parseBookAcquisition,
   parseBookMetadata,
   parseExtensionPage,
+  parseExtensionLibraryActionResult,
   type BookExtension,
   type ExtensionQuery,
   type ExtensionManifest,
   type ExtensionConfigValue,
   type ExtensionLibraryActionRequest,
-  type ExtensionLibraryActionResult,
   type ExtensionResourceName,
   type ExtensionResolveQuery,
   type ExtensionReaderSyncRequest,
@@ -666,21 +666,7 @@ function createRemoteExtension(
               endpointFor(manifest, 'libraryAction', {}),
               request,
               configuration
-            ).then((value): ExtensionLibraryActionResult => {
-              if (!value || typeof value !== 'object') {
-                throw new Error('Library action response must be an object.');
-              }
-              const result = value as Record<string, unknown>;
-              if (result.kind === 'handled') return { kind: 'handled' };
-              if (result.kind === 'openUrl' && typeof result.url === 'string') {
-                const url = new URL(result.url);
-                if (url.protocol !== 'https:') {
-                  throw new Error('Library action URLs must use HTTPS.');
-                }
-                return { kind: 'openUrl', url: url.toString() };
-              }
-              throw new Error('Library action response has an unsupported result kind.');
-            }),
+            ).then(parseExtensionLibraryActionResult),
         }
       : {}),
     ...(has('reader')

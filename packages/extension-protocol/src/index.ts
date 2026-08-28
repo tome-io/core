@@ -197,8 +197,10 @@ export interface ExtensionResolveQuery {
 
 export interface ExtensionLibraryBook extends ExtensionBookReference {
   localFile?: {
-    uri: string;
-    filename: string;
+    /** Present only for trusted host/device integrations. */
+    uri?: string;
+    /** Present only for trusted host/device integrations. */
+    filename?: string;
     format: string;
   };
 }
@@ -206,11 +208,13 @@ export interface ExtensionLibraryBook extends ExtensionBookReference {
 export interface ExtensionLibraryActionRequest {
   actionId: string;
   book: ExtensionLibraryBook;
+  platform: ExtensionPlatform;
 }
 
 export type ExtensionLibraryActionResult =
   | { kind: 'handled' }
-  | { kind: 'openUrl'; url: string };
+  | { kind: 'openUrl'; url: string }
+  | { kind: 'openLocalFile'; packageName: string };
 
 export interface ExtensionReaderSyncRequest {
   /** Present only for reviewed host/device integrations. Remote add-ons never receive local URIs. */
@@ -1027,6 +1031,38 @@ function responseUrl(value: unknown, field: string): string | undefined {
     throw new InvalidExtensionResponseError(`${field} must be a valid HTTPS URL.`);
   }
   return result;
+}
+
+export function parseExtensionLibraryActionResult(
+  input: unknown
+): ExtensionLibraryActionResult {
+  const value = record(input);
+  if (!value) {
+    throw new InvalidExtensionResponseError('Library action result must be an object.');
+  }
+  if (value.kind === 'handled') return { kind: 'handled' };
+  if (value.kind === 'openUrl') {
+    const url = responseUrl(value.url, 'libraryAction.url');
+    if (!url) {
+      throw new InvalidExtensionResponseError('libraryAction.url is required.');
+    }
+    return { kind: 'openUrl', url };
+  }
+  if (value.kind === 'openLocalFile') {
+    const packageName = responseString(
+      value.packageName,
+      'libraryAction.packageName'
+    );
+    if (!/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/.test(packageName)) {
+      throw new InvalidExtensionResponseError(
+        'libraryAction.packageName must be a valid Android package name.'
+      );
+    }
+    return { kind: 'openLocalFile', packageName };
+  }
+  throw new InvalidExtensionResponseError(
+    'Library action result has an unsupported kind.'
+  );
 }
 
 export function parseBookAcquisition(input: unknown): BookAcquisition {

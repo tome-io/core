@@ -16,12 +16,36 @@ const MAX_ARCHIVE_ENTRY_BYTES = 32 * 1024 * 1024;
 const MAX_TEXT_BYTES = 10 * 1024 * 1024;
 const MAX_SQLITE_ROWS = 20_000;
 const MAX_PROVENANCE_NODES = 25_000;
+const BOOK_MIME_TYPES: Record<string, string> = {
+  epub: 'application/epub+zip',
+  pdf: 'application/pdf',
+};
 
 interface DeviceFile {
   uri: string;
   filename: string;
   size: number;
   modificationTime: number;
+}
+
+export async function openLocalFileInAndroidPackage(
+  localFile: { uri?: string; format: string },
+  packageName: string
+): Promise<void> {
+  if (Platform.OS !== 'android') {
+    throw new Error('Opening a local book in a specific app is available only on Android.');
+  }
+  if (!localFile.uri) throw new Error('The local book URI is unavailable.');
+  const contentUri = localFile.uri.startsWith('content:')
+    ? localFile.uri
+    : await FileSystem.getContentUriAsync(localFile.uri);
+  await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+    packageName,
+    data: contentUri,
+    type: BOOK_MIME_TYPES[localFile.format.toLowerCase()] ?? 'application/octet-stream',
+    category: 'android.intent.category.DEFAULT',
+    flags: 1,
+  });
 }
 
 function finiteNumber(value: number | null | undefined): number {

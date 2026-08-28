@@ -2,9 +2,9 @@ import {
   parseBookAcquisition,
   parseBookMetadata,
   parseExtensionPage,
+  parseExtensionLibraryActionResult,
   type BookExtension,
   type ExtensionConfigValue,
-  type ExtensionLibraryActionResult,
   type ExtensionManifest,
   type ExtensionReaderSyncResult,
   type ExtensionResourceName,
@@ -810,16 +810,7 @@ export function createDeclarativeWorkflowExtension(
     ...(has('libraryAction')
       ? {
           libraryAction: (request) =>
-            run('libraryAction', request).then((value): ExtensionLibraryActionResult => {
-              const result = record(value);
-              if (result?.kind === 'handled') return { kind: 'handled' };
-              if (result?.kind === 'openUrl' && typeof result.url === 'string') {
-                const url = new URL(result.url);
-                if (url.protocol !== 'https:') throw new Error('Action URL must use HTTPS.');
-                return { kind: 'openUrl', url: url.toString() };
-              }
-              throw new Error('Library action output is invalid.');
-            }),
+            run('libraryAction', request).then(parseExtensionLibraryActionResult),
         }
       : {}),
     ...(has('reader')

@@ -24,7 +24,7 @@ import type {
   ExtensionRegistrySnapshot,
   InstalledExtension,
 } from '@tomeio/extension-runtime';
-import { Linking } from 'react-native';
+import { Linking, Platform } from 'react-native';
 
 import {
   missingRequiredConfiguration,
@@ -32,6 +32,7 @@ import {
   removeExtensionConfiguration,
   writeExtensionConfiguration,
 } from '@/lib/extension-configuration';
+import { openLocalFileInAndroidPackage } from '@/lib/device-extension-host';
 import {
   extensionLoader,
   extensionRegistry,
@@ -427,14 +428,35 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
         extension.manifest.transport.kind === 'host' ||
         extension.manifest.transport.kind === 'device'
           ? book
-          : { ...book, localFile: undefined };
-      const result = await extension.libraryAction({ actionId, book: actionBook });
+          : {
+              ...book,
+              localFile: book.localFile
+                ? {
+                    format: book.localFile.format,
+                  }
+                : undefined,
+            };
+      const platform =
+        Platform.OS === 'android' || Platform.OS === 'ios' || Platform.OS === 'web'
+          ? Platform.OS
+          : 'desktop';
+      const result = await extension.libraryAction({ actionId, book: actionBook, platform });
       if (result.kind === 'openUrl') {
         const url = new URL(result.url);
         if (url.protocol !== 'https:') {
           throw new Error('Add-on library actions may only open HTTPS URLs.');
         }
         await Linking.openURL(url.toString());
+      } else if (result.kind === 'openLocalFile') {
+        if (!extension.manifest.permissions?.androidPackages?.includes(result.packageName)) {
+          throw new Error(
+            `Add-on "${extension.manifest.name}" requested an undeclared Android package.`
+          );
+        }
+        if (!book.localFile?.uri) {
+          throw new Error('Download this book before opening it in another reading app.');
+        }
+        await openLocalFileInAndroidPackage(book.localFile, result.packageName);
       }
     },
     [load]

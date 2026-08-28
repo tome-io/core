@@ -31,10 +31,13 @@ An add-on declares its action title, icon, placements, supported platforms, form
 and whether a local file is required. Tomeio filters and renders those actions. When
 selected, the host calls the add-on's `libraryAction` handler.
 
-Remote add-ons receive book metadata but never a local file URI. Reviewed device workflows
-may receive the selected local file and invoke a narrowly registered device capability.
-This is how the Moon+ Reader add-on contributes “Open in Moon+ Reader”. A declarative
-add-on could similarly return an HTTPS Google Books link without injecting application code.
+Remote add-ons receive book metadata, the active platform, and local-file availability/format,
+but never a local file URI or filename. They may return `openLocalFile` with a package declared
+in `permissions.androidPackages`; Tomeio validates the package and performs the handoff itself.
+Reviewed device workflows may additionally receive the selected local file and invoke a narrowly
+registered device capability. This is how the Moon+ Reader add-on contributes “Open in Moon+
+Reader”, while the Google Books add-on can hand EPUB/PDF files to Google Play Books and fall back
+to an HTTPS Google Books page when no compatible local file exists.
 
 ## Transports and trust
 

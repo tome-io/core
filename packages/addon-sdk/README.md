@@ -48,3 +48,7 @@ fixed capabilities for selected-directory scanning, bounded file/ZIP reads, read
 SQLite, Android preferences, and allow-listed file-open intents. Reader-specific parsing,
 queries, mappings, package ids, and action declarations stay in the extension repository;
 Tomeio core provides only the capability interpreter.
+
+Library-action requests include the active platform and safe local-file availability/format
+metadata. Remote add-ons never receive a local URI or filename. An action may return
+`openLocalFile` with a manifest-approved Android package; Tomeio performs the file handoff.
