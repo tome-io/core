@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 
 import { colors, usePageBottomPadding, usePageGutter } from '@/components/app-ui';
-import { Rail } from '@/components/poster';
+import { ProviderAttribution, Rail } from '@/components/poster';
 import { useExtensions } from '@/context/extensions-context';
 import { useLibraryCatalog } from '@/context/library-context';
 import { bookPriceLabel, bookSourceUrl } from '@/lib/book-offers';
@@ -120,14 +120,12 @@ function HomeFeedRail({
   onOpenBook,
   onOpenCategory,
   onRetry,
-  attribution,
 }: {
   feed: FeedConfig;
   state: FeedState;
   onOpenBook: (book: ProviderFeedBook) => void;
   onOpenCategory: (feed: FeedConfig) => void;
   onRetry: (feed: FeedConfig) => void;
-  attribution?: { label: string; url: string; imageUrl?: string };
 }) {
   const onPressBook = useCallback(
     (book: ProviderFeedBook) => onOpenBook(book),
@@ -145,7 +143,6 @@ function HomeFeedRail({
       onPressBook={onPressBook}
       onSeeAll={onSeeAll}
       onRetry={handleRetry}
-      attribution={attribution}
     />
   );
 }
@@ -155,11 +152,13 @@ function HomeListHeader({
   continueReading,
   onOpenLibraryBook,
   onSeeAllContinue,
+  attribution,
 }: {
   gutter: number;
   continueReading: LibraryBook[];
   onOpenLibraryBook: (book: LibraryBook) => void;
   onSeeAllContinue: () => void;
+  attribution?: { label: string; url: string; imageUrl?: string };
 }) {
   return (
     <View>
@@ -171,6 +170,11 @@ function HomeListHeader({
           onPressBook={onOpenLibraryBook}
           onSeeAll={onSeeAllContinue}
         />
+      ) : null}
+      {attribution ? (
+        <View className="mb-4" style={{ paddingHorizontal: gutter }}>
+          <ProviderAttribution attribution={attribution} />
+        </View>
       ) : null}
     </View>
   );
@@ -329,9 +333,16 @@ export default function HomeScreen() {
         continueReading={continueReading}
         onOpenLibraryBook={openLibraryBook}
         onSeeAllContinue={openContinueReading}
+        attribution={discoveryManifest?.attribution}
       />
     ),
-    [continueReading, gutter, openContinueReading, openLibraryBook]
+    [
+      continueReading,
+      discoveryManifest?.attribution,
+      gutter,
+      openContinueReading,
+      openLibraryBook,
+    ]
   );
   const contentContainerStyle = useMemo(
     () => ({ paddingTop: 12, paddingBottom: bottomPadding }),
@@ -346,10 +357,9 @@ export default function HomeScreen() {
         onOpenBook={openBook}
         onOpenCategory={openCategory}
         onRetry={retryFeed}
-        attribution={discoveryManifest?.attribution}
       />
     ),
-    [discoveryManifest?.attribution, feeds, openBook, openCategory, retryFeed]
+    [feeds, openBook, openCategory, retryFeed]
   );
 
   const requestFeedRef = useRef(requestFeed);

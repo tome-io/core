@@ -63,9 +63,9 @@ export function PosterCard<T extends FeedBook>({
           </View>
         )}
         <RatingChip rating={book.rating} />
-        {book.sourceUrl ? (
+        {book.sourceUrl && book.priceLabel ? (
           <Pressable
-            accessibilityLabel={book.priceLabel ? `${book.priceLabel}; open source` : 'Open source'}
+            accessibilityLabel={`${book.priceLabel}; open source`}
             accessibilityRole="link"
             onPress={(event) => {
               event.stopPropagation();
@@ -74,7 +74,7 @@ export function PosterCard<T extends FeedBook>({
             style={styles.priceBadge}
           >
             <Text numberOfLines={1} style={styles.priceText}>
-              {book.priceLabel ?? 'View ↗'}
+              {book.priceLabel}
             </Text>
           </Pressable>
         ) : null}
@@ -221,7 +221,6 @@ export function Rail<T extends FeedBook>({
   onPressBook,
   onSeeAll,
   onRetry,
-  attribution,
   emptyLabel = 'No books available.',
 }: {
   title: string;
@@ -231,7 +230,6 @@ export function Rail<T extends FeedBook>({
   onPressBook: (book: T) => void;
   onSeeAll?: () => void;
   onRetry?: () => void;
-  attribution?: { label: string; url: string; imageUrl?: string };
   emptyLabel?: string;
 }) {
   const gutter = usePageGutter();
@@ -285,27 +283,33 @@ export function Rail<T extends FeedBook>({
           <Text className="text-xs text-neutral-500">{emptyLabel}</Text>
         </View>
       )}
-      {attribution && books.length ? (
-        <Pressable
-          onPress={() => void Linking.openURL(attribution.url)}
-          accessibilityRole="link"
-          className="mt-3 self-start"
-          style={{ marginLeft: gutter }}
-        >
-          {attribution.imageUrl ? (
-            <Image
-              source={{ uri: attribution.imageUrl }}
-              accessibilityLabel={attribution.label}
-              contentFit="contain"
-              style={{ width: 62, height: 30 }}
-            />
-          ) : (
-            <Text className="text-[11px] font-medium" style={{ color: colors.textMuted }}>
-              {attribution.label}
-            </Text>
-          )}
-        </Pressable>
-      ) : null}
     </View>
+  );
+}
+
+export function ProviderAttribution({
+  attribution,
+}: {
+  attribution: { label: string; url: string; imageUrl?: string };
+}) {
+  return (
+    <Pressable
+      onPress={() => void Linking.openURL(attribution.url)}
+      accessibilityRole="link"
+      accessibilityLabel={attribution.label}
+      className="self-end"
+    >
+      {attribution.imageUrl ? (
+        <Image
+          source={{ uri: attribution.imageUrl }}
+          contentFit="contain"
+          style={{ width: 62, height: 22 }}
+        />
+      ) : (
+        <Text className="text-[11px] font-medium" style={{ color: colors.textMuted }}>
+          {attribution.label}
+        </Text>
+      )}
+    </Pressable>
   );
 }

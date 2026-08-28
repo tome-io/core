@@ -96,9 +96,9 @@ export const BookCard = memo(function BookCard({ book, onPress, onLongPress, wid
           </View>
         )}
         <RatingChip rating={book.rating} />
-        {book.sourceUrl ? (
+        {book.sourceUrl && book.priceLabel ? (
           <Pressable
-            accessibilityLabel={book.priceLabel ? `${book.priceLabel}; open source` : 'Open source'}
+            accessibilityLabel={`${book.priceLabel}; open source`}
             accessibilityRole="link"
             onPress={(event) => {
               event.stopPropagation();
@@ -107,7 +107,7 @@ export const BookCard = memo(function BookCard({ book, onPress, onLongPress, wid
             style={styles.priceBadge}
           >
             <Text numberOfLines={1} style={styles.priceText}>
-              {book.priceLabel ?? 'View ↗'}
+              {book.priceLabel}
             </Text>
           </Pressable>
         ) : null}

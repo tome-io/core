@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -150,6 +151,8 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
   const [discoveryExtensionId, setDiscoveryExtensionId] = useState<string | null>(null);
   const [searchExtensionId, setSearchExtensionId] = useState<string | null>(null);
   const [acquisitionExtensionId, setAcquisitionExtensionId] = useState<string | null>(null);
+  const discoveryExtensionIdRef = useRef<string | null>(null);
+  const searchExtensionIdRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     const next = await extensionRegistry.list();
@@ -206,6 +209,8 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
         ? writeAcquisitionExtensionId(selectedAcquisition)
         : Promise.resolve(),
     ]);
+    discoveryExtensionIdRef.current = selectedDiscovery;
+    searchExtensionIdRef.current = selectedSearch;
     setDiscoveryExtensionId(selectedDiscovery);
     setSearchExtensionId(selectedSearch);
     setAcquisitionExtensionId(selectedAcquisition);
@@ -357,6 +362,9 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
   );
   const search = useCallback(
     async (id: string, query: ExtensionQuery) => {
+      if (id !== searchExtensionIdRef.current) {
+        throw new Error(`Extension "${id}" is not the active search provider.`);
+      }
       const extension = await load(id);
       if (!extension.search) throw new Error(`Extension "${id}" does not provide search.`);
       return extension.search(query);
@@ -365,6 +373,9 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
   );
   const catalog = useCallback(
     async (id: string, query: ExtensionQuery) => {
+      if (id !== discoveryExtensionIdRef.current) {
+        throw new Error(`Extension "${id}" is not the active discovery provider.`);
+      }
       const extension = await load(id);
       if (!extension.catalog) throw new Error(`Extension "${id}" does not provide catalogs.`);
       return extension.catalog(query);
@@ -478,6 +489,7 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
         throw new Error(`Extension "${id}" is not an enabled search provider.`);
       }
       await writeSearchExtensionId(id);
+      searchExtensionIdRef.current = id;
       setSearchExtensionId(id);
     },
     [snapshot]
@@ -494,6 +506,7 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
         throw new Error(`Extension "${id}" is not an enabled discovery provider.`);
       }
       await writeDiscoveryExtensionId(id);
+      discoveryExtensionIdRef.current = id;
       setDiscoveryExtensionId(id);
     },
     [snapshot]
