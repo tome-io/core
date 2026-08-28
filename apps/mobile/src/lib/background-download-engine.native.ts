@@ -35,7 +35,7 @@ export function configureBackgroundDownloads(): void {
     progressMinBytes: 256 * 1024,
     showNotificationsEnabled: true,
     showCompletionNotification: false,
-    showCancelAction: false,
+    showCancelAction: true,
     notificationsGrouping: {
       enabled: true,
       mode: 'individual',
