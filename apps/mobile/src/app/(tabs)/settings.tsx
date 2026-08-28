@@ -14,6 +14,7 @@ import {
   Pressable,
   ScrollView,
   Text,
+  TextInput,
   useWindowDimensions,
   View,
   type NativeScrollEvent,
@@ -50,6 +51,14 @@ import {
 } from '@/lib/launcher-icon';
 import { validateProgressFolder } from '@/lib/progress-folder-provider';
 import { forgetProgressSyncFolder } from '@/lib/progress-sync';
+import {
+  getHostedSyncAccount,
+  loginHostedSync,
+  logoutHostedSync,
+  registerHostedSync,
+  synchronizeHostedProgress,
+  type HostedSyncAccount,
+} from '@/lib/hosted-sync';
 import type { FolderLocationSetting } from '@/lib/settings';
 import { forgetNativeDirectory } from '../../../modules/expo-progress-folder/src';
 
@@ -285,6 +294,68 @@ function FolderField({
   );
 }
 
+function HostedSyncDialog({
+  visible,
+  busy,
+  onClose,
+  onSubmit,
+}: {
+  visible: boolean;
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: (mode: 'login' | 'register', email: string, password: string) => void;
+}) {
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+
+  return (
+    <AppDialog visible={visible} title={mode === 'login' ? 'Tomeio Sync' : 'Create sync account'} onClose={onClose}>
+      <Text className="mb-4 text-sm leading-5" style={{ color: colors.textMuted }}>
+        Sync is optional. Your library remains available on this device without an account.
+      </Text>
+      <View className="gap-3">
+        <TextInput
+          value={email}
+          onChangeText={setEmail}
+          editable={!busy}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="email-address"
+          placeholder="Email"
+          placeholderTextColor={colors.textMuted}
+          className="h-14 px-5 text-[15px]"
+          style={{ color: colors.text, backgroundColor: colors.surfaceRaised, borderRadius: 999 }}
+        />
+        <TextInput
+          value={password}
+          onChangeText={setPassword}
+          editable={!busy}
+          autoCapitalize="none"
+          autoCorrect={false}
+          secureTextEntry
+          placeholder="Password"
+          placeholderTextColor={colors.textMuted}
+          className="h-14 px-5 text-[15px]"
+          style={{ color: colors.text, backgroundColor: colors.surfaceRaised, borderRadius: 999 }}
+        />
+        <PillButton
+          label={busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
+          variant="accent"
+          disabled={busy || !email.trim() || password.length < 10}
+          onPress={() => onSubmit(mode, email.trim(), password)}
+        />
+        <PillButton
+          label={mode === 'login' ? 'Create an account' : 'I already have an account'}
+          variant="overlay"
+          disabled={busy}
+          onPress={() => setMode((current) => current === 'login' ? 'register' : 'login')}
+        />
+      </View>
+    </AppDialog>
+  );
+}
+
 export default function SettingsScreen() {
   const { width } = useWindowDimensions();
   const gutter = usePageGutter();
@@ -300,10 +371,15 @@ export default function SettingsScreen() {
   const [launcherIcon, setLauncherIcon] = useState<LauncherIcon>('full');
   const [launcherIconBusy, setLauncherIconBusy] = useState(false);
   const [launcherIconError, setLauncherIconError] = useState<string | null>(null);
+  const [hostedSyncAccount, setHostedSyncAccount] = useState<HostedSyncAccount | null>(null);
+  const [hostedSyncDialog, setHostedSyncDialog] = useState(false);
+  const [hostedSyncBusy, setHostedSyncBusy] = useState(false);
+  const [hostedSyncLastSyncedAt, setHostedSyncLastSyncedAt] = useState<number | null>(null);
+  const [hostedSyncError, setHostedSyncError] = useState<string | null>(null);
   const extensions = useExtensions();
   const { settings, update } = useSettings();
   const { cloudLastSyncedAt, cloudSyncing } = useLibrarySyncStatus();
-  const { syncCloudProgress } = useLibraryActions();
+  const { refreshLocalBooks, syncCloudProgress } = useLibraryActions();
 
   const enabledManifests = useMemo(
     () => [
@@ -354,6 +430,18 @@ export default function SettingsScreen() {
       })
       .catch((cause) => {
         setLauncherIconError(cause instanceof Error ? cause.message : String(cause));
+      });
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    getHostedSyncAccount()
+      .then((account) => {
+        setHostedSyncAccount(account);
+        setHostedSyncError(null);
+      })
+      .catch((cause) => {
+        setHostedSyncError(cause instanceof Error ? cause.message : String(cause));
       });
   }, []);
 
@@ -452,6 +540,64 @@ export default function SettingsScreen() {
       await syncCloudProgress();
     } catch (cause) {
       Alert.alert('Progress sync failed', cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
+  const submitHostedSync = async (
+    mode: 'login' | 'register',
+    email: string,
+    password: string,
+  ) => {
+    setHostedSyncBusy(true);
+    try {
+      const account = await (mode === 'login'
+        ? loginHostedSync(email, password)
+        : registerHostedSync(email, password));
+      setHostedSyncAccount(account);
+      setHostedSyncError(null);
+      setHostedSyncDialog(false);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setHostedSyncError(message);
+      Alert.alert(mode === 'login' ? 'Could not sign in' : 'Could not create account', message);
+    } finally {
+      setHostedSyncBusy(false);
+    }
+  };
+
+  const syncHostedNow = async () => {
+    setHostedSyncBusy(true);
+    try {
+      const result = await synchronizeHostedProgress();
+      await refreshLocalBooks();
+      setHostedSyncLastSyncedAt(result.syncedAt);
+      setHostedSyncError(
+        result.unmatchedRecords > 0
+          ? `${result.unmatchedRecords} remote book${result.unmatchedRecords === 1 ? '' : 's'} could not be matched on this device.`
+          : null
+      );
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setHostedSyncError(message);
+      Alert.alert('Tomeio Sync failed', message);
+    } finally {
+      setHostedSyncBusy(false);
+    }
+  };
+
+  const signOutHostedSync = async () => {
+    setHostedSyncBusy(true);
+    try {
+      await logoutHostedSync();
+      setHostedSyncAccount(null);
+      setHostedSyncLastSyncedAt(null);
+      setHostedSyncError(null);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setHostedSyncError(message);
+      Alert.alert('Could not sign out', message);
+    } finally {
+      setHostedSyncBusy(false);
     }
   };
 
@@ -572,8 +718,54 @@ export default function SettingsScreen() {
         >
           <SettingsOption
             compact={compactOptions}
-            label="Sync folder"
-            detail="Use Google Drive directly or a local folder mirrored by FolderSync. Tomeio keeps the furthest progress from each device."
+            label="Tomeio Sync"
+            detail={
+              Platform.OS === 'web'
+                ? 'Secure account sync is available in the Android and iOS apps.'
+                : hostedSyncError ?? hostedSyncAccount?.email ?? 'Optional sync for Tomeio and KOReader devices.'
+            }
+          >
+            {hostedSyncAccount ? (
+              <PillButton
+                label={hostedSyncBusy ? 'Please wait…' : 'Sign out'}
+                icon="log-out"
+                variant="overlay"
+                disabled={hostedSyncBusy}
+                onPress={() => void signOutHostedSync()}
+              />
+            ) : (
+              <PillButton
+                label="Sign in"
+                icon="log-in"
+                variant="accent"
+                disabled={Platform.OS === 'web'}
+                onPress={() => setHostedSyncDialog(true)}
+              />
+            )}
+          </SettingsOption>
+          {hostedSyncAccount ? (
+            <SettingsOption
+              compact={compactOptions}
+              label="Synchronize Tomeio"
+              detail={
+                hostedSyncLastSyncedAt
+                  ? `Last synced ${new Date(hostedSyncLastSyncedAt).toLocaleString()}`
+                  : 'Sync progress with your other Tomeio and KOReader devices.'
+              }
+            >
+              <PillButton
+                label={hostedSyncBusy ? 'Syncing…' : 'Sync now'}
+                icon={hostedSyncBusy ? undefined : 'refresh-cw'}
+                variant="accent"
+                disabled={hostedSyncBusy}
+                onPress={() => void syncHostedNow()}
+              />
+            </SettingsOption>
+          ) : null}
+          <SettingsOption
+            compact={compactOptions}
+            label="Legacy sync folder"
+            detail="Keep using Google Drive or a mirrored local folder during the hosted-sync transition."
           >
             <FolderField
               location={settings.progressSyncLocation}
@@ -645,6 +837,14 @@ export default function SettingsScreen() {
         onSelect={(icon) => void chooseLauncherIcon(icon)}
         onClose={() => {
           if (!launcherIconBusy) setLauncherIconPicker(false);
+        }}
+      />
+      <HostedSyncDialog
+        visible={hostedSyncDialog}
+        busy={hostedSyncBusy}
+        onSubmit={(mode, email, password) => void submitHostedSync(mode, email, password)}
+        onClose={() => {
+          if (!hostedSyncBusy) setHostedSyncDialog(false);
         }}
       />
     </View>

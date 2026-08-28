@@ -13,6 +13,7 @@ import {
 } from './progress-folder-provider';
 import {
   mergeProgressRecords,
+  isProgressSyncRecord,
   PROGRESS_SYNC_KIND,
   PROGRESS_SYNC_VERSION,
   type ProgressSyncDocument,
@@ -48,7 +49,7 @@ function createDeviceId(): string {
   return `${Date.now().toString(36)}-${random()}-${random()}`;
 }
 
-async function getDeviceId(): Promise<string> {
+export async function getProgressSyncDeviceId(): Promise<string> {
   const stored = await AsyncStorage.getItem(DEVICE_ID_KEY);
   if (stored) return stored;
   const deviceId = createDeviceId();
@@ -58,26 +59,6 @@ async function getDeviceId(): Promise<string> {
 
 function syncFilename(deviceId: string): string {
   return `${SYNC_FILENAME_PREFIX}${deviceId}.json`;
-}
-
-function validRecord(value: unknown): value is ProgressSyncRecord {
-  if (!value || typeof value !== 'object') return false;
-  const record = value as Partial<ProgressSyncRecord>;
-  return (
-    typeof record.identity === 'string' &&
-    Array.isArray(record.aliases) &&
-    record.aliases.every((alias) => typeof alias === 'string') &&
-    typeof record.title === 'string' &&
-    typeof record.author === 'string' &&
-    typeof record.format === 'string' &&
-    typeof record.progress === 'number' &&
-    Number.isFinite(record.progress) &&
-    typeof record.isRead === 'boolean' &&
-    typeof record.updatedAt === 'number' &&
-    Number.isFinite(record.updatedAt) &&
-    (record.removedAt == null ||
-      (typeof record.removedAt === 'number' && Number.isFinite(record.removedAt)))
-  );
 }
 
 function parseSyncDocument(contents: string, required: boolean): ProgressSyncDocument | null {
@@ -107,7 +88,7 @@ function parseSyncDocument(contents: string, required: boolean): ProgressSyncDoc
   ) {
     throw new Error('The sync progress file has no device identifier.');
   }
-  if (!Array.isArray(document.records) || !document.records.every(validRecord)) {
+  if (!Array.isArray(document.records) || !document.records.every(isProgressSyncRecord)) {
     throw new Error('The sync progress file contains invalid reading records.');
   }
 
@@ -196,7 +177,7 @@ export async function synchronizeProgressFolder(
     throw new Error('Progress folder sync requires a user-selected shared folder.');
   }
 
-  const deviceId = await getDeviceId();
+  const deviceId = await getProgressSyncDeviceId();
   const located = await locateSyncFiles(directoryUri, deviceId);
   const localRecords = await loadProgressSyncRecords();
   const folderRecords = located.documents.flatMap((document) => document.records);
@@ -249,7 +230,7 @@ export async function synchronizeProgressFolder(
 }
 
 export async function forgetProgressSyncFolder(directoryUri: string): Promise<void> {
-  const deviceId = await getDeviceId();
+  const deviceId = await getProgressSyncDeviceId();
   await AsyncStorage.multiRemove([
     `${PREVIOUS_LOCATOR_PREFIX}${deviceId}:${directoryUri}`,
     `${LEGACY_LOCATOR_PREFIX}${directoryUri}`,

@@ -1,4 +1,5 @@
 export {
+  isProgressSyncRecord,
   isProgressRecordRemoved,
   mergeProgressRecords,
   PROGRESS_SYNC_KIND,

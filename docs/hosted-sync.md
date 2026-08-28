@@ -1,0 +1,41 @@
+# Hosted progress sync
+
+Hosted sync is optional and additive to the existing progress-folder workflow. The
+service implementation lives in `tome-io/sync`; this repository owns the app client,
+local merge, secure session storage, and KOReader-compatible book hashing.
+
+## App behavior
+
+- Users can use Tomeio without creating an account.
+- Android and iOS store only access and refresh tokens in Expo SecureStore.
+- Web does not offer account sync because this client does not downgrade secrets to
+  unencrypted browser storage.
+- The existing Drive/iCloud/shared-folder setting remains available as **Legacy sync
+  folder** during migration.
+- Hosted sync is manual in this foundation branch. Automatic lifecycle triggers should
+  be added only after the staging service has been exercised across multiple devices.
+
+The service origin defaults to `https://sync.tomeio.app`. A development build can set
+`EXPO_PUBLIC_SYNC_URL` to a staging Worker origin.
+
+## Book matching
+
+For local files, Tomeio reproduces KOReader's partial-MD5 sampling algorithm and sends
+that digest as the primary document identifier. It also sends a hash of Tomeio's logical
+book identity as an alias. A device without the local file can therefore resolve the
+same account-scoped book after another Tomeio device registers the file digest.
+
+The current client maps an incoming KOReader update by percentage. Exact CREngine
+XPointer-to-EPUB-locator conversion remains a later interoperability stage.
+
+## Kindle setup
+
+After the Worker is deployed and registration is enabled:
+
+1. Create a Tomeio Sync account in the app.
+2. In KOReader, open **Progress sync** and set the custom server to
+   `https://sync.tomeio.app`.
+3. Sign in with the same email and password.
+4. Keep KOReader's binary checksum mode enabled.
+
+No Tomeio KOReader plugin is required for progress sync.

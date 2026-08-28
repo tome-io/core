@@ -25,6 +25,26 @@ export interface ProgressSyncDocument {
   records: ProgressSyncRecord[];
 }
 
+export function isProgressSyncRecord(value: unknown): value is ProgressSyncRecord {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Partial<ProgressSyncRecord>;
+  return (
+    typeof record.identity === 'string' &&
+    Array.isArray(record.aliases) &&
+    record.aliases.every((alias) => typeof alias === 'string') &&
+    typeof record.title === 'string' &&
+    typeof record.author === 'string' &&
+    typeof record.format === 'string' &&
+    typeof record.progress === 'number' &&
+    Number.isFinite(record.progress) &&
+    typeof record.isRead === 'boolean' &&
+    typeof record.updatedAt === 'number' &&
+    Number.isFinite(record.updatedAt) &&
+    (record.removedAt == null ||
+      (typeof record.removedAt === 'number' && Number.isFinite(record.removedAt)))
+  );
+}
+
 function newerRecord(left: ProgressSyncRecord, right: ProgressSyncRecord): ProgressSyncRecord {
   if (left.isRead !== right.isRead) return left.isRead ? left : right;
   if (left.progress !== right.progress) return left.progress > right.progress ? left : right;

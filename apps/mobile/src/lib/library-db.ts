@@ -960,6 +960,31 @@ export async function loadProgressSyncRecords(): Promise<ProgressSyncRecord[]> {
   return mergeProgressRecords(activeRecords, tombstones);
 }
 
+export interface ProgressSyncLocalDocument {
+  identity: string;
+  aliases: string[];
+  uri: string;
+  format: string;
+}
+
+export async function loadProgressSyncLocalDocuments(): Promise<ProgressSyncLocalDocument[]> {
+  const database = await getLibraryDatabase();
+  const rows = await progressSnapshotRows(database);
+  return rows.flatMap((row) => {
+    const record = rowProgressRecord(row);
+    if (!record) return [];
+    const book = parseBook(row.book_json);
+    const uri = book.local?.uri ?? book.fileUri;
+    if (!uri) return [];
+    return [{
+      identity: record.identity,
+      aliases: record.aliases,
+      uri,
+      format: book.local?.format ?? book.format ?? '',
+    }];
+  });
+}
+
 async function loadProgressTombstones(
   database: SQLiteDatabase
 ): Promise<ProgressSyncRecord[]> {
