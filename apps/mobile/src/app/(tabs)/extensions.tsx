@@ -478,6 +478,7 @@ function ConfigurationSheet({
                     }))
                   }
                   secureTextEntry={field.type === 'password'}
+                  selectTextOnFocus={field.type === 'password'}
                   keyboardType={field.type === 'number' ? 'numeric' : 'default'}
                   autoCapitalize="none"
                   autoCorrect={false}
