@@ -10,7 +10,7 @@
 
 ## Current release
 
-- Browse and search books from built-in sources.
-- Download compatible formats and organize your local library.
-- Keep your reading list and progress between sessions.
-- Add compatible Tomeio extensions for more sources.
+- Choose which providers power Home, search, and downloads.
+- Install Tomeio add-ons for additional book sources.
+- Improved download reliability and local library indexing.
+- Sync reading progress using a shared folder.
