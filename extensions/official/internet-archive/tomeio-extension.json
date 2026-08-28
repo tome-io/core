@@ -11,6 +11,7 @@
     { "name": "catalog", "supportsPagination": true },
     { "name": "search", "supportsPagination": true },
     { "name": "meta" },
+    { "name": "resolve", "supportsPagination": true },
     { "name": "acquisition" }
   ],
   "catalogs": [

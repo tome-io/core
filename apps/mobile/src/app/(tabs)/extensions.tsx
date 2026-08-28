@@ -15,6 +15,7 @@ import {
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
   ScrollView,
   Share,
@@ -35,14 +36,17 @@ import {
   usePageBottomPadding,
 } from '@/components/app-ui';
 import { useExtensions } from '@/context/extensions-context';
+import { isSafLocation, pickDownloadFolder } from '@/lib/download';
+import { beginFolderPicker, endFolderPicker } from '@/lib/folder-picker-lock';
 
 type FeatherName = ComponentProps<typeof Feather>['name'];
-type ScopeFilter = 'all' | 'enabled';
+type ScopeFilter = 'installed' | 'community' | 'enabled';
 type ResourceFilter = 'all' | ExtensionResourceName;
 type FilterPicker = 'scope' | 'resource';
 
 const SCOPE_FILTERS: { label: string; value: ScopeFilter }[] = [
-  { label: 'Installed', value: 'all' },
+  { label: 'Installed', value: 'installed' },
+  { label: 'Community', value: 'community' },
   { label: 'Enabled', value: 'enabled' },
 ];
 
@@ -51,14 +55,20 @@ const RESOURCE_FILTERS: { label: string; value: ResourceFilter }[] = [
   { label: 'Catalogs', value: 'catalog' },
   { label: 'Search', value: 'search' },
   { label: 'Metadata', value: 'meta' },
+  { label: 'Resolution', value: 'resolve' },
   { label: 'Downloads', value: 'acquisition' },
+  { label: 'Readers', value: 'reader' },
+  { label: 'Library actions', value: 'libraryAction' },
 ];
 
 const RESOURCE_LABELS: Record<ExtensionResourceName, string> = {
   catalog: 'Catalogs',
   search: 'Search',
   meta: 'Metadata',
+  resolve: 'Resolution',
   acquisition: 'Downloads',
+  reader: 'Reader sync',
+  libraryAction: 'Library actions',
 };
 
 type ExtensionBranding = {
@@ -92,10 +102,25 @@ const BRANDING: Record<string, ExtensionBranding> = {
     logoScale: 0.94,
   },
   'community.tomeio.zlibrary': { color: '#8a3945', icon: 'book', mark: 'Z' },
+  'community.tomeio.moon-reader': {
+    color: '#2f6fb0',
+    icon: 'moon',
+    mark: 'M+',
+    logoScale: 1,
+  },
 };
 
 function brandingFor(manifest: ExtensionManifest): ExtensionBranding {
   return BRANDING[manifest.id] ?? { color: '#3d375c', icon: 'package' as const, mark: 'R' };
+}
+
+function directoryLabel(value: string): string {
+  const segment = value.split('/').pop() || value;
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
 }
 
 function ExtensionLogo({
@@ -150,6 +175,7 @@ function ExtensionCard({
   installed,
   wide,
   onConfigure,
+  onInstall,
   onRemove,
   onShare,
 }: {
@@ -157,6 +183,7 @@ function ExtensionCard({
   installed?: InstalledExtension;
   wide: boolean;
   onConfigure: () => void;
+  onInstall?: () => void;
   onRemove: () => void;
   onShare: () => void;
 }) {
@@ -180,7 +207,10 @@ function ExtensionCard({
         opacity: enabled ? 1 : 0.62,
       }}
     >
-      <View className="flex-row flex-1 items-center" style={{ gap: cardPadding }}>
+      <View
+        className={wide ? 'flex-row flex-1 items-start' : 'flex-row items-start'}
+        style={{ gap: cardPadding }}
+      >
         <ExtensionLogo manifest={manifest} size={wide ? 104 : 60} radius={logoRadius} />
         <View className="flex-1">
           <View className="flex-row flex-wrap items-baseline gap-x-2">
@@ -201,39 +231,62 @@ function ExtensionCard({
             {manifest.description}
           </Text>
           <Text className="mt-2 text-[10px] font-semibold uppercase tracking-wider text-neutral-600">
-            {installed ? 'Third party' : 'Official'}
+            {installed?.source === 'community'
+              ? 'Community'
+              : installed
+                ? 'Third party'
+                : onInstall
+                  ? 'Community'
+                  : 'Official'}
             {manifest.author ? ` · ${manifest.author}` : ''}
           </Text>
         </View>
       </View>
 
-      <View className={wide ? 'w-72 gap-2' : 'flex-row flex-wrap items-center gap-2'}>
-        <View className={wide ? 'flex-row gap-3' : 'flex-row gap-2'}>
-          {!!manifest.config?.length ? (
-            <Pressable
-              onPress={onConfigure}
-              accessibilityLabel={`Configure ${manifest.name}`}
-              className="h-12 w-12 items-center justify-center active:opacity-75"
-              style={{ backgroundColor: colors.success, borderRadius: 24 }}
-            >
-              <Feather name="settings" size={21} color="white" />
-            </Pressable>
-          ) : null}
+      <View
+        className={`${wide ? 'w-72' : 'w-full'} flex-row flex-wrap items-center justify-center gap-2`}
+      >
+        {!!manifest.config?.length && (installed || !onInstall) ? (
           <Pressable
-            onPress={onRemove}
-            disabled={!installed}
-            className="h-12 min-w-[156px] flex-1 items-center justify-center border-2 px-6 active:opacity-75 disabled:opacity-45"
-            style={{ borderColor: colors.textMuted, borderRadius: 24 }}
+            onPress={onConfigure}
+            accessibilityLabel={`Configure ${manifest.name}`}
+            className="h-12 flex-row items-center justify-center gap-2 px-6 active:opacity-75"
+            style={{
+              backgroundColor: colors.success,
+              borderRadius: 24,
+              flexBasis: 156,
+              flexGrow: 1,
+            }}
           >
-            <Text className="text-sm font-semibold" style={{ color: colors.textMuted }}>
-              Uninstall
-            </Text>
+            <Feather name="settings" size={19} color="white" />
+            <Text className="text-sm font-semibold text-white">Configure</Text>
           </Pressable>
-        </View>
+        ) : null}
+        <Pressable
+          onPress={installed ? onRemove : onInstall}
+          disabled={!installed && !onInstall}
+          className="h-12 items-center justify-center border-2 px-6 active:opacity-75 disabled:opacity-45"
+          style={{
+            borderColor: colors.textMuted,
+            borderRadius: 24,
+            flexBasis: 156,
+            flexGrow: 1,
+          }}
+        >
+          <Text className="text-sm font-semibold" style={{ color: colors.textMuted }}>
+            {installed ? 'Uninstall' : onInstall ? 'Install' : 'Bundled'}
+          </Text>
+        </Pressable>
         {installed ? (
           <Pressable
             onPress={onShare}
-            className="h-11 flex-row items-center justify-center gap-3 active:opacity-70"
+            className="h-12 flex-row items-center justify-center gap-3 border-2 px-6 active:opacity-70"
+            style={{
+              borderColor: colors.textMuted,
+              borderRadius: 24,
+              flexBasis: 156,
+              flexGrow: 1,
+            }}
           >
             <Feather name="share-2" size={19} color={colors.text} />
             <Text className="text-sm font-bold" style={{ color: colors.text }}>
@@ -296,6 +349,32 @@ function ConfigurationSheet({
     }
   };
 
+  const chooseDirectory = async (fieldKey: string, current: unknown) => {
+    if (Platform.OS !== 'android') {
+      Alert.alert(
+        'Not supported here',
+        'Reader add-on folders currently use Android Storage Access Framework.'
+      );
+      return;
+    }
+    beginFolderPicker();
+    try {
+      const picked = await pickDownloadFolder(
+        typeof current === 'string' && isSafLocation(current) ? current : null
+      );
+      if (picked) {
+        setValues((existing) => ({ ...existing, [fieldKey]: picked.uri }));
+      }
+    } catch (cause) {
+      Alert.alert(
+        'Folder picker failed',
+        cause instanceof Error ? cause.message : String(cause)
+      );
+    } finally {
+      endFolderPicker();
+    }
+  };
+
   return (
     <AppDialog
       visible={!!manifest}
@@ -314,6 +393,25 @@ function ConfigurationSheet({
         >
           {manifest?.config?.map((field) => {
             const value = values[field.key] ?? field.default ?? '';
+            if (field.type === 'directory') {
+              const label =
+                typeof value === 'string' && value
+                  ? directoryLabel(value)
+                  : 'Choose folder';
+              return (
+                <View key={field.key} className="gap-2">
+                  <Text className="text-xs text-neutral-400">
+                    {field.title}
+                    {field.required ? ' *' : ''}
+                  </Text>
+                  <SelectField
+                    label={label}
+                    icon="folder"
+                    onPress={() => void chooseDirectory(field.key, value)}
+                  />
+                </View>
+              );
+            }
             if (field.type === 'checkbox') {
               return (
                 <Pressable
@@ -462,7 +560,7 @@ export default function ExtensionsScreen() {
   const { width } = useWindowDimensions();
   const bottomPadding = usePageBottomPadding(42);
   const wide = width >= 1050;
-  const [scope, setScope] = useState<ScopeFilter>('all');
+  const [scope, setScope] = useState<ScopeFilter>('installed');
   const [resource, setResource] = useState<ResourceFilter>('all');
   const [query, setQuery] = useState('');
   const [filterPicker, setFilterPicker] = useState<FilterPicker | null>(null);
@@ -476,13 +574,23 @@ export default function ExtensionsScreen() {
     const bundled = extensions.bundled.map((manifest) => ({
       manifest,
       installed: undefined,
+      community: false,
     }));
     const thirdParty = extensions.thirdParty.map((installed) => ({
       manifest: installed.manifest,
       installed,
+      community: installed.source === 'community',
     }));
+    const community = extensions.community.map((definition) => ({
+      manifest: definition.manifest,
+      installed: extensions.thirdParty.find(
+        (candidate) => candidate.manifest.id === definition.manifest.id
+      ),
+      community: true,
+    }));
+    const source = scope === 'community' ? community : [...bundled, ...thirdParty];
     const needle = query.trim().toLocaleLowerCase();
-    return [...bundled, ...thirdParty].filter(({ manifest, installed }) => {
+    return source.filter(({ manifest, installed }) => {
       if (scope === 'enabled' && installed && !installed.enabled) return false;
       if (
         resource !== 'all' &&
@@ -495,7 +603,24 @@ export default function ExtensionsScreen() {
         .toLocaleLowerCase()
         .includes(needle);
     });
-  }, [extensions.bundled, extensions.thirdParty, query, resource, scope]);
+  }, [extensions.bundled, extensions.community, extensions.thirdParty, query, resource, scope]);
+
+  const installCommunity = async (manifest: ExtensionManifest) => {
+    setInstalling(true);
+    try {
+      const installed = await extensions.installCommunity(manifest.id);
+      if (installed.manifest.behaviorHints?.configurationRequired) {
+        setConfigurationManifest(installed.manifest);
+      }
+    } catch (cause) {
+      Alert.alert(
+        'Add-on install failed',
+        cause instanceof Error ? cause.message : String(cause)
+      );
+    } finally {
+      setInstalling(false);
+    }
+  };
 
   const install = async () => {
     const url = repositoryUrl.trim();
@@ -575,13 +700,18 @@ export default function ExtensionsScreen() {
           </View>
         ) : entries.length ? (
           <View className="gap-4">
-            {entries.map(({ manifest, installed }) => (
+            {entries.map(({ manifest, installed, community }) => (
               <ExtensionCard
                 key={manifest.id}
                 manifest={manifest}
                 installed={installed}
                 wide={wide}
                 onConfigure={() => setConfigurationManifest(manifest)}
+                onInstall={
+                  community && !installed
+                    ? () => void installCommunity(manifest)
+                    : undefined
+                }
                 onShare={() => {
                   if (!installed) return;
                   void Share.share({
@@ -628,8 +758,8 @@ export default function ExtensionsScreen() {
         onClose={() => !installing && setAddOpen(false)}
       >
         <Text className="mb-4 text-sm leading-5 text-neutral-400">
-          Paste a trusted GitHub repository or manifest URL. Third-party add-ons are not reviewed
-          or browsable inside Tomeio.
+          Paste a trusted GitHub repository or manifest URL. These third-party add-ons are not
+          reviewed. Reviewed add-ons are available under the Community filter.
         </Text>
         <TextInput
           value={repositoryUrl}

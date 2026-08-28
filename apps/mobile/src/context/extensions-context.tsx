@@ -10,30 +10,41 @@ import {
 import type {
   BookExtension,
   ExtensionConfigValue,
+  ExtensionLibraryAction,
+  ExtensionLibraryBook,
   ExtensionManifest,
   ExtensionPage,
   ExtensionQuery,
+  ExtensionReaderSyncRequest,
+  ExtensionReaderSyncResult,
 } from '@tomeio/extension-protocol';
 import type {
   ExtensionRegistrySnapshot,
   InstalledExtension,
 } from '@tomeio/extension-runtime';
+import { Linking } from 'react-native';
 
-import { ExtensionSandboxes } from '@/components/extension-sandboxes';
 import {
   missingRequiredConfiguration,
   readExtensionConfiguration,
   removeExtensionConfiguration,
   writeExtensionConfiguration,
 } from '@/lib/extension-configuration';
-import { extensionLoader, extensionRegistry } from '@/lib/extensions';
+import {
+  extensionLoader,
+  extensionRegistry,
+  refreshCommunityExtensionRegistry,
+} from '@/lib/extensions';
 import {
   readAcquisitionExtensionId,
   readSearchExtensionId,
   writeAcquisitionExtensionId,
   writeSearchExtensionId,
 } from '@/lib/extension-preferences';
-import { mobileScriptExtensionExecutor } from '@/lib/script-extension-executor';
+
+export interface AvailableLibraryAction extends ExtensionLibraryAction {
+  extensionId: string;
+}
 
 interface ExtensionsContextValue extends ExtensionRegistrySnapshot {
   ready: boolean;
@@ -42,6 +53,7 @@ interface ExtensionsContextValue extends ExtensionRegistrySnapshot {
   searchExtensionId: string | null;
   acquisitionExtensionId: string | null;
   install(repositoryUrl: string): Promise<InstalledExtension>;
+  installCommunity(id: string): Promise<InstalledExtension>;
   remove(id: string): Promise<void>;
   setEnabled(id: string, enabled: boolean): Promise<void>;
   setSearchExtension(id: string): Promise<void>;
@@ -53,10 +65,25 @@ interface ExtensionsContextValue extends ExtensionRegistrySnapshot {
   ): Promise<void>;
   load(id: string): Promise<BookExtension>;
   search(id: string, query: ExtensionQuery): Promise<ExtensionPage<import('@tomeio/domain').BookMetadata>>;
+  libraryActions(
+    book: ExtensionLibraryBook,
+    placement: 'library' | 'details',
+    platform: 'android' | 'ios' | 'web' | 'desktop'
+  ): AvailableLibraryAction[];
+  runLibraryAction(
+    extensionId: string,
+    actionId: string,
+    book: ExtensionLibraryBook
+  ): Promise<void>;
+  readerSync(
+    extensionId: string,
+    request: ExtensionReaderSyncRequest
+  ): Promise<ExtensionReaderSyncResult>;
 }
 
 const EMPTY: ExtensionsContextValue = {
   bundled: [],
+  community: [],
   thirdParty: [],
   ready: false,
   error: null,
@@ -64,6 +91,9 @@ const EMPTY: ExtensionsContextValue = {
   searchExtensionId: null,
   acquisitionExtensionId: null,
   install: async () => {
+    throw new Error('Extensions provider is unavailable.');
+  },
+  installCommunity: async () => {
     throw new Error('Extensions provider is unavailable.');
   },
   remove: async () => {
@@ -82,6 +112,13 @@ const EMPTY: ExtensionsContextValue = {
   search: async () => {
     throw new Error('Extensions provider is unavailable.');
   },
+  libraryActions: () => [],
+  runLibraryAction: async () => {
+    throw new Error('Extensions provider is unavailable.');
+  },
+  readerSync: async () => {
+    throw new Error('Extensions provider is unavailable.');
+  },
 };
 
 const ExtensionsContext = createContext<ExtensionsContextValue>(EMPTY);
@@ -89,6 +126,7 @@ const ExtensionsContext = createContext<ExtensionsContextValue>(EMPTY);
 export function ExtensionsProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<ExtensionRegistrySnapshot>({
     bundled: [],
+    community: [],
     thirdParty: [],
   });
   const [ready, setReady] = useState(false);
@@ -113,7 +151,9 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
     );
     const acquisitionCandidates = enabledManifests.filter(
       (manifest) =>
-        manifest.resources.some((resource) => resource.name === 'search') &&
+        manifest.resources.some(
+          (resource) => resource.name === 'resolve' || resource.name === 'search'
+        ) &&
         manifest.resources.some((resource) => resource.name === 'acquisition')
     );
     const selectedSearch = searchCandidates.some((manifest) => manifest.id === savedSearchId)
@@ -152,7 +192,7 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       if (missing.length) {
         throw new Error(`Update requires configuration: ${missing.join(', ')}.`);
       }
-      await extensionLoader.load(manifest);
+      await extensionLoader.load(manifest, values);
     });
     setUpdateError(
       result.failures.length
@@ -167,8 +207,18 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let active = true;
     const start = async () => {
+      let communityError: string | null = null;
+      try {
+        await refreshCommunityExtensionRegistry();
+      } catch (cause) {
+        communityError = `Community add-ons are unavailable: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`;
+        console.error('Could not load community extension registry:', cause);
+      }
       try {
         await refresh();
+        if (active && communityError) setError(communityError);
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : String(cause);
         if (active) setError(message);
@@ -203,12 +253,23 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
     },
     [refresh]
   );
+  const installCommunity = useCallback(
+    async (id: string) => {
+      const extension = await extensionRegistry.installCommunity(id);
+      const values = await readExtensionConfiguration(extension.manifest);
+      if (missingRequiredConfiguration(extension.manifest, values).length) {
+        await extensionRegistry.setEnabled(extension.manifest.id, false);
+      }
+      await refresh();
+      return extension;
+    },
+    [refresh]
+  );
   const remove = useCallback(
     async (id: string) => {
       const extension = snapshot.thirdParty.find((candidate) => candidate.manifest.id === id);
       await extensionRegistry.remove(id);
       if (extension) await removeExtensionConfiguration(extension.manifest);
-      await mobileScriptExtensionExecutor.purge(id);
       await refresh();
     },
     [refresh, snapshot.thirdParty]
@@ -224,7 +285,6 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       values: Record<string, ExtensionConfigValue>
     ) => {
       await writeExtensionConfiguration(manifest, values);
-      mobileScriptExtensionExecutor.invalidate(manifest.id);
       if (!missingRequiredConfiguration(manifest, values).length) {
         const installed = snapshot.thirdParty.find(
           (candidate) => candidate.manifest.id === manifest.id
@@ -250,7 +310,7 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
           `Extension "${manifest.name}" requires configuration: ${missing.join(', ')}.`
         );
       }
-      return extensionLoader.load(manifest);
+      return extensionLoader.load(manifest, values);
     },
     [snapshot]
   );
@@ -259,6 +319,81 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       const extension = await load(id);
       if (!extension.search) throw new Error(`Extension "${id}" does not provide search.`);
       return extension.search(query);
+    },
+    [load]
+  );
+  const libraryActions = useCallback(
+    (
+      book: ExtensionLibraryBook,
+      placement: 'library' | 'details',
+      platform: 'android' | 'ios' | 'web' | 'desktop'
+    ): AvailableLibraryAction[] => {
+      const format = book.localFile?.format.toLowerCase();
+      const manifests = [
+        ...snapshot.thirdParty
+          .filter((extension) => extension.enabled)
+          .map((extension) => extension.manifest),
+        ...snapshot.bundled,
+      ];
+      return manifests.flatMap((manifest) =>
+          (manifest.libraryActions ?? [])
+            .filter((action) => action.placements.includes(placement))
+            .filter((action) => !action.requires?.localFile || !!book.localFile)
+            .filter(
+              (action) =>
+                !action.requires?.platforms?.length ||
+                action.requires.platforms.includes(platform)
+            )
+            .filter(
+              (action) =>
+                !action.requires?.formats?.length ||
+                (!!format &&
+                  action.requires.formats.some(
+                    (candidate) => candidate.toLowerCase() === format
+                  ))
+            )
+            .map((action) => ({ ...action, extensionId: manifest.id }))
+        );
+    },
+    [snapshot.bundled, snapshot.thirdParty]
+  );
+  const runLibraryAction = useCallback(
+    async (extensionId: string, actionId: string, book: ExtensionLibraryBook) => {
+      const extension = await load(extensionId);
+      if (!extension.libraryAction) {
+        throw new Error(`Extension "${extension.manifest.name}" does not provide library actions.`);
+      }
+      const actionBook =
+        extension.manifest.transport.kind === 'host' ||
+        extension.manifest.transport.kind === 'device'
+          ? book
+          : { ...book, localFile: undefined };
+      const result = await extension.libraryAction({ actionId, book: actionBook });
+      if (result.kind === 'openUrl') {
+        const url = new URL(result.url);
+        if (url.protocol !== 'https:') {
+          throw new Error('Add-on library actions may only open HTTPS URLs.');
+        }
+        await Linking.openURL(url.toString());
+      }
+    },
+    [load]
+  );
+  const readerSync = useCallback(
+    async (extensionId: string, request: ExtensionReaderSyncRequest) => {
+      const extension = await load(extensionId);
+      if (!extension.readerSync) {
+        throw new Error(`Extension "${extension.manifest.name}" does not provide reader sync.`);
+      }
+      const localRequest =
+        extension.manifest.transport.kind === 'host' ||
+        extension.manifest.transport.kind === 'device';
+      if (localRequest) return extension.readerSync(request);
+      const { sourceUri: _sourceUri, ...remoteRequest } = request;
+      return extension.readerSync({
+        ...remoteRequest,
+        books: request.books.map(({ localFile: _localFile, ...book }) => book),
+      });
     },
     [load]
   );
@@ -307,7 +442,11 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
         ...snapshot.bundled,
       ].find((candidate) => candidate.id === id);
       const resources = new Set(manifest?.resources.map((resource) => resource.name));
-      if (!manifest || !resources.has('search') || !resources.has('acquisition')) {
+      if (
+        !manifest ||
+        (!resources.has('resolve') && !resources.has('search')) ||
+        !resources.has('acquisition')
+      ) {
         throw new Error(`Extension "${id}" cannot resolve and download books.`);
       }
       await writeAcquisitionExtensionId(id);
@@ -325,6 +464,7 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       searchExtensionId,
       acquisitionExtensionId,
       install,
+      installCommunity,
       remove,
       setEnabled,
       setSearchExtension,
@@ -333,6 +473,9 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       configure,
       load,
       search,
+      libraryActions,
+      runLibraryAction,
+      readerSync,
     }),
     [
       snapshot,
@@ -342,6 +485,7 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       searchExtensionId,
       acquisitionExtensionId,
       install,
+      installCommunity,
       remove,
       setEnabled,
       setSearchExtension,
@@ -350,13 +494,15 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       configure,
       load,
       search,
+      libraryActions,
+      runLibraryAction,
+      readerSync,
     ]
   );
 
   return (
     <ExtensionsContext.Provider value={value}>
       {children}
-      <ExtensionSandboxes />
     </ExtensionsContext.Provider>
   );
 }

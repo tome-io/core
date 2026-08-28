@@ -1,10 +1,11 @@
 import type { BookAcquisition, BookMetadata } from '@tomeio/domain';
-import type {
-  BookExtension,
-  ExtensionManifest,
-  ExtensionPage,
-  ExtensionQuery,
-} from '@tomeio/extension-protocol';
+import {
+  defineAddon,
+  type BookExtension,
+  type ExtensionManifest,
+  type ExtensionPage,
+  type ExtensionQuery,
+} from '@tomeio/addon-sdk';
 import { createSourceHttpClient, type SourceHttpOptions } from '@tomeio/sources';
 
 export const manifest: ExtensionManifest = {
@@ -19,6 +20,7 @@ export const manifest: ExtensionManifest = {
   resources: [
     { name: 'catalog', supportsPagination: true },
     { name: 'search', supportsPagination: true },
+    { name: 'resolve', supportsPagination: true },
     { name: 'acquisition' },
   ],
   catalogs: [
@@ -193,9 +195,15 @@ export function createProjectGutenbergExtension(options: SourceHttpOptions = {})
     };
   };
 
-  return {
-    manifest,
+  return defineAddon(manifest, {
     search,
+    resolve: (query) =>
+      search({
+        query: [query.book.title, ...query.book.authors].filter(Boolean).join(' '),
+        page: query.page,
+        limit: query.limit,
+        format: query.format,
+      }),
     catalog: (query) => search({ ...query, query: '' }),
     acquisition: async (id) => {
       const cached = acquisitionsById.get(id);
@@ -215,7 +223,7 @@ export function createProjectGutenbergExtension(options: SourceHttpOptions = {})
       acquisitionsById.set(id, acquisitions);
       return acquisitions;
     },
-  };
+  });
 }
 
 export const projectGutenbergExtension = createProjectGutenbergExtension();

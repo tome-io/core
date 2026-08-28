@@ -335,7 +335,7 @@ export function AppDialog({
       statusBarTranslucent
     >
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         className={compact ? 'flex-1 justify-end bg-black/70' : 'flex-1 items-center justify-center bg-black/70'}
       >
         <Pressable className="absolute inset-0" onPress={onClose} accessibilityLabel="Close" />

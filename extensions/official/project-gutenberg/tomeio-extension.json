@@ -10,6 +10,7 @@
   "resources": [
     { "name": "catalog", "supportsPagination": true },
     { "name": "search", "supportsPagination": true },
+    { "name": "resolve", "supportsPagination": true },
     { "name": "acquisition" }
   ],
   "catalogs": [

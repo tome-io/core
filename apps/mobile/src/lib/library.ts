@@ -1,6 +1,7 @@
 import type { DiscoveryBook, FeedBook } from './openlibrary';
 import { loadPersistedLibrary, savePersistedLibrary } from './library-db';
 import type { BookAcquisition, BookMetadata } from '@tomeio/domain';
+import type { ExtensionLibraryBook } from '@tomeio/extension-protocol';
 import { metadataFromFilename } from './book-metadata';
 
 export interface LibraryBook extends FeedBook {
@@ -32,6 +33,7 @@ export interface LibraryBook extends FeedBook {
 }
 
 export interface MoonReaderBookData {
+  extensionId?: string;
   title?: string;
   author?: string;
   description?: string;
@@ -165,6 +167,30 @@ export function detailParams(book: LibraryBook) {
     };
   }
   throw new Error(`Library item ${book.key} has no source metadata.`);
+}
+
+export function toExtensionLibraryBook(book: LibraryBook): ExtensionLibraryBook {
+  const localUri = book.local?.uri ?? book.fileUri;
+  const filename = book.local?.filename ?? localUri?.split('/').pop() ?? '';
+  return {
+    id: book.extension?.book.id ?? book.discovery?.id ?? book.id,
+    title: book.title,
+    authors: book.author && book.author !== 'Unknown' ? [book.author] : [],
+    publishedYear:
+      typeof book.year === 'number' ? book.year : Number(book.year) || undefined,
+    identifiers: book.extension?.book.identifiers ?? {},
+    ...(localUri &&
+    book.availableLocally !== false &&
+    book.moonReader?.availableLocally !== false
+      ? {
+          localFile: {
+            uri: localUri,
+            filename,
+            format: book.local?.format ?? book.format ?? '',
+          },
+        }
+      : {}),
+  };
 }
 
 export async function loadLibrary(): Promise<LibraryState> {

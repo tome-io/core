@@ -749,8 +749,8 @@ export async function persistMoonReaderCatalog(
 ): Promise<void> {
   const database = await getLibraryDatabase();
   await database.withExclusiveTransactionAsync(async (transaction) => {
-    // Settings expose one authoritative Moon+ backup source. Replacing that
-    // source must not leave a disconnected Moon+ catalog in SQLite.
+    // The table/source names are retained for on-device schema compatibility,
+    // but this catalog may contain records from several reader add-ons.
     await transaction.runAsync('DELETE FROM moonreader_items');
     await transaction.runAsync("DELETE FROM reading_progress WHERE source = 'moonreader'");
     await transaction.runAsync("DELETE FROM metadata_sources WHERE source = 'moonreader'");
@@ -759,7 +759,7 @@ export async function persistMoonReaderCatalog(
       const moonReader = book.moonReader;
       const filename = moonReader?.sourceFilename;
       if (!moonReader || !filename) {
-        throw new Error(`Moon+ Reader item ${book.key} has no source filename.`);
+        throw new Error(`Reader add-on item ${book.key} has no source filename.`);
       }
       await upsertBook(transaction, withoutMoonReaderData(book));
       await persistProgressRecord(transaction, book);
@@ -767,7 +767,7 @@ export async function persistMoonReaderCatalog(
         `INSERT INTO moonreader_items (source_key, filename, book_key, sort_at)
          VALUES (?, ?, ?, ?)`,
         sourceKey,
-        filename.toLowerCase(),
+        `${moonReader.extensionId ?? 'legacy'}:${filename.toLowerCase()}`,
         book.key,
         book.lastReadAt ?? book.addedAt
       );

@@ -79,7 +79,6 @@
         "react-native-safe-area-context": "~5.7.0",
         "react-native-screens": "~4.26.0",
         "react-native-web": "~0.21.0",
-        "react-native-webview": "13.16.1",
         "react-native-worklets": "0.10.1",
         "tailwindcss": "^3.4.17",
       },
@@ -95,8 +94,8 @@
       "name": "@tomeio/extension-internet-archive",
       "version": "0.1.0",
       "dependencies": {
+        "@tomeio/addon-sdk": "workspace:*",
         "@tomeio/domain": "workspace:*",
-        "@tomeio/extension-protocol": "workspace:*",
         "@tomeio/sources": "workspace:*",
       },
     },
@@ -104,8 +103,8 @@
       "name": "@tomeio/extension-open-library",
       "version": "0.1.1",
       "dependencies": {
+        "@tomeio/addon-sdk": "workspace:*",
         "@tomeio/domain": "workspace:*",
-        "@tomeio/extension-protocol": "workspace:*",
         "@tomeio/sources": "workspace:*",
       },
     },
@@ -113,9 +112,17 @@
       "name": "@tomeio/extension-project-gutenberg",
       "version": "0.1.0",
       "dependencies": {
+        "@tomeio/addon-sdk": "workspace:*",
+        "@tomeio/domain": "workspace:*",
+        "@tomeio/sources": "workspace:*",
+      },
+    },
+    "packages/addon-sdk": {
+      "name": "@tomeio/addon-sdk",
+      "version": "0.3.0",
+      "dependencies": {
         "@tomeio/domain": "workspace:*",
         "@tomeio/extension-protocol": "workspace:*",
-        "@tomeio/sources": "workspace:*",
       },
     },
     "packages/application": {
@@ -689,6 +696,8 @@
     "@szmarczak/http-timer": ["@szmarczak/http-timer@4.0.6", "", { "dependencies": { "defer-to-connect": "^2.0.0" } }, "sha512-4BAffykYOgO+5nzBWYwE3W90sBgLJoUPRWWcL8wlyiM8IB8ipJz3UMJ9KXQd1RKQXpKp8Tutn80HZtWsu2u76w=="],
 
     "@tomeio/application": ["@tomeio/application@workspace:packages/application"],
+
+    "@tomeio/addon-sdk": ["@tomeio/addon-sdk@workspace:packages/addon-sdk"],
 
     "@tomeio/contracts": ["@tomeio/contracts@workspace:packages/contracts"],
 

@@ -8,7 +8,10 @@ its provider-specific API code and exposes a common set of book resources to the
 - `catalog(query)` returns discovery rows or paged catalogs.
 - `search(query)` returns books matching a query.
 - `meta(id)` returns details for a provider book ID.
+- `resolve(book)` maps a provider-neutral book reference to provider candidates.
 - `acquisition(id)` returns downloadable formats or external open actions.
+- `readerSync(request)` imports progress from a reader integration.
+- `libraryAction(request)` handles a host-rendered library action.
 
 Search results may include `BookMetadata.acquisitions` when the provider already returned usable
 download metadata. Clients use those inline acquisitions directly and call `acquisition(id)` only
@@ -22,8 +25,8 @@ in its versioned `tomeio-extension.json` manifest.
 | Extension | Resources | Purpose |
 | --- | --- | --- |
 | [Open Library](official/open-library) | `catalog`, `search`, `meta` | Discovery and metadata |
-| [Project Gutenberg](official/project-gutenberg) | `catalog`, `search`, `acquisition` | Public-domain catalog and downloads |
-| [Internet Archive — Open Books](official/internet-archive) | `catalog`, `search`, `meta`, `acquisition` | Open-book records and available formats |
+| [Project Gutenberg](official/project-gutenberg) | `catalog`, `search`, `resolve`, `acquisition` | Public-domain catalog and downloads |
+| [Internet Archive — Open Books](official/internet-archive) | `catalog`, `search`, `meta`, `resolve`, `acquisition` | Open-book records and available formats |
 
 ## Structure
 
@@ -48,15 +51,23 @@ the mobile and desktop clients.
 
 1. `@tomeio/extension-protocol` validates the manifest.
 2. `@tomeio/extension-runtime` selects a loader from the manifest transport.
-3. The loader calls the requested `catalog`, `search`, `meta`, or `acquisition` resource.
+3. The loader calls only the resource requested by the application.
 4. The extension maps provider responses to the models in `@tomeio/domain`.
 
 Supported transports are:
 
 - `bundled` for extensions compiled into Tomeio;
 - `http` for servers implementing the resource routes;
-- `declarative` for manifest-defined endpoint templates;
-- `script` for SHA-256-pinned JavaScript bundles executed by a platform sandbox.
+- `declarative` for GitHub-hosted request and mapping workflows;
+- `device` for reviewed GitHub-hosted reader workflows using fixed local capabilities;
+- `host` for a reviewed native capability already registered by the client.
+
+Third-party executable scripts are not supported. GitHub-only add-ons should use
+`@tomeio/addon-sdk` and the declarative workflow transport; hosted services may use HTTP.
+
+Reviewed community manifests live in `tome-io/extensions`. Unlike official providers,
+they are discovered from the published registry and are not installed or enabled by default.
+Core contains the generic device-capability interpreter, not reader-specific adapters.
 
 ## Adding an official extension
 

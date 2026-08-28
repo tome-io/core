@@ -12,8 +12,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@tomeio/addon-sdk": "workspace:*",
     "@tomeio/domain": "workspace:*",
-    "@tomeio/extension-protocol": "workspace:*",
     "@tomeio/sources": "workspace:*"
   }
 }

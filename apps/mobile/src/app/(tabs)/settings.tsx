@@ -315,7 +315,9 @@ export default function SettingsScreen() {
     () =>
       enabledManifests.filter(
         (manifest) =>
-          manifest.resources.some((resource) => resource.name === 'search') &&
+          manifest.resources.some(
+            (resource) => resource.name === 'resolve' || resource.name === 'search'
+          ) &&
           manifest.resources.some((resource) => resource.name === 'acquisition')
       ),
     [enabledManifests]
@@ -536,24 +538,6 @@ export default function SettingsScreen() {
               }
               resetLabel="Use app folder"
               resetIcon="home"
-            />
-          </SettingsOption>
-          <SettingsOption
-            compact={compactOptions}
-            label="Moon+ Reader backup folder"
-            detail="Imports Moon+ catalog, reading progress and history."
-          >
-            <FolderField
-              location={settings.moonReaderBackupLocation}
-              emptyLabel="Not configured"
-              onChoose={() => void chooseFolder('moonReaderBackupLocation')}
-              onReset={
-                settings.moonReaderBackupLocation
-                  ? () => void resetFolder('moonReaderBackupLocation')
-                  : undefined
-              }
-              resetLabel="Disconnect"
-              resetIcon="x"
             />
           </SettingsOption>
         </SettingsSection>

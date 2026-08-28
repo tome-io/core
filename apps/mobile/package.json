@@ -44,7 +44,6 @@
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
     "react-native-web": "~0.21.0",
-    "react-native-webview": "13.16.1",
     "react-native-worklets": "0.10.1",
     "tailwindcss": "^3.4.17"
   },
@@ -68,7 +67,7 @@
     "build:ios:production": "./scripts/build-eas-ios.sh production",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test": "tsx --test scripts/enrichment-test.mjs scripts/acquisition-options-test.ts scripts/extension-updates-test.ts scripts/library-state-test.ts",
+    "test": "tsx --test scripts/enrichment-test.mjs scripts/acquisition-options-test.ts scripts/declarative-workflow-test.ts scripts/extension-updates-test.ts scripts/library-state-test.ts",
     "test:acquisition": "tsx --test scripts/acquisition-options-test.ts",
     "test:enrichment": "tsx --test scripts/enrichment-test.mjs",
     "test:enrichment:live": "LIVE_OPENLIBRARY=1 tsx --test scripts/enrichment-test.mjs",

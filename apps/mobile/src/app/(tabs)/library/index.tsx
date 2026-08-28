@@ -1,6 +1,7 @@
+import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, Text, View } from 'react-native';
+import { Alert, Platform, Text, View } from 'react-native';
 
 import { colors, usePageGutter } from '@/components/app-ui';
 import { BookGrid, BookGridSkeleton } from '@/components/book-grid';
@@ -15,10 +16,10 @@ import {
   useLibraryCatalog,
   useLibraryUiStatus,
 } from '@/context/library-context';
+import { useExtensions } from '@/context/extensions-context';
 import { useSettings } from '@/context/settings-context';
 import { openBookWithAnotherApp, showBookInFiles } from '@/lib/book-file-actions';
-import { detailParams, type LibraryBook } from '@/lib/library';
-import { openInMoonReader } from '@/lib/moon-reader-launcher';
+import { detailParams, toExtensionLibraryBook, type LibraryBook } from '@/lib/library';
 
 type FormatFilter = 'all' | 'finished' | 'epub' | 'pdf' | 'mobi' | 'azw3' | 'other';
 type LibrarySort = 'recent' | 'downloaded' | 'title' | 'author' | 'rating' | 'progress';
@@ -63,6 +64,7 @@ export default function LibraryScreen() {
     refreshLocalBooks,
   } = useLibraryActions();
   const { settings } = useSettings();
+  const extensions = useExtensions();
   const [format, setFormat] = useState<FormatFilter>('all');
   const [sort, setSort] = useState<LibrarySort>('recent');
   const [selectedBook, setSelectedBook] = useState<LibraryBook | null>(null);
@@ -107,6 +109,26 @@ export default function LibraryScreen() {
     },
     [showWarning]
   );
+
+  const addonActions = useMemo(() => {
+    if (!selectedBook) return [];
+    const book = toExtensionLibraryBook(selectedBook);
+    const platform =
+      Platform.OS === 'android' || Platform.OS === 'ios' || Platform.OS === 'web'
+        ? Platform.OS
+        : 'desktop';
+    return extensions.libraryActions(book, 'library', platform).map((action) => ({
+      key: `addon:${action.extensionId}:${action.id}` as const,
+      label: action.title,
+      icon: (action.icon && action.icon in Feather.glyphMap
+        ? action.icon
+        : 'external-link') as 'external-link',
+      onPress: () =>
+        void runAction(`addon:${action.extensionId}:${action.id}`, () =>
+          extensions.runLibraryAction(action.extensionId, action.id, book)
+        ),
+    }));
+  }, [extensions, runAction, selectedBook]);
 
   const confirmRemove = useCallback(() => {
     if (!selectedBook) return;
@@ -183,9 +205,8 @@ export default function LibraryScreen() {
           book={selectedBook}
           visible
           busyAction={busyAction}
-          moonReaderConfigured={!!settings.moonReaderBackupLocation}
+          addonActions={addonActions}
           onClose={() => setSelectedBook(null)}
-          onOpenMoonReader={() => void runAction('moon', () => openInMoonReader(selectedBook))}
           onOpenWith={() => void runAction('openWith', () => openBookWithAnotherApp(selectedBook))}
           onShowInFiles={() =>
             void runAction('files', () =>

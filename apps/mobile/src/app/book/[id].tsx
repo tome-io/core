@@ -8,6 +8,7 @@ import {
   Alert,
   Linking,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -47,10 +48,10 @@ import { bookFilename } from '@/lib/download';
 import {
   fromDiscoveryBook,
   fromExtensionBook,
+  toExtensionLibraryBook,
   type LibraryBook,
 } from '@/lib/library';
 import { loadLocalCatalogBook } from '@/lib/library-db';
-import { openInMoonReader } from '@/lib/moon-reader-launcher';
 import { getWorkDetails, type DiscoveryBook } from '@/lib/openlibrary';
 
 type Phase =
@@ -417,18 +418,32 @@ export default function BookDetailScreen() {
         };
       }
       if (!lookupTitle) return { items: [], nextPage: null };
-      if (!provider.search) {
+      if (!provider.resolve && !provider.search) {
         throw new Error(
           `${provider.manifest.name} cannot resolve books from another search provider.`
         );
       }
-      const resolved = await searchAcquisitionCandidatePage(
-        { search: provider.search },
-        `${lookupTitle} ${lookupAuthor}`.trim(),
-        page
-      );
+      const resolved = provider.resolve
+        ? await provider.resolve({
+            book: {
+              id: acquisitionExtensionBook?.id ?? currentDiscovery?.id ?? missingReadingListBook?.id,
+              title: lookupTitle,
+              authors: lookupAuthor ? [lookupAuthor] : [],
+              publishedYear:
+                acquisitionExtensionBook?.publishedYear ??
+                (currentDiscovery?.year ? Number(currentDiscovery.year) || undefined : undefined),
+              identifiers: acquisitionExtensionBook?.identifiers ?? {},
+            },
+            page,
+            limit: 3,
+          })
+        : await searchAcquisitionCandidatePage(
+            { search: provider.search! },
+            `${lookupTitle} ${lookupAuthor}`.trim(),
+            page
+          );
       return {
-        items: resolved.items.flatMap((book): AcquisitionEntry[] =>
+        items: resolved.items.slice(0, 3).flatMap((book): AcquisitionEntry[] =>
           book.acquisitions?.length
             ? book.acquisitions.map((acquisition) => ({
                 kind: 'option',
@@ -448,7 +463,7 @@ export default function BookDetailScreen() {
                 book,
               }]
         ),
-        nextPage: resolved.nextPage,
+        nextPage: resolved.nextPage ?? null,
       };
     },
     [
@@ -458,6 +473,8 @@ export default function BookDetailScreen() {
       loadExtension,
       lookupAuthor,
       lookupTitle,
+      currentDiscovery,
+      missingReadingListBook,
     ]
   );
 
@@ -695,6 +712,27 @@ export default function BookDetailScreen() {
     []
   );
 
+  const libraryActionBook = localBook ?? moonBook;
+  const addonActions = useMemo(() => {
+    if (!libraryActionBook) return [];
+    const book = toExtensionLibraryBook(libraryActionBook);
+    const platform =
+      Platform.OS === 'android' || Platform.OS === 'ios' || Platform.OS === 'web'
+        ? Platform.OS
+        : 'desktop';
+    return extensions.libraryActions(book, 'details', platform).map((action) => ({
+      key: `addon:${action.extensionId}:${action.id}` as const,
+      label: action.title,
+      icon: (action.icon && action.icon in Feather.glyphMap
+        ? action.icon
+        : 'external-link') as 'external-link',
+      onPress: () =>
+        void runLibraryAction(`addon:${action.extensionId}:${action.id}`, () =>
+          extensions.runLibraryAction(action.extensionId, action.id, book)
+        ),
+    }));
+  }, [extensions, libraryActionBook, runLibraryAction]);
+
   const goBack = useCallback(() => {
     if (router.canGoBack()) router.back();
     else router.replace('/home');
@@ -786,7 +824,6 @@ export default function BookDetailScreen() {
     </Pressable>
   ) : null;
 
-  const libraryActionBook = localBook ?? moonBook;
   return (
     <>
       <ScrollView
@@ -940,10 +977,7 @@ export default function BookDetailScreen() {
               compact
               book={libraryActionBook}
               busyAction={busyAction}
-              moonReaderConfigured={!!settings.moonReaderBackupLocation}
-              onOpenMoonReader={() =>
-                void runLibraryAction('moon', () => openInMoonReader(libraryActionBook))
-              }
+              addonActions={addonActions}
               onOpenWith={() =>
                 void runLibraryAction('openWith', () => openBookWithAnotherApp(libraryActionBook))
               }

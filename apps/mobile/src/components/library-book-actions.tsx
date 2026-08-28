@@ -15,21 +15,27 @@ import { colors } from '@/components/app-ui';
 import { canShowBookInFiles } from '@/lib/book-file-actions';
 import type { LibraryBook } from '@/lib/library';
 
-export type LibraryAction =
-  | 'moon'
+type BuiltInLibraryAction =
   | 'openWith'
   | 'files'
   | 'delete'
   | 'remove'
   | 'read'
   | 'metadata';
+export type LibraryAction = BuiltInLibraryAction | `addon:${string}`;
+
+export interface AddonLibraryAction {
+  key: `addon:${string}`;
+  label: string;
+  icon: keyof typeof Feather.glyphMap;
+  onPress: () => void;
+}
 
 interface ActionsProps {
   book: LibraryBook;
   busyAction?: LibraryAction | null;
   compact?: boolean;
-  moonReaderConfigured: boolean;
-  onOpenMoonReader: () => void;
+  addonActions?: AddonLibraryAction[];
   onOpenWith: () => void;
   onShowInFiles: () => void;
   onDelete: () => void;
@@ -42,8 +48,7 @@ export function LibraryBookActions({
   book,
   busyAction = null,
   compact = false,
-  moonReaderConfigured,
-  onOpenMoonReader,
+  addonActions = [],
   onOpenWith,
   onShowInFiles,
   onDelete,
@@ -67,9 +72,7 @@ export function LibraryBookActions({
     icon: keyof typeof Feather.glyphMap;
     destructive?: boolean;
   }[] = [
-    ...(Platform.OS === 'android' && moonReaderConfigured && hasLocalFile
-      ? [{ key: 'moon' as const, label: 'Open in Moon+ Reader', icon: 'book-open' as const }]
-      : []),
+    ...addonActions,
     ...(hasLocalFile
       ? [
           ...(Platform.OS !== 'web'
@@ -109,8 +112,7 @@ export function LibraryBookActions({
     { key: 'read', label: book.isRead ? 'Finished' : 'Mark as finished', icon: 'check-circle' },
     { key: 'metadata', label: 'Refresh metadata', icon: 'refresh-cw' },
   ];
-  const handlers: Record<LibraryAction, () => void> = {
-    moon: onOpenMoonReader,
+  const handlers: Record<BuiltInLibraryAction, () => void> = {
     openWith: onOpenWith,
     files: onShowInFiles,
     delete: onDelete,
@@ -129,7 +131,11 @@ export function LibraryBookActions({
         return (
           <Pressable
             key={action.key}
-            onPress={handlers[action.key]}
+            onPress={
+              action.key.startsWith('addon:')
+                ? addonActions.find((candidate) => candidate.key === action.key)?.onPress
+                : handlers[action.key as BuiltInLibraryAction]
+            }
             disabled={disabled}
             accessibilityRole="button"
             accessibilityLabel={action.label}

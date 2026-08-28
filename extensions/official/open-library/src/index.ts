@@ -1,10 +1,11 @@
 import type { BookMetadata } from '@tomeio/domain';
-import type {
-  BookExtension,
-  ExtensionManifest,
-  ExtensionPage,
-  ExtensionQuery,
-} from '@tomeio/extension-protocol';
+import {
+  defineAddon,
+  type BookExtension,
+  type ExtensionManifest,
+  type ExtensionPage,
+  type ExtensionQuery,
+} from '@tomeio/addon-sdk';
 import { createSourceHttpClient, type SourceHttpOptions } from '@tomeio/sources';
 
 export const manifest: ExtensionManifest = {
@@ -196,8 +197,7 @@ export function createOpenLibraryExtension(options: SourceHttpOptions = {}): Boo
     };
   };
 
-  return {
-    manifest,
+  return defineAddon(manifest, {
     search,
     catalog: (query) => {
       const catalogQuery =
@@ -230,7 +230,7 @@ export function createOpenLibraryExtension(options: SourceHttpOptions = {}): Boo
         identifiers: { openLibrary: id },
       };
     },
-  };
+  });
 }
 
 export const openLibraryExtension = createOpenLibraryExtension();

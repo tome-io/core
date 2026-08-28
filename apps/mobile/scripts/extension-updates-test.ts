@@ -18,11 +18,7 @@ function manifest(version: string): ExtensionManifest {
     description: 'Example extension',
     types: ['book'],
     resources: [{ name: 'search' }],
-    transport: {
-      kind: 'script',
-      bundleUrl: 'https://example.com/extension.js',
-      sha256: 'a'.repeat(64),
-    },
+    transport: { kind: 'http', baseUrl: 'https://example.com' },
     permissions: { hosts: ['https://example.com'] },
   };
 }
@@ -87,11 +83,11 @@ describe('extension updates', () => {
     );
 
     const result = await registry.updateEnabled(async () => {
-      throw new Error('bundle digest mismatch');
+      throw new Error('protocol validation failed');
     });
 
     assert.equal(result.updated.length, 0);
-    assert.match(result.failures[0]?.message ?? '', /digest mismatch/);
+    assert.match(result.failures[0]?.message ?? '', /protocol validation/);
     assert.equal(store.extensions[0]?.manifest.version, '2.0.0');
   });
 });
