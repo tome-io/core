@@ -124,6 +124,51 @@ test('surfaces a declarative provider error message without exposing request det
   );
 });
 
+test('retries a transient declarative GET failure', async () => {
+  let providerAttempts = 0;
+  const loader = new ExtensionLoader({
+    bundled: new Map(),
+    fetchFn: async (input) => {
+      if (String(input).includes('raw.githubusercontent.com')) return Response.json(definition);
+      providerAttempts += 1;
+      return providerAttempts === 1
+        ? Response.json({ error: { message: 'Temporarily unavailable.' } }, { status: 503 })
+        : Response.json({ items: [{ id: 7, title: 'Dune' }] });
+    },
+  });
+  const extension = await loader.load(manifest, { token: 'scoped-secret' });
+
+  const page = await extension.search?.({ query: 'dune' });
+
+  assert.equal(page?.items[0]?.title, 'Dune');
+  assert.equal(providerAttempts, 2);
+});
+
+test('limits declarative requests to two concurrent calls per origin', async () => {
+  let active = 0;
+  let maximumActive = 0;
+  const loader = new ExtensionLoader({
+    bundled: new Map(),
+    fetchFn: async (input) => {
+      if (String(input).includes('raw.githubusercontent.com')) return Response.json(definition);
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      active -= 1;
+      return Response.json({ items: [{ id: 7, title: 'Dune' }] });
+    },
+  });
+  const extension = await loader.load(manifest, { token: 'scoped-secret' });
+
+  await Promise.all(
+    Array.from({ length: 5 }, (_, index) =>
+      extension.search?.({ query: `dune ${index}` })
+    )
+  );
+
+  assert.equal(maximumActive, 2);
+});
+
 const deviceManifest: ExtensionManifest = {
   manifestVersion: 1,
   id: 'community.example.reader',

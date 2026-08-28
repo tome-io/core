@@ -23,6 +23,51 @@ const MAX_REQUEST_URLS = 12;
 const MAX_REQUEST_ATTEMPTS = 20;
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 10_000;
+const MAX_TRANSIENT_REQUEST_ATTEMPTS = 2;
+const MAX_CONCURRENT_REQUESTS_PER_ORIGIN = 2;
+
+type OriginRequestSchedule = {
+  active: number;
+  waiting: Array<() => void>;
+};
+
+const originRequestSchedules = new Map<string, OriginRequestSchedule>();
+
+async function acquireOriginRequest(origin: string): Promise<() => void> {
+  const schedule = originRequestSchedules.get(origin) ?? { active: 0, waiting: [] };
+  originRequestSchedules.set(origin, schedule);
+  if (schedule.active >= MAX_CONCURRENT_REQUESTS_PER_ORIGIN) {
+    await new Promise<void>((resolve) => schedule.waiting.push(resolve));
+  } else {
+    schedule.active += 1;
+  }
+
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const next = schedule.waiting.shift();
+    if (next) {
+      next();
+      return;
+    }
+    schedule.active -= 1;
+    if (schedule.active === 0) originRequestSchedules.delete(origin);
+  };
+}
+
+async function withOriginRequest<T>(origin: string, request: () => Promise<T>): Promise<T> {
+  const release = await acquireOriginRequest(origin);
+  try {
+    return await request();
+  } finally {
+    release();
+  }
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
 
 const OPERATIONS = new Set([
   'path',
@@ -600,10 +645,6 @@ async function executeRequest(
 ): Promise<Record<string, unknown>> {
   const failures: string[] = [];
   for (const candidate of requestUrls(request.urls, context)) {
-    attempts.count += 1;
-    if (attempts.count > MAX_REQUEST_ATTEMPTS) {
-      throw new Error('Declarative workflow exceeded its request attempt limit.');
-    }
     let url: URL;
     try {
       url = new URL(candidate);
@@ -630,36 +671,60 @@ async function executeRequest(
       body = JSON.stringify(evaluate(request.json, context));
       headers['Content-Type'] = 'application/json';
     }
-    const controller = new AbortController();
-    const timeout = setTimeout(
-      () => controller.abort(),
-      request.timeoutMs ?? DEFAULT_TIMEOUT_MS
-    );
-    try {
-      const response = await fetchFn(url.toString(), {
-        method: request.method ?? 'GET',
-        headers,
-        ...(body !== undefined ? { body } : {}),
-        redirect: 'error',
-        signal: controller.signal,
-      });
-      const result = {
-        status: response.status,
-        ok: response.ok,
-        url: url.toString(),
-        origin: url.origin,
-        headers: Object.fromEntries(response.headers.entries()),
-        body: await readResponse(response, request.response ?? 'json'),
-      };
-      const accepted = accept
-        ? Boolean(evaluate(accept, { ...context, response: result }))
-        : response.ok;
-      if (accepted) return result;
-      failures.push(`${url.origin}: ${rejectedResponseMessage(result)}`);
-    } catch (cause) {
-      failures.push(`${url.origin}: ${cause instanceof Error ? cause.message : String(cause)}`);
-    } finally {
-      clearTimeout(timeout);
+    const method = request.method ?? 'GET';
+    const requestAttempts = method === 'GET' || method === 'HEAD'
+      ? MAX_TRANSIENT_REQUEST_ATTEMPTS
+      : 1;
+    for (let attempt = 0; attempt < requestAttempts; attempt += 1) {
+      attempts.count += 1;
+      if (attempts.count > MAX_REQUEST_ATTEMPTS) {
+        throw new Error('Declarative workflow exceeded its request attempt limit.');
+      }
+      try {
+        const result = await withOriginRequest(url.origin, async () => {
+          const controller = new AbortController();
+          const timeout = setTimeout(
+            () => controller.abort(),
+            request.timeoutMs ?? DEFAULT_TIMEOUT_MS
+          );
+          try {
+            const response = await fetchFn(url.toString(), {
+              method,
+              headers,
+              ...(body !== undefined ? { body } : {}),
+              redirect: 'error',
+              signal: controller.signal,
+            });
+            return {
+              status: response.status,
+              ok: response.ok,
+              url: url.toString(),
+              origin: url.origin,
+              headers: Object.fromEntries(response.headers.entries()),
+              body: await readResponse(response, request.response ?? 'json'),
+            };
+          } finally {
+            clearTimeout(timeout);
+          }
+        });
+        const accepted = accept
+          ? Boolean(evaluate(accept, { ...context, response: result }))
+          : result.ok;
+        if (accepted) return result;
+        const transient = result.status >= 500 && result.status <= 599;
+        if (transient && attempt + 1 < requestAttempts) {
+          await wait(250 * (attempt + 1));
+          continue;
+        }
+        failures.push(`${url.origin}: ${rejectedResponseMessage(result)}`);
+        break;
+      } catch (cause) {
+        if (attempt + 1 < requestAttempts) {
+          await wait(250 * (attempt + 1));
+          continue;
+        }
+        failures.push(`${url.origin}: ${cause instanceof Error ? cause.message : String(cause)}`);
+      }
     }
   }
   throw new Error(`Every declarative request candidate failed. ${failures.slice(-3).join(' | ')}`);
