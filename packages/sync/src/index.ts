@@ -2,6 +2,37 @@ export const PROGRESS_SYNC_KIND = 'reader-progress-sync';
 export const PROGRESS_SYNC_VERSION = 3;
 export type ProgressSyncVersion = 1 | 2 | typeof PROGRESS_SYNC_VERSION;
 
+export const KOREADER_PARTIAL_MD5_SAMPLE_SIZE = 1_024;
+
+export function koreaderPartialMd5Offsets(): number[] {
+  return Array.from({ length: 12 }, (_, index) =>
+    index === 0
+      ? 0
+      : KOREADER_PARTIAL_MD5_SAMPLE_SIZE * 2 ** (2 * (index - 1))
+  );
+}
+
+export function collectKoreaderPartialMd5Samples(
+  readAt: (offset: number, length: number) => Uint8Array
+): Uint8Array {
+  const samples: Uint8Array[] = [];
+  let totalLength = 0;
+  for (const offset of koreaderPartialMd5Offsets()) {
+    const sample = readAt(offset, KOREADER_PARTIAL_MD5_SAMPLE_SIZE);
+    if (sample.byteLength === 0) break;
+    const bounded = sample.subarray(0, KOREADER_PARTIAL_MD5_SAMPLE_SIZE);
+    samples.push(bounded);
+    totalLength += bounded.byteLength;
+  }
+  const combined = new Uint8Array(totalLength);
+  let combinedOffset = 0;
+  for (const sample of samples) {
+    combined.set(sample, combinedOffset);
+    combinedOffset += sample.byteLength;
+  }
+  return combined;
+}
+
 export interface ProgressSyncRecord {
   identity: string;
   aliases: string[];
