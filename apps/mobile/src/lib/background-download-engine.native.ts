@@ -4,6 +4,7 @@ import {
   getExistingDownloadTasks,
   setConfig,
 } from '@kesha-antonov/react-native-background-downloader';
+import { NativeModules } from 'react-native';
 
 import type {
   BackgroundDownloadTask,
@@ -12,7 +13,23 @@ import type {
 
 export type { BackgroundDownloadTask } from './background-download-engine.types';
 
+function ensureEventListenerBookkeeping(): void {
+  const nativeModule = NativeModules.RNBackgroundDownloader;
+  if (!nativeModule) return;
+
+  // React Native 0.86 validates these methods before subscribing. The Android
+  // TurboModule still emits through RCTDeviceEventEmitter, but codegen does not
+  // expose its native listener bookkeeping methods to JavaScript.
+  if (typeof nativeModule.addListener !== 'function') {
+    nativeModule.addListener = () => undefined;
+  }
+  if (typeof nativeModule.removeListeners !== 'function') {
+    nativeModule.removeListeners = () => undefined;
+  }
+}
+
 export function configureBackgroundDownloads(): void {
+  ensureEventListenerBookkeeping();
   setConfig({
     progressInterval: 750,
     progressMinBytes: 256 * 1024,

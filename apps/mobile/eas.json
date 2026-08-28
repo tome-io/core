@@ -7,7 +7,8 @@
     "beta": {
       "environment": "production",
       "env": {
-        "NODE_ENV": "production"
+        "NODE_ENV": "production",
+        "EXPO_PUBLIC_USE_RN_FETCH": "1"
       },
       "autoIncrement": true,
       "credentialsSource": "remote",
@@ -18,7 +19,8 @@
     "production": {
       "environment": "production",
       "env": {
-        "NODE_ENV": "production"
+        "NODE_ENV": "production",
+        "EXPO_PUBLIC_USE_RN_FETCH": "1"
       },
       "autoIncrement": true,
       "credentialsSource": "remote",

@@ -3,7 +3,6 @@ import { colors, radii } from '@tomeio/design';
 import {
   KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   Text,
   TextInput,
@@ -334,40 +333,43 @@ export function AppDialog({
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        className={compact ? 'flex-1 justify-end bg-black/70' : 'flex-1 items-center justify-center bg-black/70'}
-      >
+      <View className="flex-1 bg-black/70">
         <Pressable className="absolute inset-0" onPress={onClose} accessibilityLabel="Close" />
-        <View
-          className={
-            compact
-              ? 'w-full rounded-t-3xl border p-5'
-              : 'w-full max-w-[560px] rounded-3xl border p-6'
-          }
-          style={{
-            backgroundColor: colors.surface,
-            borderColor: colors.border,
-            paddingBottom: Math.max(insets.bottom, 20),
-            maxHeight: '90%',
-            flexShrink: 1,
-          }}
+        <KeyboardAvoidingView
+          behavior="padding"
+          pointerEvents="box-none"
+          className={compact ? 'flex-1 justify-end' : 'flex-1 items-center justify-center'}
         >
-          <View className="mb-5 flex-row items-center justify-between">
-            <Text className="text-xl font-semibold" style={{ color: colors.text }}>
-              {title}
-            </Text>
-            <Pressable
-              onPress={onClose}
-              className="h-10 w-10 items-center justify-center"
-              style={{ backgroundColor: colors.surfaceRaised, borderRadius: radii.pill }}
-            >
-              <Feather name="x" size={20} color={colors.textMuted} />
-            </Pressable>
+          <View
+            className={
+              compact
+                ? 'w-full rounded-t-3xl border p-5'
+                : 'w-full max-w-[560px] rounded-3xl border p-6'
+            }
+            style={{
+              backgroundColor: colors.surface,
+              borderColor: colors.border,
+              paddingBottom: Math.max(insets.bottom, 20),
+              maxHeight: '90%',
+              flexShrink: 1,
+            }}
+          >
+            <View className="mb-5 flex-row items-center justify-between">
+              <Text className="text-xl font-semibold" style={{ color: colors.text }}>
+                {title}
+              </Text>
+              <Pressable
+                onPress={onClose}
+                className="h-10 w-10 items-center justify-center"
+                style={{ backgroundColor: colors.surfaceRaised, borderRadius: radii.pill }}
+              >
+                <Feather name="x" size={20} color={colors.textMuted} />
+              </Pressable>
+            </View>
+            {children}
           </View>
-          {children}
-        </View>
-      </KeyboardAvoidingView>
+        </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 }

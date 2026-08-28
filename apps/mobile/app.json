@@ -22,6 +22,7 @@
     "android": {
       "package": "org.tomeio.app",
       "allowBackup": false,
+      "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.POST_NOTIFICATIONS"
       ],
