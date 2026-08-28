@@ -4,6 +4,15 @@
     "appVersionSource": "remote"
   },
   "build": {
+    "development": {
+      "environment": "development",
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "NODE_ENV": "development",
+        "EXPO_PUBLIC_USE_RN_FETCH": "1"
+      }
+    },
     "beta": {
       "environment": "production",
       "env": {

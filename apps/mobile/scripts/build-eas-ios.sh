@@ -20,7 +20,7 @@ app_version=$(bun -p "require('./app.json').expo.version")
 
 bunx expo prebuild --clean --platform ios
 mkdir -p dist
-bunx eas build \
+NPM_CONFIG_MIN_RELEASE_AGE=0 bunx eas build \
   --platform ios \
   --profile "$profile" \
   --local \
