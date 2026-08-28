@@ -11,7 +11,7 @@ import { createSourceHttpClient, type SourceHttpOptions } from '@tomeio/sources'
 export const manifest: ExtensionManifest = {
   manifestVersion: 1,
   id: 'org.tomeio.project-gutenberg',
-  version: '0.1.0',
+  version: '0.2.0',
   name: 'Project Gutenberg',
   description: 'Public-domain books and downloads from Project Gutenberg.',
   author: 'Tomeio',
@@ -23,6 +23,7 @@ export const manifest: ExtensionManifest = {
     { name: 'resolve', supportsPagination: true },
     { name: 'acquisition' },
   ],
+  providerRoles: ['discovery', 'search', 'acquisition'],
   catalogs: [
     { id: 'popular', name: 'Popular on Project Gutenberg', resource: 'catalog' },
   ],

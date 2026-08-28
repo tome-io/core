@@ -1,5 +1,6 @@
 import { Feather } from '@expo/vector-icons';
 import { Image } from 'expo-image';
+import { useFocusEffect } from 'expo-router';
 import type {
   ExtensionConfigValue,
   ExtensionManifest,
@@ -7,6 +8,7 @@ import type {
 } from '@tomeio/extension-protocol';
 import type { InstalledExtension } from '@tomeio/extension-runtime';
 import {
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -100,6 +102,11 @@ const BRANDING: Record<string, ExtensionBranding> = {
     mark: 'PG',
     logo: require('../../../assets/images/extensions/project-gutenberg.jpg'),
     logoScale: 0.94,
+  },
+  'community.tomeio.google-books': {
+    color: '#43526b',
+    icon: 'book-open',
+    mark: 'B',
   },
   'community.tomeio.zlibrary': { color: '#8a3945', icon: 'book', mark: 'Z' },
   'community.tomeio.moon-reader': {
@@ -388,6 +395,7 @@ function ConfigurationSheet({
       ) : (
         <ScrollView
           className="max-h-[560px]"
+          style={{ flexShrink: 1 }}
           contentContainerClassName="gap-4"
           keyboardShouldPersistTaps="handled"
         >
@@ -557,6 +565,11 @@ function FilterDialog({
 
 export default function ExtensionsScreen() {
   const extensions = useExtensions();
+  useFocusEffect(
+    useCallback(() => {
+      void extensions.refreshCommunity().catch(() => undefined);
+    }, [extensions.refreshCommunity])
+  );
   const { width } = useWindowDimensions();
   const bottomPadding = usePageBottomPadding(42);
   const wide = width >= 1050;

@@ -1,25 +1,49 @@
 import { Feather } from '@expo/vector-icons';
+import type { BookMetadata } from '@tomeio/domain';
+import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Linking, Pressable, Text, View } from 'react-native';
 
 import { BookGrid, BookGridSkeleton, GridLoadingMore } from '@/components/book-grid';
+import type { CardBook } from '@/components/book-card';
 import { colors } from '@/components/app-ui';
-import { toDiscoveryBook } from '@/components/poster';
-import {
-  getSubjectPage,
-  getTrendingPage,
-  type FeedBook,
-} from '@/lib/openlibrary';
+import { useExtensions } from '@/context/extensions-context';
+import { bookPriceLabel, bookSourceUrl } from '@/lib/book-offers';
 
-const PAGE_SIZE = 48;
+const PAGE_SIZE = 40;
 const BG = colors.background;
+
+interface CatalogBook extends CardBook {
+  extensionId: string;
+  metadata: BookMetadata;
+}
+
+function catalogBook(book: BookMetadata, extensionId: string): CatalogBook {
+  return {
+    id: `${extensionId}:${book.id}`,
+    title: book.title,
+    author: book.authors[0] || 'Unknown',
+    cover: book.coverUrl || '',
+    year: book.publishedYear,
+    rating: book.rating,
+    priceLabel: bookPriceLabel(book),
+    sourceUrl: bookSourceUrl(book),
+    extensionId,
+    metadata: book,
+  };
+}
 
 export default function CategoryScreen() {
   const router = useRouter();
-  const { subject, title } = useLocalSearchParams<{ subject: string; title?: string }>();
+  const extensions = useExtensions();
+  const { subject, title, extensionId } = useLocalSearchParams<{
+    subject: string;
+    title?: string;
+    extensionId?: string;
+  }>();
   const requestGeneration = useRef(0);
-  const [books, setBooks] = useState<FeedBook[]>([]);
+  const [books, setBooks] = useState<CatalogBook[]>([]);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -27,11 +51,16 @@ export default function CategoryScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const requestPage = useCallback(
-    (nextPage: number) =>
-      subject === 'trending'
-        ? getTrendingPage(nextPage, PAGE_SIZE)
-        : getSubjectPage(subject, nextPage, PAGE_SIZE),
-    [subject]
+    (nextPage: number) => {
+      if (!extensionId) throw new Error('The discovery provider is unavailable.');
+      return extensions.catalog(extensionId, {
+        catalogId: subject,
+        page: nextPage,
+        limit: PAGE_SIZE,
+        language: 'en',
+      });
+    },
+    [extensionId, extensions.catalog, subject]
   );
 
   const loadFirstPage = useCallback(async () => {
@@ -43,11 +72,11 @@ export default function CategoryScreen() {
     setPage(0);
     setHasMore(true);
     try {
-      const results = await requestPage(1);
+      const result = await requestPage(1);
       if (requestGeneration.current !== generation) return;
-      setBooks(results);
+      setBooks(result.items.map((book) => catalogBook(book, extensionId!)));
       setPage(1);
-      setHasMore(results.length === PAGE_SIZE);
+      setHasMore(result.nextPage != null);
     } catch (err: any) {
       if (requestGeneration.current === generation) {
         setError(err.message || String(err));
@@ -71,33 +100,42 @@ export default function CategoryScreen() {
     setError(null);
     try {
       const nextPage = page + 1;
-      const results = await requestPage(nextPage);
+      const result = await requestPage(nextPage);
       if (requestGeneration.current !== generation) return;
       setBooks((current) => {
         const seen = new Set(current.map((book) => book.id));
-        return [...current, ...results.filter((book) => !seen.has(book.id))];
+        const nextBooks = result.items.map((book) => catalogBook(book, extensionId!));
+        return [...current, ...nextBooks.filter((book) => !seen.has(book.id))];
       });
       setPage(nextPage);
-      setHasMore(results.length === PAGE_SIZE);
+      setHasMore(result.nextPage != null);
     } catch (err: any) {
       if (requestGeneration.current === generation) setError(err.message || String(err));
     } finally {
       if (requestGeneration.current === generation) setLoadingMore(false);
     }
-  }, [hasMore, loading, loadingMore, page, requestPage]);
+  }, [extensionId, hasMore, loading, loadingMore, page, requestPage]);
 
   const openBook = useCallback(
-    (book: FeedBook) => {
+    (book: CatalogBook) => {
       router.push({
         pathname: '/book/[id]',
         params: {
-          id: book.id,
-          ext: JSON.stringify(toDiscoveryBook(book, title || subject)),
+          id: book.metadata.id,
+          extensionId: book.extensionId,
+          extensionBook: JSON.stringify(book.metadata),
         },
       });
     },
-    [router, subject, title]
+    [router]
   );
+
+  const manifest = [
+    ...extensions.thirdParty
+      .filter((extension) => extension.enabled)
+      .map((extension) => extension.manifest),
+    ...extensions.bundled,
+  ].find((candidate) => candidate.id === extensionId);
 
   const goBack = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -134,6 +172,26 @@ export default function CategoryScreen() {
           {title || subject}
         </Text>
       </View>
+      {manifest?.attribution ? (
+        <Pressable
+          onPress={() => void Linking.openURL(manifest.attribution!.url)}
+          accessibilityRole="link"
+          className="px-5 pb-3"
+        >
+          {manifest.attribution.imageUrl ? (
+            <Image
+              source={{ uri: manifest.attribution.imageUrl }}
+              accessibilityLabel={manifest.attribution.label}
+              contentFit="contain"
+              style={{ width: 62, height: 30 }}
+            />
+          ) : (
+            <Text className="text-[11px] font-medium" style={{ color: colors.textMuted }}>
+              {manifest.attribution.label}
+            </Text>
+          )}
+        </Pressable>
+      ) : null}
 
       {loading ? (
         <BookGridSkeleton />

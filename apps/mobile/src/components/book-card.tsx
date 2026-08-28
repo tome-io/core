@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { memo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { colors } from '@/components/app-ui';
 import { RatingChip } from './rating-chip';
@@ -14,6 +14,8 @@ export interface CardBook {
   format?: string;
   year?: string | number;
   rating?: number;
+  priceLabel?: string;
+  sourceUrl?: string;
   metadataPending?: boolean;
   progress?: number;
   isRead?: boolean;
@@ -94,6 +96,21 @@ export const BookCard = memo(function BookCard({ book, onPress, onLongPress, wid
           </View>
         )}
         <RatingChip rating={book.rating} />
+        {book.sourceUrl ? (
+          <Pressable
+            accessibilityLabel={book.priceLabel ? `${book.priceLabel}; open source` : 'Open source'}
+            accessibilityRole="link"
+            onPress={(event) => {
+              event.stopPropagation();
+              void Linking.openURL(book.sourceUrl!);
+            }}
+            style={styles.priceBadge}
+          >
+            <Text numberOfLines={1} style={styles.priceText}>
+              {book.priceLabel ?? 'View ↗'}
+            </Text>
+          </Pressable>
+        ) : null}
         {typeof progress === 'number' && progress > 0 && (
           <>
             <View style={styles.progressTrack}>
@@ -167,6 +184,21 @@ const styles = StyleSheet.create({
     color: '#e5e5e5',
     fontSize: 9,
     fontWeight: '600',
+  },
+  priceBadge: {
+    position: 'absolute',
+    right: 6,
+    bottom: 6,
+    maxWidth: '82%',
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.84)',
+  },
+  priceText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '700',
   },
   progressTrack: {
     position: 'absolute',

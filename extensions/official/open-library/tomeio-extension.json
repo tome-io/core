@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "id": "org.tomeio.open-library",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "name": "Open Library",
   "description": "Trending catalogs and book metadata from Open Library.",
   "author": "Tomeio",
@@ -12,10 +12,17 @@
     { "name": "search", "supportsPagination": true },
     { "name": "meta" }
   ],
+  "providerRoles": ["discovery", "search"],
   "catalogs": [
     { "id": "trending", "name": "Trending this week", "resource": "catalog" },
     { "id": "fantasy", "name": "Fantasy", "resource": "catalog" },
-    { "id": "science-fiction", "name": "Science fiction", "resource": "catalog" }
+    { "id": "science-fiction", "name": "Science fiction", "resource": "catalog" },
+    { "id": "romance", "name": "Romance", "resource": "catalog" },
+    { "id": "mystery", "name": "Mystery & crime", "resource": "catalog" },
+    { "id": "historical-fiction", "name": "Historical fiction", "resource": "catalog" },
+    { "id": "self-help", "name": "Self-help", "resource": "catalog" },
+    { "id": "business", "name": "Business", "resource": "catalog" },
+    { "id": "science", "name": "Science", "resource": "catalog" }
   ],
   "transport": { "kind": "bundled", "module": "@tomeio/extension-open-library" },
   "permissions": {

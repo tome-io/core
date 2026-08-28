@@ -17,8 +17,15 @@ Search results may include `BookMetadata.acquisitions` when the provider already
 download metadata. Clients use those inline acquisitions directly and call `acquisition(id)` only
 when a search result does not include them.
 
+Catalog and search results may also include normalized `BookMetadata.offers`. Tomeio formats and
+renders prices, while the provider supplies the seller, regional currency, availability, and HTTPS
+purchase link. Provider attribution belongs in the manifest so every client can render it.
+Attribution may include an HTTPS `imageUrl` when a provider requires an approved brand asset.
+
 An extension implements only the resources it supports. The declared resources and catalogs live
 in its versioned `tomeio-extension.json` manifest.
+Provider settings are opt-in through `providerRoles`; exposing a catalog does not automatically
+make an add-on a Home discovery provider.
 
 ## Official extensions
 

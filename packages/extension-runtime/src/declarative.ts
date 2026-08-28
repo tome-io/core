@@ -14,7 +14,7 @@ import {
   type ExtensionWorkflowResource,
 } from '@tomeio/extension-protocol';
 
-const MAX_EXPRESSION_DEPTH = 20;
+const MAX_EXPRESSION_DEPTH = 24;
 const MAX_EXPRESSION_NODES = 2_000;
 const MAX_EVALUATION_NODES = 50_000;
 const MAX_MAP_ITEMS = 200;

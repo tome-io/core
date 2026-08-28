@@ -44,6 +44,7 @@ export async function fetchCommunityExtensions(
 ): Promise<CommunityExtension[]> {
   const registryResponse = await fetchFn(COMMUNITY_REGISTRY_URL, {
     headers: { Accept: 'application/json' },
+    cache: 'no-store',
   });
   const registry = record(await responseJson(registryResponse, 'Community registry'));
   if (!registry || registry.registryVersion !== 1 || !Array.isArray(registry.extensions)) {
@@ -63,6 +64,7 @@ export async function fetchCommunityExtensions(
       );
       const manifestResponse = await fetchFn(manifestUrl, {
         headers: { Accept: 'application/json' },
+        cache: 'no-store',
       });
       const manifest = parseExtensionManifest(
         await responseJson(manifestResponse, `Community manifest ${entry.id}`)

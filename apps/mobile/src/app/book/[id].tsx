@@ -44,6 +44,7 @@ import {
   searchAcquisitionCandidatePage,
 } from '@/lib/acquisition-options';
 import { openBookWithAnotherApp, showBookInFiles } from '@/lib/book-file-actions';
+import { formatBookOffer, primaryBookOffer } from '@/lib/book-offers';
 import { bookFilename } from '@/lib/download';
 import {
   fromDiscoveryBook,
@@ -769,6 +770,18 @@ export default function BookDetailScreen() {
         ? normalizeDescription(localBook.description)
         : '';
   const rating = extensionBook?.rating ?? currentDiscovery?.rating ?? localBook?.rating;
+  const purchaseOffer = extensionBook ? primaryBookOffer(extensionBook) : undefined;
+  const purchaseUrl = purchaseOffer?.url ?? extensionBook?.infoUrl;
+  const purchasePrice = formatBookOffer(purchaseOffer);
+  const purchaseLabel = purchaseOffer
+    ? purchaseOffer.availability === 'free'
+      ? `Get free on ${purchaseOffer.provider}`
+      : `${purchaseOffer.availability === 'preorder' ? 'Pre-order' : 'Buy'}${
+          purchasePrice ? ` for ${purchasePrice}` : ''
+        } on ${purchaseOffer.provider}`
+    : purchaseUrl
+      ? 'View at source'
+      : null;
   const trackedBook = localBook ?? moonBook;
   const progress = trackedBook?.isRead ? 100 : trackedBook?.progress;
   const localFileAvailable =
@@ -896,6 +909,19 @@ export default function BookDetailScreen() {
         <View className="px-5 pt-2">
           {readingListButton}
           {descriptionPreview}
+          {purchaseUrl && purchaseLabel ? (
+            <Pressable
+              onPress={() => void Linking.openURL(purchaseUrl)}
+              accessibilityRole="link"
+              className="mt-5 h-12 flex-row items-center justify-center gap-2 rounded-xl"
+              style={{ backgroundColor: colors.accent }}
+            >
+              <Feather name="external-link" size={17} color={colors.onAccent} />
+              <Text className="text-sm font-semibold" style={{ color: colors.onAccent }}>
+                {purchaseLabel}
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
 
         {metadataError || libraryError || localCatalogError ? (

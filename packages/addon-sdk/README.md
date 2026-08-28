@@ -4,6 +4,11 @@ The public TypeScript authoring layer for Tomeio's capability-based add-on proto
 Add-ons return book metadata, resolution candidates, acquisitions, progress, and
 host-rendered library actions. They do not inject UI or application code.
 
+An add-on with the `catalog` resource, declared `catalogs`, and `providerRoles: ['discovery']`
+can be selected as Tomeio's Discovery provider. Catalog support alone does not opt an add-on into
+the Home provider picker. Optional normalized `BookMetadata.offers` let Tomeio render prices and
+purchase actions consistently; add-ons never provide their own cover overlays or buttons.
+
 ```ts
 import { createAddonHandler, defineAddon } from '@tomeio/addon-sdk';
 

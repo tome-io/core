@@ -1,9 +1,11 @@
 import { Feather } from '@expo/vector-icons';
 import type { BookMetadata } from '@tomeio/domain';
+import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Keyboard,
+  Linking,
   Pressable,
   Text,
   TextInput,
@@ -19,6 +21,7 @@ import {
   CatalogSelect,
 } from '@/components/catalog-toolbar';
 import { useExtensions } from '@/context/extensions-context';
+import { bookPriceLabel, bookSourceUrl } from '@/lib/book-offers';
 import { useHomeNavigation } from '@/context/home-navigation-context';
 
 const FORMATS = [
@@ -48,6 +51,8 @@ function searchBook(book: BookMetadata, extensionId: string): SearchBook {
     cover: book.coverUrl || '',
     year: book.publishedYear,
     rating: book.rating,
+    priceLabel: bookPriceLabel(book),
+    sourceUrl: bookSourceUrl(book),
     extensionId,
     metadata: book,
   };
@@ -73,6 +78,15 @@ export default function SearchScreen() {
   const [searchedFor, setSearchedFor] = useState('');
   const [searchedFormat, setSearchedFormat] = useState('');
   const selectedFormat = FORMATS.find((option) => option.value === format) ?? FORMATS[0];
+  const searchManifest = useMemo(() => {
+    const manifests = [
+      ...extensions.thirdParty
+        .filter((extension) => extension.enabled)
+        .map((extension) => extension.manifest),
+      ...extensions.bundled,
+    ];
+    return manifests.find((manifest) => manifest.id === extensions.searchExtensionId) ?? null;
+  }, [extensions.bundled, extensions.searchExtensionId, extensions.thirdParty]);
 
   useEffect(() => {
     setSearchActive(true);
@@ -278,6 +292,26 @@ export default function SearchScreen() {
         onSelect={selectFormat}
         onClose={() => setFormatPickerOpen(false)}
       />
+      {searchManifest?.attribution && books.length ? (
+        <Pressable
+          onPress={() => void Linking.openURL(searchManifest.attribution!.url)}
+          accessibilityRole="link"
+          style={{ paddingHorizontal: gutter, paddingBottom: 8 }}
+        >
+          {searchManifest.attribution.imageUrl ? (
+            <Image
+              source={{ uri: searchManifest.attribution.imageUrl }}
+              accessibilityLabel={searchManifest.attribution.label}
+              contentFit="contain"
+              style={{ width: 62, height: 30 }}
+            />
+          ) : (
+            <Text className="text-[11px] font-medium" style={{ color: colors.textMuted }}>
+              {searchManifest.attribution.label}
+            </Text>
+          )}
+        </Pressable>
+      ) : null}
 
       {loading && books.length === 0 ? (
         <BookGridSkeleton />

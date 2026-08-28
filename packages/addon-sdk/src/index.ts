@@ -11,7 +11,7 @@ import {
   type ExtensionWorkflowDefinition,
 } from '@tomeio/extension-protocol';
 
-export type { BookAcquisition, BookMetadata } from '@tomeio/domain';
+export type { BookAcquisition, BookMetadata, BookOffer, BookPrice } from '@tomeio/domain';
 export * from '@tomeio/extension-protocol';
 
 export type TomeAddon = BookExtension;

@@ -9,7 +9,22 @@ export interface BookMetadata {
   identifiers: Record<string, string>;
   rating?: number;
   ratingsCount?: number;
+  infoUrl?: string;
+  offers?: BookOffer[];
   acquisitions?: BookAcquisition[];
+}
+
+export interface BookPrice {
+  amount: number;
+  currency: string;
+}
+
+export interface BookOffer {
+  provider: string;
+  availability: 'for-sale' | 'free' | 'preorder';
+  country?: string;
+  price?: BookPrice;
+  url: string;
 }
 
 export interface BookAcquisition {
@@ -61,7 +76,7 @@ export function mergeBookMetadata(candidates: readonly MetadataCandidate[]): Boo
   const first = ordered[0]?.metadata;
   if (!first) throw new Error('At least one metadata candidate is required.');
 
-  const pickText = (key: 'id' | 'title' | 'description' | 'coverUrl') =>
+  const pickText = (key: 'id' | 'title' | 'description' | 'coverUrl' | 'infoUrl') =>
     ordered.map((candidate) => candidate.metadata[key]).find(usefulText);
   const pickNumber = (
     key: 'publishedYear' | 'rating' | 'ratingsCount'
@@ -73,6 +88,10 @@ export function mergeBookMetadata(candidates: readonly MetadataCandidate[]): Boo
     ordered
       .map((candidate) => candidate.metadata[key])
       .find((value): value is string[] => Array.isArray(value) && value.length > 0) ?? [];
+  const pickOffers = (): BookOffer[] | undefined =>
+    ordered
+      .map((candidate) => candidate.metadata.offers)
+      .find((value): value is BookOffer[] => Array.isArray(value) && value.length > 0);
 
   const id = pickText('id');
   const title = pickText('title');
@@ -96,6 +115,8 @@ export function mergeBookMetadata(candidates: readonly MetadataCandidate[]): Boo
     ),
     rating: pickNumber('rating'),
     ratingsCount: pickNumber('ratingsCount'),
+    infoUrl: pickText('infoUrl'),
+    offers: pickOffers(),
   };
 }
 

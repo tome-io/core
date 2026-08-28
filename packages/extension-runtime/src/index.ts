@@ -757,7 +757,37 @@ export class ExtensionLoader {
           `Bundled extension "${manifest.id}" is not registered in this application.`
         );
       }
-      return extension;
+      const context = { configuration };
+      return {
+        manifest,
+        ...(extension.catalog
+          ? { catalog: (query: ExtensionQuery) => extension.catalog!(query, context) }
+          : {}),
+        ...(extension.search
+          ? { search: (query: ExtensionQuery) => extension.search!(query, context) }
+          : {}),
+        ...(extension.meta
+          ? { meta: (id: string) => extension.meta!(id, context) }
+          : {}),
+        ...(extension.resolve
+          ? { resolve: (query: ExtensionResolveQuery) => extension.resolve!(query, context) }
+          : {}),
+        ...(extension.acquisition
+          ? { acquisition: (id: string) => extension.acquisition!(id, context) }
+          : {}),
+        ...(extension.libraryAction
+          ? {
+              libraryAction: (request: ExtensionLibraryActionRequest) =>
+                extension.libraryAction!(request, context),
+            }
+          : {}),
+        ...(extension.readerSync
+          ? {
+              readerSync: (request: ExtensionReaderSyncRequest) =>
+                extension.readerSync!(request, context),
+            }
+          : {}),
+      };
     }
     if (manifest.transport.kind === 'host') {
       const adapter = this.options.host?.get(manifest.transport.adapter);

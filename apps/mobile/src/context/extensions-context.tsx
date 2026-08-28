@@ -18,6 +18,7 @@ import type {
   ExtensionReaderSyncRequest,
   ExtensionReaderSyncResult,
 } from '@tomeio/extension-protocol';
+import { supportsExtensionProviderRole } from '@tomeio/extension-protocol';
 import type {
   ExtensionRegistrySnapshot,
   InstalledExtension,
@@ -36,8 +37,10 @@ import {
   refreshCommunityExtensionRegistry,
 } from '@/lib/extensions';
 import {
+  readDiscoveryExtensionId,
   readAcquisitionExtensionId,
   readSearchExtensionId,
+  writeDiscoveryExtensionId,
   writeAcquisitionExtensionId,
   writeSearchExtensionId,
 } from '@/lib/extension-preferences';
@@ -50,12 +53,15 @@ interface ExtensionsContextValue extends ExtensionRegistrySnapshot {
   ready: boolean;
   error: string | null;
   updateError: string | null;
+  discoveryExtensionId: string | null;
   searchExtensionId: string | null;
   acquisitionExtensionId: string | null;
   install(repositoryUrl: string): Promise<InstalledExtension>;
   installCommunity(id: string): Promise<InstalledExtension>;
+  refreshCommunity(): Promise<void>;
   remove(id: string): Promise<void>;
   setEnabled(id: string, enabled: boolean): Promise<void>;
+  setDiscoveryExtension(id: string): Promise<void>;
   setSearchExtension(id: string): Promise<void>;
   setAcquisitionExtension(id: string): Promise<void>;
   configuration(manifest: ExtensionManifest): Promise<Record<string, ExtensionConfigValue>>;
@@ -64,6 +70,7 @@ interface ExtensionsContextValue extends ExtensionRegistrySnapshot {
     values: Record<string, ExtensionConfigValue>
   ): Promise<void>;
   load(id: string): Promise<BookExtension>;
+  catalog(id: string, query: ExtensionQuery): Promise<ExtensionPage<import('@tomeio/domain').BookMetadata>>;
   search(id: string, query: ExtensionQuery): Promise<ExtensionPage<import('@tomeio/domain').BookMetadata>>;
   libraryActions(
     book: ExtensionLibraryBook,
@@ -88,6 +95,7 @@ const EMPTY: ExtensionsContextValue = {
   ready: false,
   error: null,
   updateError: null,
+  discoveryExtensionId: null,
   searchExtensionId: null,
   acquisitionExtensionId: null,
   install: async () => {
@@ -96,17 +104,24 @@ const EMPTY: ExtensionsContextValue = {
   installCommunity: async () => {
     throw new Error('Extensions provider is unavailable.');
   },
+  refreshCommunity: async () => {
+    throw new Error('Extensions provider is unavailable.');
+  },
   remove: async () => {
     throw new Error('Extensions provider is unavailable.');
   },
   setEnabled: async () => {
     throw new Error('Extensions provider is unavailable.');
   },
+  setDiscoveryExtension: async () => {},
   setSearchExtension: async () => {},
   setAcquisitionExtension: async () => {},
   configuration: async () => ({}),
   configure: async () => {},
   load: async () => {
+    throw new Error('Extensions provider is unavailable.');
+  },
+  catalog: async () => {
     throw new Error('Extensions provider is unavailable.');
   },
   search: async () => {
@@ -132,13 +147,15 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [discoveryExtensionId, setDiscoveryExtensionId] = useState<string | null>(null);
   const [searchExtensionId, setSearchExtensionId] = useState<string | null>(null);
   const [acquisitionExtensionId, setAcquisitionExtensionId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const next = await extensionRegistry.list();
     setSnapshot(next);
-    const [savedSearchId, savedAcquisitionId] = await Promise.all([
+    const [savedDiscoveryId, savedSearchId, savedAcquisitionId] = await Promise.all([
+      readDiscoveryExtensionId(),
       readSearchExtensionId(),
       readAcquisitionExtensionId(),
     ]);
@@ -147,14 +164,20 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       ...next.bundled,
     ];
     const searchCandidates = enabledManifests.filter((manifest) =>
-      manifest.resources.some((resource) => resource.name === 'search')
+      supportsExtensionProviderRole(manifest, 'search')
     );
-    const acquisitionCandidates = enabledManifests.filter(
-      (manifest) =>
-        manifest.resources.some(
-          (resource) => resource.name === 'resolve' || resource.name === 'search'
-        ) &&
-        manifest.resources.some((resource) => resource.name === 'acquisition')
+    const discoveryCandidates = enabledManifests.filter((manifest) =>
+      supportsExtensionProviderRole(manifest, 'discovery')
+    );
+    const selectedDiscovery = discoveryCandidates.some(
+      (manifest) => manifest.id === savedDiscoveryId
+    )
+      ? savedDiscoveryId
+      : discoveryCandidates.find((manifest) => manifest.id === 'org.tomeio.open-library')?.id ??
+        discoveryCandidates[0]?.id ??
+        null;
+    const acquisitionCandidates = enabledManifests.filter((manifest) =>
+      supportsExtensionProviderRole(manifest, 'acquisition')
     );
     const selectedSearch = searchCandidates.some((manifest) => manifest.id === savedSearchId)
       ? savedSearchId
@@ -173,6 +196,9 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
           acquisitionCandidates[0]?.id ??
           null;
     await Promise.all([
+      selectedDiscovery !== savedDiscoveryId
+        ? writeDiscoveryExtensionId(selectedDiscovery)
+        : Promise.resolve(),
       selectedSearch !== savedSearchId
         ? writeSearchExtensionId(selectedSearch)
         : Promise.resolve(),
@@ -180,6 +206,7 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
         ? writeAcquisitionExtensionId(selectedAcquisition)
         : Promise.resolve(),
     ]);
+    setDiscoveryExtensionId(selectedDiscovery);
     setSearchExtensionId(selectedSearch);
     setAcquisitionExtensionId(selectedAcquisition);
     setError(null);
@@ -203,6 +230,20 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
     );
     if (result.updated.length) await refresh();
   }, [refresh]);
+
+  const refreshCommunity = useCallback(async () => {
+    try {
+      await refreshCommunityExtensionRegistry();
+      await refresh();
+      await checkForUpdates();
+    } catch (cause) {
+      const message = `Community add-ons are unavailable: ${
+        cause instanceof Error ? cause.message : String(cause)
+      }`;
+      setError(message);
+      throw cause;
+    }
+  }, [checkForUpdates, refresh]);
 
   useEffect(() => {
     let active = true;
@@ -322,6 +363,14 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
     },
     [load]
   );
+  const catalog = useCallback(
+    async (id: string, query: ExtensionQuery) => {
+      const extension = await load(id);
+      if (!extension.catalog) throw new Error(`Extension "${id}" does not provide catalogs.`);
+      return extension.catalog(query);
+    },
+    [load]
+  );
   const libraryActions = useCallback(
     (
       book: ExtensionLibraryBook,
@@ -425,11 +474,27 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
           .map((extension) => extension.manifest),
         ...snapshot.bundled,
       ].find((candidate) => candidate.id === id);
-      if (!manifest?.resources.some((resource) => resource.name === 'search')) {
+      if (!manifest || !supportsExtensionProviderRole(manifest, 'search')) {
         throw new Error(`Extension "${id}" is not an enabled search provider.`);
       }
       await writeSearchExtensionId(id);
       setSearchExtensionId(id);
+    },
+    [snapshot]
+  );
+  const setDiscoveryExtension = useCallback(
+    async (id: string) => {
+      const manifest = [
+        ...snapshot.thirdParty
+          .filter((extension) => extension.enabled)
+          .map((extension) => extension.manifest),
+        ...snapshot.bundled,
+      ].find((candidate) => candidate.id === id);
+      if (!manifest || !supportsExtensionProviderRole(manifest, 'discovery')) {
+        throw new Error(`Extension "${id}" is not an enabled discovery provider.`);
+      }
+      await writeDiscoveryExtensionId(id);
+      setDiscoveryExtensionId(id);
     },
     [snapshot]
   );
@@ -441,12 +506,7 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
           .map((extension) => extension.manifest),
         ...snapshot.bundled,
       ].find((candidate) => candidate.id === id);
-      const resources = new Set(manifest?.resources.map((resource) => resource.name));
-      if (
-        !manifest ||
-        (!resources.has('resolve') && !resources.has('search')) ||
-        !resources.has('acquisition')
-      ) {
+      if (!manifest || !supportsExtensionProviderRole(manifest, 'acquisition')) {
         throw new Error(`Extension "${id}" cannot resolve and download books.`);
       }
       await writeAcquisitionExtensionId(id);
@@ -461,17 +521,21 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       ready,
       error,
       updateError,
+      discoveryExtensionId,
       searchExtensionId,
       acquisitionExtensionId,
       install,
       installCommunity,
+      refreshCommunity,
       remove,
       setEnabled,
+      setDiscoveryExtension,
       setSearchExtension,
       setAcquisitionExtension,
       configuration,
       configure,
       load,
+      catalog,
       search,
       libraryActions,
       runLibraryAction,
@@ -482,17 +546,21 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       ready,
       error,
       updateError,
+      discoveryExtensionId,
       searchExtensionId,
       acquisitionExtensionId,
       install,
       installCommunity,
+      refreshCommunity,
       remove,
       setEnabled,
+      setDiscoveryExtension,
       setSearchExtension,
       setAcquisitionExtension,
       configuration,
       configure,
       load,
+      catalog,
       search,
       libraryActions,
       runLibraryAction,

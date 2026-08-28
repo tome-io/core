@@ -1,4 +1,4 @@
-import type { BookAcquisition, BookMetadata } from '@tomeio/domain';
+import type { BookAcquisition, BookMetadata, BookOffer } from '@tomeio/domain';
 
 export const EXTENSION_MANIFEST_VERSION = 1 as const;
 
@@ -60,6 +60,14 @@ export interface ExtensionBehaviorHints {
   configurable?: boolean;
   configurationRequired?: boolean;
 }
+
+export interface ExtensionAttribution {
+  label: string;
+  url: string;
+  imageUrl?: string;
+}
+
+export type ExtensionProviderRole = 'discovery' | 'search' | 'acquisition';
 
 export type ExtensionPlatform = 'android' | 'ios' | 'web' | 'desktop';
 
@@ -130,9 +138,11 @@ export interface ExtensionManifest {
   icon?: string;
   types: ['book'];
   resources: ExtensionResource[];
+  providerRoles?: ExtensionProviderRole[];
   catalogs?: ExtensionCatalog[];
   config?: ExtensionConfigField[];
   behaviorHints?: ExtensionBehaviorHints;
+  attribution?: ExtensionAttribution;
   libraryActions?: ExtensionLibraryAction[];
   transport: ExtensionTransport;
   permissions?: {
@@ -149,6 +159,19 @@ export interface ExtensionQuery {
   limit?: number;
   language?: string;
   format?: string;
+}
+
+export function supportsExtensionProviderRole(
+  manifest: ExtensionManifest,
+  role: ExtensionProviderRole
+): boolean {
+  if (manifest.providerRoles) return manifest.providerRoles.includes(role);
+  if (role === 'discovery') return false;
+  if (role === 'search') {
+    return manifest.resources.some((resource) => resource.name === 'search');
+  }
+  const resources = new Set(manifest.resources.map((resource) => resource.name));
+  return resources.has('acquisition') && (resources.has('resolve') || resources.has('search'));
 }
 
 export interface ExtensionPage<T> {
@@ -504,6 +527,40 @@ export function parseExtensionManifest(input: unknown): ExtensionManifest {
     throw new InvalidExtensionManifestError('Manifest must declare at least one resource.');
   }
 
+  if (value.providerRoles != null && !Array.isArray(value.providerRoles)) {
+    throw new InvalidExtensionManifestError('providerRoles must be an array.');
+  }
+  const providerRoles = Array.isArray(value.providerRoles)
+    ? value.providerRoles.map((candidate, index): ExtensionProviderRole => {
+        if (!['discovery', 'search', 'acquisition'].includes(String(candidate))) {
+          throw new InvalidExtensionManifestError(
+            `Invalid provider role at index ${index}.`
+          );
+        }
+        return candidate as ExtensionProviderRole;
+      })
+    : undefined;
+  if (providerRoles && new Set(providerRoles).size !== providerRoles.length) {
+    throw new InvalidExtensionManifestError('providerRoles values must be unique.');
+  }
+  if (
+    providerRoles?.includes('search') &&
+    !resources.some((resource) => resource.name === 'search')
+  ) {
+    throw new InvalidExtensionManifestError('Search providers must declare the search resource.');
+  }
+  if (
+    providerRoles?.includes('acquisition') &&
+    (!resources.some((resource) => resource.name === 'acquisition') ||
+      !resources.some(
+        (resource) => resource.name === 'resolve' || resource.name === 'search'
+      ))
+  ) {
+    throw new InvalidExtensionManifestError(
+      'Acquisition providers must declare resolve or acquisition resources.'
+    );
+  }
+
   const transport = record(value.transport);
   if (!transport || typeof transport.kind !== 'string') {
     throw new InvalidExtensionManifestError('Manifest transport is missing.');
@@ -591,6 +648,14 @@ export function parseExtensionManifest(input: unknown): ExtensionManifest {
         };
       })
     : undefined;
+  if (
+    providerRoles?.includes('discovery') &&
+    (!resources.some((resource) => resource.name === 'catalog') || !catalogs?.length)
+  ) {
+    throw new InvalidExtensionManifestError(
+      'Discovery providers must declare catalog resources and catalogs.'
+    );
+  }
 
   const config = Array.isArray(value.config)
     ? value.config.map((candidate, index): ExtensionConfigField => {
@@ -690,6 +755,28 @@ export function parseExtensionManifest(input: unknown): ExtensionManifest {
     throw new InvalidExtensionManifestError(
       'configurationRequired extensions must declare at least one required config field.'
     );
+  }
+
+  const attributionValue = record(value.attribution);
+  const attributionImageUrl = attributionValue?.imageUrl;
+  if (
+    attributionImageUrl != null &&
+    (typeof attributionImageUrl !== 'string' || !attributionImageUrl.trim())
+  ) {
+    throw new InvalidExtensionManifestError(
+      'Manifest field "attribution.imageUrl" must be a non-empty string.'
+    );
+  }
+  const attribution = attributionValue
+    ? {
+        label: requiredString(attributionValue, 'label'),
+        url: requiredString(attributionValue, 'url'),
+        ...(typeof attributionImageUrl === 'string' ? { imageUrl: attributionImageUrl } : {}),
+      }
+    : undefined;
+  if (attribution) {
+    requireHttps(attribution.url, 'attribution.url');
+    if (attribution.imageUrl) requireHttps(attribution.imageUrl, 'attribution.imageUrl');
   }
 
   const libraryActions = Array.isArray(value.libraryActions)
@@ -892,6 +979,7 @@ export function parseExtensionManifest(input: unknown): ExtensionManifest {
     resources,
     transport: parsedTransport,
   };
+  if (providerRoles) manifest.providerRoles = providerRoles;
 
   for (const key of ['author', 'homepage', 'repository'] as const) {
     if (typeof value[key] === 'string') manifest[key] = value[key];
@@ -904,6 +992,7 @@ export function parseExtensionManifest(input: unknown): ExtensionManifest {
   if (catalogs) manifest.catalogs = catalogs;
   if (config) manifest.config = config;
   if (behaviorHints) manifest.behaviorHints = behaviorHints;
+  if (attribution) manifest.attribution = attribution;
   if (libraryActions) manifest.libraryActions = libraryActions;
   if (parsedHosts || parsedDevice || parsedAndroidPackages) {
     manifest.permissions = {
@@ -990,6 +1079,54 @@ export function parseBookMetadata(input: unknown): BookMetadata {
     }
     return candidate;
   };
+  const offers = Array.isArray(value.offers)
+    ? value.offers.map((candidate, index): BookOffer => {
+        const offer = record(candidate);
+        if (!offer) {
+          throw new InvalidExtensionResponseError(`book.offers[${index}] must be an object.`);
+        }
+        const availability = responseString(
+          offer.availability,
+          `book.offers[${index}].availability`
+        );
+        if (!['for-sale', 'free', 'preorder'].includes(availability)) {
+          throw new InvalidExtensionResponseError(
+            `book.offers[${index}].availability is unsupported.`
+          );
+        }
+        const priceValue = record(offer.price);
+        const amount = priceValue?.amount;
+        if (
+          priceValue &&
+          (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0)
+        ) {
+          throw new InvalidExtensionResponseError(
+            `book.offers[${index}].price.amount must be a non-negative finite number.`
+          );
+        }
+        const offerUrl = responseUrl(offer.url, `book.offers[${index}].url`);
+        if (!offerUrl) {
+          throw new InvalidExtensionResponseError(`book.offers[${index}].url is required.`);
+        }
+        return {
+          provider: responseString(offer.provider, `book.offers[${index}].provider`),
+          availability: availability as BookOffer['availability'],
+          ...(typeof offer.country === 'string' ? { country: offer.country } : {}),
+          ...(priceValue
+            ? {
+                price: {
+                  amount: amount as number,
+                  currency: responseString(
+                    priceValue.currency,
+                    `book.offers[${index}].price.currency`
+                  ),
+                },
+              }
+            : {}),
+          url: offerUrl,
+        };
+      })
+    : undefined;
   return {
     id: responseString(value.id, 'book.id'),
     title: responseString(value.title, 'book.title'),
@@ -1007,6 +1144,8 @@ export function parseBookMetadata(input: unknown): BookMetadata {
     ...(optionalNumber('ratingsCount') != null
       ? { ratingsCount: optionalNumber('ratingsCount') }
       : {}),
+    ...(value.infoUrl != null ? { infoUrl: responseUrl(value.infoUrl, 'book.infoUrl') } : {}),
+    ...(offers ? { offers } : {}),
     ...(Array.isArray(value.acquisitions)
       ? { acquisitions: value.acquisitions.map(parseBookAcquisition) }
       : {}),

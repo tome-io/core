@@ -16,7 +16,7 @@ import {
 export const manifest: ExtensionManifest = {
   manifestVersion: 1,
   id: 'org.tomeio.internet-archive',
-  version: '0.1.0',
+  version: '0.2.0',
   name: 'Internet Archive — Open Books',
   description: 'Internet Archive records with rights-verified native downloads.',
   author: 'Tomeio',
@@ -29,6 +29,7 @@ export const manifest: ExtensionManifest = {
     { name: 'resolve', supportsPagination: true },
     { name: 'acquisition' },
   ],
+  providerRoles: ['search', 'acquisition'],
   catalogs: [
     { id: 'popular', name: 'Open Books on Internet Archive', resource: 'catalog' },
   ],
