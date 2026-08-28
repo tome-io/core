@@ -109,4 +109,4 @@ More detail is available in [docs/architecture.md](docs/architecture.md).
 
 ## License
 
-See [LICENSE](LICENSE).
+Tomeio core is available under the [MIT License](LICENSE).
