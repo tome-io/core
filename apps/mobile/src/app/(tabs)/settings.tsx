@@ -36,7 +36,11 @@ import {
   useLibrarySyncStatus,
 } from '@/context/library-context';
 import { useSettings } from '@/context/settings-context';
-import { isSafLocation, pickDownloadFolder } from '@/lib/download';
+import {
+  folderLocationLabel,
+  isExternalFolderLocation,
+  pickDownloadFolder,
+} from '@/lib/download';
 import { beginFolderPicker, endFolderPicker } from '@/lib/folder-picker-lock';
 import {
   getNativeLauncherIcon,
@@ -47,6 +51,7 @@ import {
 import { validateProgressFolder } from '@/lib/progress-folder-provider';
 import { forgetProgressSyncFolder } from '@/lib/progress-sync';
 import type { FolderLocationSetting } from '@/lib/settings';
+import { forgetNativeDirectory } from '../../../modules/expo-progress-folder/src';
 
 type ProviderRole = 'discovery' | 'search' | 'acquisition';
 type SettingsSectionId = 'appearance' | 'providers' | 'library' | 'sync';
@@ -269,11 +274,7 @@ function FolderField({
   resetLabel: string;
   resetIcon: ComponentProps<typeof Feather>['name'];
 }) {
-  const label = !location
-    ? emptyLabel
-    : isSafLocation(location)
-      ? decodeURIComponent(location.split('/').pop() || location)
-      : location;
+  const label = !location ? emptyLabel : folderLocationLabel(location);
   return (
     <View className="gap-2">
       <SelectField label={label} icon="folder" onPress={onChoose} />
@@ -371,24 +372,17 @@ export default function SettingsScreen() {
   };
 
   const chooseFolder = async (setting: FolderLocationSetting) => {
-    if (Platform.OS !== 'android') {
-      Alert.alert(
-        'Not supported here',
-        setting === 'progressSyncLocation'
-          ? 'Choosing a shared progress folder is currently available on Android.'
-          : 'Choosing a custom folder needs Android Storage Access Framework. On iOS, files are saved to the app Documents folder.'
-      );
-      return;
-    }
     beginFolderPicker();
     try {
       const picked = await pickDownloadFolder(
-        isSafLocation(settings[setting])
+        isExternalFolderLocation(settings[setting])
           ? settings[setting]
           : settings.folderPickerLocations[setting]
       );
       if (!picked) return;
-      if (setting === 'progressSyncLocation') await validateProgressFolder(picked.uri);
+      if (setting === 'progressSyncLocation' || Platform.OS === 'ios') {
+        await validateProgressFolder(picked.uri);
+      }
       await update({
         [setting]: picked.uri,
         folderPickerLocations: {
@@ -412,6 +406,7 @@ export default function SettingsScreen() {
     if (setting === 'progressSyncLocation' && settings.progressSyncLocation) {
       await forgetProgressSyncFolder(settings.progressSyncLocation);
     }
+    if (settings[setting]) await forgetNativeDirectory(settings[setting]);
     await update({ [setting]: null });
   };
 

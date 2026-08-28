@@ -8,6 +8,10 @@ export interface ProgressFolderFile {
   mimeType: string | null;
 }
 
+export interface FolderDirectoryEntry extends ProgressFolderFile {
+  isDirectory: boolean;
+}
+
 export interface ProgressFolderDiagnostics {
   authority: string | null;
   isTreeUri: boolean;
@@ -19,7 +23,9 @@ export interface ProgressFolderDiagnostics {
 }
 
 interface ProgressFolderNativeModule {
+  pickDirectory?(initialDirectoryUri?: string | null): Promise<{ uri: string } | null>;
   listFiles(directoryUri: string): Promise<ProgressFolderFile[]>;
+  listDirectoryEntries?(directoryUri: string): Promise<FolderDirectoryEntry[]>;
   readTextFile(fileUri: string): Promise<string>;
   createTextFile(
     directoryUri: string,
@@ -34,7 +40,9 @@ interface ProgressFolderNativeModule {
     filename: string,
     mimeType: string
   ): Promise<string>;
+  copyFileToLocal?(sourceUri: string, destinationUri: string): Promise<void>;
   deleteFile(fileUri: string): Promise<void>;
+  forgetDirectory?(directoryUri: string): Promise<void>;
   openDirectory?(directoryUri: string): Promise<void>;
 }
 
@@ -53,16 +61,46 @@ export function hasNativeProgressFolder(): boolean {
 function requireProgressFolderModule(): ProgressFolderNativeModule {
   if (!nativeModule) {
     throw new Error(
-      'Tomeio folder access requires the installed development build. Run `bun run android` from the repository root.'
+      'Tomeio folder access requires an installed development build. Run `bun run mobile:ios` or `bun run android` from the repository root.'
     );
   }
   return nativeModule;
+}
+
+export function isNativeFolderLocation(
+  location: string | null | undefined
+): boolean {
+  return !!location && location.startsWith('tomeio-folder:');
+}
+
+export function pickNativeDirectory(
+  initialDirectoryUri?: string | null
+): Promise<{ uri: string } | null> {
+  const module = requireProgressFolderModule();
+  if (!module.pickDirectory) {
+    throw new Error(
+      'Choosing an iOS folder requires a rebuilt Tomeio app. Run `bun run mobile:ios` from the repository root.'
+    );
+  }
+  return module.pickDirectory(initialDirectoryUri);
 }
 
 export function listNativeProgressFolderFiles(
   directoryUri: string
 ): Promise<ProgressFolderFile[]> {
   return requireProgressFolderModule().listFiles(directoryUri);
+}
+
+export function listNativeDirectoryEntries(
+  directoryUri: string
+): Promise<FolderDirectoryEntry[]> {
+  const module = requireProgressFolderModule();
+  if (!module.listDirectoryEntries) {
+    throw new Error(
+      'Scanning an iOS folder requires a rebuilt Tomeio app. Run `bun run mobile:ios` from the repository root.'
+    );
+  }
+  return module.listDirectoryEntries(directoryUri);
 }
 
 export function readNativeProgressFolderFile(fileUri: string): Promise<string> {
@@ -108,8 +146,27 @@ export function copyNativeFileToDirectory(
   );
 }
 
+export function copyNativeFileToLocal(
+  sourceUri: string,
+  destinationUri: string
+): Promise<void> {
+  const module = requireProgressFolderModule();
+  if (!module.copyFileToLocal) {
+    throw new Error(
+      'Reading an iOS folder requires a rebuilt Tomeio app. Run `bun run mobile:ios` from the repository root.'
+    );
+  }
+  return module.copyFileToLocal(sourceUri, destinationUri);
+}
+
 export function deleteNativeProgressFolderFile(fileUri: string): Promise<void> {
   return requireProgressFolderModule().deleteFile(fileUri);
+}
+
+export function forgetNativeDirectory(directoryUri: string): Promise<void> {
+  if (!isNativeFolderLocation(directoryUri)) return Promise.resolve();
+  const module = requireProgressFolderModule();
+  return module.forgetDirectory?.(directoryUri) ?? Promise.resolve();
 }
 
 export function openNativeProgressFolder(directoryUri: string): Promise<void> {

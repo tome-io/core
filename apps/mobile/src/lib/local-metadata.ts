@@ -5,6 +5,7 @@ import { metadataFromFilename } from './book-metadata';
 import type { LibraryBook } from './library';
 import { findBookMetadata, getWorkDetails, type DiscoveryBook } from './openlibrary';
 import { readPdfMetadata } from './pdf-metadata';
+import { materializeNativeFolderFile } from './native-folder-file';
 
 const COVER_DIRECTORY = FileSystem.documentDirectory
   ? `${FileSystem.documentDirectory}library-covers`
@@ -248,7 +249,11 @@ async function enrichLocalBook(
     book.local.size <= MAX_PARSE_SIZE && ['epub', 'pdf'].includes(book.local.format);
   if (canReadEmbedded && catalogNeedsFallback(catalogMetadata, book)) {
     try {
-      const base64 = await FileSystem.readAsStringAsync(book.local.uri, {
+      const readableUri = await materializeNativeFolderFile(
+        book.local.uri,
+        book.local.filename
+      );
+      const base64 = await FileSystem.readAsStringAsync(readableUri, {
         encoding: FileSystem.EncodingType.Base64,
       });
       embedded =

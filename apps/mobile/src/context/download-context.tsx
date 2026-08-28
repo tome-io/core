@@ -18,7 +18,7 @@ import {
   getBackgroundDownloads,
   type BackgroundDownloadTask,
 } from '@/lib/background-download-engine';
-import { bookMimeType, isSafLocation } from '@/lib/download';
+import { bookMimeType, isExternalFolderLocation, isSafLocation } from '@/lib/download';
 import type { LibraryBook } from '@/lib/library';
 import { copyNativeFileToDirectory } from '../../modules/expo-progress-folder/src';
 
@@ -61,7 +61,9 @@ interface DownloadContextValue {
 const DownloadContext = createContext<DownloadContextValue | null>(null);
 
 function fileUri(path: string): string {
-  return path.startsWith('file:') || path.startsWith('content:') ? path : `file://${path}`;
+  return path.startsWith('file:') || path.startsWith('content:') || path.startsWith('tomeio-folder:')
+    ? path
+    : `file://${path}`;
 }
 
 function nativeFilePath(uri: string): string {
@@ -135,8 +137,8 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         }
 
         let finalUri: string;
-        if (isSafLocation(metadata.destinationDirectoryUri)) {
-          if (Platform.OS !== 'android') {
+        if (isExternalFolderLocation(metadata.destinationDirectoryUri)) {
+          if (isSafLocation(metadata.destinationDirectoryUri) && Platform.OS !== 'android') {
             throw new Error('Android folder access is unavailable on this platform.');
           }
           finalUri = await copyNativeFileToDirectory(

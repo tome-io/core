@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 
 import { openNativeProgressFolder } from '../../modules/expo-progress-folder/src';
 import type { LibraryBook } from './library';
+import { materializeNativeFolderFile } from './native-folder-file';
 
 const MIME_TYPES: Record<string, string> = {
   azw3: 'application/x-kindle-application',
@@ -42,8 +43,11 @@ function safeFilename(book: LibraryBook): string {
 async function shareableFileUri(book: LibraryBook): Promise<string> {
   const uri = sourceUri(book);
   if (uri.startsWith('file:')) return uri;
+  const filename = safeFilename(book);
+  const nativeUri = await materializeNativeFolderFile(uri, filename);
+  if (nativeUri !== uri) return nativeUri;
   if (!FileSystem.cacheDirectory) throw new Error('The app cache is unavailable.');
-  const cachedUri = `${FileSystem.cacheDirectory}${safeFilename(book)}`;
+  const cachedUri = `${FileSystem.cacheDirectory}${filename}`;
   await FileSystem.deleteAsync(cachedUri, { idempotent: true });
   await FileSystem.copyAsync({ from: uri, to: cachedUri });
   return cachedUri;

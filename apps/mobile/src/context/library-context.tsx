@@ -42,7 +42,10 @@ import {
 } from '@/lib/reader-extension-sync';
 import { enrichIndexedReaderCatalog } from '@/lib/moon-reader-sync';
 import { synchronizeProgressFolder } from '@/lib/progress-sync';
-import { deleteNativeProgressFolderFile } from '../../modules/expo-progress-folder/src';
+import {
+  deleteNativeProgressFolderFile,
+  isNativeFolderLocation,
+} from '../../modules/expo-progress-folder/src';
 
 interface LibraryCatalogValue {
   downloaded: LibraryBook[];
@@ -168,7 +171,7 @@ const LibraryActionsContext = createContext<LibraryActionsValue>({
 });
 
 async function deleteSourceFile(uri: string): Promise<void> {
-  if (uri.startsWith('content:')) {
+  if (uri.startsWith('content:') || isNativeFolderLocation(uri)) {
     await deleteNativeProgressFolderFile(uri);
     return;
   }
