@@ -105,6 +105,25 @@ test('rejects workflow requests to undeclared origins', async () => {
   await assert.rejects(() => extension.search?.({ query: 'dune' }), /undeclared origin/);
 });
 
+test('surfaces a declarative provider error message without exposing request details', async () => {
+  const loader = new ExtensionLoader({
+    bundled: new Map(),
+    fetchFn: async (input) =>
+      String(input).includes('raw.githubusercontent.com')
+        ? Response.json(definition)
+        : Response.json(
+            { error: { message: 'The configured API key cannot use this service.' } },
+            { status: 403 }
+          ),
+  });
+  const extension = await loader.load(manifest, { token: 'scoped-secret' });
+
+  await assert.rejects(
+    () => extension.search?.({ query: 'dune' }),
+    /HTTP 403: The configured API key cannot use this service\./
+  );
+});
+
 const deviceManifest: ExtensionManifest = {
   manifestVersion: 1,
   id: 'community.example.reader',

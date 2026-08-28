@@ -581,6 +581,15 @@ async function readResponse(response: Response, type: 'json' | 'text'): Promise<
   }
 }
 
+function rejectedResponseMessage(result: Record<string, unknown>): string {
+  const status = Number(result.status);
+  const error = record(record(result.body)?.error);
+  const providerMessage = typeof error?.message === 'string' ? error.message.trim() : '';
+  return providerMessage
+    ? `HTTP ${status}: ${providerMessage.slice(0, 300)}`
+    : `HTTP ${status} did not satisfy the workflow`;
+}
+
 async function executeRequest(
   request: ExtensionWorkflowRequest,
   accept: ExtensionWorkflowExpression | undefined,
@@ -646,7 +655,7 @@ async function executeRequest(
         ? Boolean(evaluate(accept, { ...context, response: result }))
         : response.ok;
       if (accepted) return result;
-      failures.push(`${url.origin}: HTTP ${response.status} did not satisfy the workflow`);
+      failures.push(`${url.origin}: ${rejectedResponseMessage(result)}`);
     } catch (cause) {
       failures.push(`${url.origin}: ${cause instanceof Error ? cause.message : String(cause)}`);
     } finally {
