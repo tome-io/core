@@ -1,16 +1,17 @@
 import type { BookMetadata } from '@tomeio/domain';
-import type {
-  BookExtension,
-  ExtensionManifest,
-  ExtensionPage,
-  ExtensionQuery,
-} from '@tomeio/extension-protocol';
+import {
+  defineAddon,
+  type BookExtension,
+  type ExtensionManifest,
+  type ExtensionPage,
+  type ExtensionQuery,
+} from '@tomeio/addon-sdk';
 import { createSourceHttpClient, type SourceHttpOptions } from '@tomeio/sources';
 
 export const manifest: ExtensionManifest = {
   manifestVersion: 1,
   id: 'org.tomeio.open-library',
-  version: '0.1.1',
+  version: '0.2.0',
   name: 'Open Library',
   description: 'Trending catalogs and book metadata from Open Library.',
   author: 'Tomeio',
@@ -21,10 +22,17 @@ export const manifest: ExtensionManifest = {
     { name: 'search', supportsPagination: true },
     { name: 'meta' },
   ],
+  providerRoles: ['discovery', 'search'],
   catalogs: [
     { id: 'trending', name: 'Trending this week', resource: 'catalog' },
     { id: 'fantasy', name: 'Fantasy', resource: 'catalog' },
     { id: 'science-fiction', name: 'Science fiction', resource: 'catalog' },
+    { id: 'romance', name: 'Romance', resource: 'catalog' },
+    { id: 'mystery', name: 'Mystery & crime', resource: 'catalog' },
+    { id: 'historical-fiction', name: 'Historical fiction', resource: 'catalog' },
+    { id: 'self-help', name: 'Self-help', resource: 'catalog' },
+    { id: 'business', name: 'Business', resource: 'catalog' },
+    { id: 'science', name: 'Science', resource: 'catalog' },
   ],
   transport: { kind: 'bundled', module: '@tomeio/extension-open-library' },
   permissions: {
@@ -43,6 +51,7 @@ interface SearchDocument {
   isbn?: string[];
   ratings_average?: number;
   ratings_count?: number;
+  description?: string | { value?: string };
 }
 
 interface SearchResponse {
@@ -52,7 +61,24 @@ interface SearchResponse {
 }
 
 const SEARCH_FIELDS =
-  'key,title,author_name,cover_i,cover_edition_key,first_publish_year,subject,isbn,ratings_average,ratings_count';
+  'key,title,author_name,cover_i,cover_edition_key,first_publish_year,subject,isbn,ratings_average,ratings_count,description';
+const MODERN_FROM_YEAR = new Date().getUTCFullYear() - 10;
+const QUALITY_FILTER = [
+  'language:eng',
+  `first_publish_year:[${MODERN_FROM_YEAR} TO *]`,
+  'cover_i:*',
+  'readinglog_count:[4 TO *]',
+].join(' AND ');
+const SUBJECT_QUERIES: Record<string, string> = {
+  fantasy: 'subject_key:(fantasy OR fantasy_fiction)',
+  'science-fiction': 'subject_key:(science_fiction OR science_fiction_english)',
+  romance: 'subject_key:(romance OR love_stories)',
+  mystery: 'subject_key:(mystery OR detective_and_mystery_stories OR thrillers)',
+  'historical-fiction': 'subject_key:(historical_fiction OR history_fiction)',
+  'self-help': 'subject_key:("self-help" OR self_improvement)',
+  business: 'subject_key:(business OR entrepreneurship)',
+  science: 'subject_key:(science OR popular_science)',
+};
 const SECONDARY_TITLE =
   /\b(summary|summaries|workbook|study guide|cliff.?notes|sparknotes|notes on|discussions of|coloring book)\b/i;
 
@@ -138,6 +164,10 @@ function mapDocument(document: SearchDocument): BookMetadata | null {
     id,
     title,
     authors: document.author_name?.filter(Boolean) ?? [],
+    description:
+      typeof document.description === 'string'
+        ? document.description
+        : document.description?.value,
     coverUrl: coverUrl(document),
     publishedYear: document.first_publish_year,
     subjects: document.subject?.slice(0, 12) ?? [],
@@ -196,14 +226,17 @@ export function createOpenLibraryExtension(options: SourceHttpOptions = {}): Boo
     };
   };
 
-  return {
-    manifest,
+  return defineAddon(manifest, {
     search,
     catalog: (query) => {
+      const catalogId = query.catalogId ?? 'trending';
+      const subjectQuery =
+        SUBJECT_QUERIES[catalogId] ??
+        `subject_key:${catalogId.replaceAll('-', '_').toLowerCase()}`;
       const catalogQuery =
-        query.catalogId && query.catalogId !== 'trending'
-          ? `subject_key:${query.catalogId.replaceAll('-', '_')}`
-          : '*:*';
+        catalogId === 'trending'
+          ? `trending_score_hourly_sum:[1 TO *] AND ${QUALITY_FILTER}`
+          : `${subjectQuery} AND ${QUALITY_FILTER}`;
       return requestPage(query, catalogQuery, 'trending');
     },
     meta: async (id) => {
@@ -230,7 +263,7 @@ export function createOpenLibraryExtension(options: SourceHttpOptions = {}): Boo
         identifiers: { openLibrary: id },
       };
     },
-  };
+  });
 }
 
 export const openLibraryExtension = createOpenLibraryExtension();

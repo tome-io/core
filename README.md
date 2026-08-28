@@ -38,6 +38,7 @@ Electron client for macOS.
 - `database` — portable database driver contract and core schema.
 - `design` — shared colors and design tokens.
 - `domain` — book metadata, identity, acquisition, and progress models.
+- `addon-sdk` — public TypeScript authoring API for declarative and HTTP add-ons.
 - `extension-protocol` — manifest, resource, query, and response types.
 - `extension-runtime` — extension installation, registry, and transport loading.
 - `official-extensions` — registry of extensions bundled with Tomeio.
@@ -60,12 +61,15 @@ dialog, and native persistence access; its renderer does not have Node access.
 
 ## Extensions
 
-Tomeio extensions expose four book resources:
+Tomeio add-ons expose capability resources:
 
 - `catalog` — discovery shelves and paged catalogs.
 - `search` — provider search.
 - `meta` — book details and metadata enrichment.
+- `resolve` — provider-neutral search-to-download handoff.
 - `acquisition` — downloadable formats or external open actions.
+- `reader` — external reader progress.
+- `libraryAction` — buttons rendered and controlled by Tomeio.
 
 The official extensions are Open Library, Project Gutenberg, and Internet Archive — Open Books.
 They implement the common extension contract and are compiled with the app.

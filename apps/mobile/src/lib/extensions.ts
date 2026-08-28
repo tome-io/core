@@ -7,7 +7,8 @@ import {
 } from '@tomeio/extension-runtime';
 import { officialExtensionManifests, officialExtensions } from '@tomeio/official-extensions';
 
-import { mobileScriptExtensionExecutor } from './script-extension-executor';
+import { fetchCommunityExtensions } from './community-extensions';
+import { createMobileDeviceExtensionHost } from './device-extension-host';
 
 const EXTENSION_REGISTRY_KEY = 'third_party_extensions_v1';
 
@@ -32,7 +33,11 @@ export const extensionRegistry = new ExtensionRegistry(
   officialExtensionManifests
 );
 
+export async function refreshCommunityExtensionRegistry(): Promise<void> {
+  extensionRegistry.setCommunity(await fetchCommunityExtensions());
+}
+
 export const extensionLoader = new ExtensionLoader({
   bundled: new Map(officialExtensions.map((extension) => [extension.manifest.id, extension])),
-  scriptExecutor: mobileScriptExtensionExecutor,
+  device: createMobileDeviceExtensionHost(),
 });

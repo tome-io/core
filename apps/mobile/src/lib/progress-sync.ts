@@ -19,6 +19,7 @@ import {
   type ProgressSyncRecord,
   type ProgressSyncVersion,
 } from './progress-sync-model';
+import { isExternalFolderLocation } from './download';
 
 const LEGACY_SYNC_FILENAME = 'reader-progress-v1.json';
 const SYNC_FILENAME_PREFIX = 'reader-progress-';
@@ -191,8 +192,8 @@ function recordPayload(records: ProgressSyncRecord[]): string {
 export async function synchronizeProgressFolder(
   directoryUri: string
 ): Promise<ProgressSyncResult> {
-  if (!directoryUri.startsWith('content:')) {
-    throw new Error('Progress folder sync currently requires an Android shared folder.');
+  if (!isExternalFolderLocation(directoryUri)) {
+    throw new Error('Progress folder sync requires a user-selected shared folder.');
   }
 
   const deviceId = await getDeviceId();

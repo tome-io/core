@@ -1,6 +1,11 @@
 import { Feather } from '@expo/vector-icons';
+import * as Application from 'expo-application';
+import Constants from 'expo-constants';
 import { Image } from 'expo-image';
-import type { ExtensionManifest } from '@tomeio/extension-protocol';
+import {
+  supportsExtensionProviderRole,
+  type ExtensionManifest,
+} from '@tomeio/extension-protocol';
 import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import {
   ActivityIndicator,
@@ -31,7 +36,11 @@ import {
   useLibrarySyncStatus,
 } from '@/context/library-context';
 import { useSettings } from '@/context/settings-context';
-import { isSafLocation, pickDownloadFolder } from '@/lib/download';
+import {
+  folderLocationLabel,
+  isExternalFolderLocation,
+  pickDownloadFolder,
+} from '@/lib/download';
 import { beginFolderPicker, endFolderPicker } from '@/lib/folder-picker-lock';
 import {
   getNativeLauncherIcon,
@@ -41,14 +50,11 @@ import {
 } from '@/lib/launcher-icon';
 import { validateProgressFolder } from '@/lib/progress-folder-provider';
 import { forgetProgressSyncFolder } from '@/lib/progress-sync';
+import type { FolderLocationSetting } from '@/lib/settings';
+import { forgetNativeDirectory } from '../../../modules/expo-progress-folder/src';
 
-type ProviderRole = 'search' | 'acquisition';
+type ProviderRole = 'discovery' | 'search' | 'acquisition';
 type SettingsSectionId = 'appearance' | 'providers' | 'library' | 'sync';
-type LocationSetting =
-  | 'localLibraryLocation'
-  | 'moonReaderBackupLocation'
-  | 'progressSyncLocation';
-
 const SECTIONS: { id: SettingsSectionId; label: string }[] = [
   ...(Platform.OS === 'android'
     ? [{ id: 'appearance' as const, label: 'Appearance' }]
@@ -57,6 +63,9 @@ const SECTIONS: { id: SettingsSectionId; label: string }[] = [
   { id: 'library', label: 'Library' },
   { id: 'sync', label: 'Progress sync' },
 ];
+
+const APP_VERSION =
+  Application.nativeApplicationVersion ?? Constants.expoConfig?.version ?? null;
 
 const LAUNCHER_ICONS: {
   id: LauncherIcon;
@@ -77,6 +86,12 @@ const LAUNCHER_ICONS: {
     source: require('../../../assets/images/android-icon-monochrome.png'),
   },
 ];
+
+function providerRoleLabel(role: ProviderRole | null): string {
+  if (role === 'discovery') return 'Discovery provider';
+  if (role === 'search') return 'Search provider';
+  return 'Download provider';
+}
 
 function SettingsMenu({
   selected,
@@ -108,7 +123,7 @@ function SettingsMenu({
       })}
       <View className="flex-1" />
       <Text className="px-6 text-xs" style={{ color: colors.textMuted, opacity: 0.45 }}>
-        Tomeio
+        {APP_VERSION ? `Tomeio · v${APP_VERSION}` : 'Tomeio · Version unavailable'}
       </Text>
     </View>
   );
@@ -130,7 +145,7 @@ function ProviderPicker({
   return (
     <AppDialog
       visible={role !== null}
-      title={role === 'search' ? 'Search provider' : 'Download provider'}
+      title={providerRoleLabel(role)}
       onClose={onClose}
     >
       <Text className="mb-4 text-sm" style={{ color: colors.textMuted }}>
@@ -259,11 +274,7 @@ function FolderField({
   resetLabel: string;
   resetIcon: ComponentProps<typeof Feather>['name'];
 }) {
-  const label = !location
-    ? emptyLabel
-    : isSafLocation(location)
-      ? decodeURIComponent(location.split('/').pop() || location)
-      : location;
+  const label = !location ? emptyLabel : folderLocationLabel(location);
   return (
     <View className="gap-2">
       <SelectField label={label} icon="folder" onPress={onChoose} />
@@ -306,21 +317,29 @@ export default function SettingsScreen() {
   const searchProviders = useMemo(
     () =>
       enabledManifests.filter((manifest) =>
-        manifest.resources.some((resource) => resource.name === 'search')
+        supportsExtensionProviderRole(manifest, 'search')
+      ),
+    [enabledManifests]
+  );
+  const discoveryProviders = useMemo(
+    () =>
+      enabledManifests.filter((manifest) =>
+        supportsExtensionProviderRole(manifest, 'discovery')
       ),
     [enabledManifests]
   );
   const acquisitionProviders = useMemo(
     () =>
-      enabledManifests.filter(
-        (manifest) =>
-          manifest.resources.some((resource) => resource.name === 'search') &&
-          manifest.resources.some((resource) => resource.name === 'acquisition')
+      enabledManifests.filter((manifest) =>
+        supportsExtensionProviderRole(manifest, 'acquisition')
       ),
     [enabledManifests]
   );
   const selectedSearch = searchProviders.find(
     (manifest) => manifest.id === extensions.searchExtensionId
+  );
+  const selectedDiscovery = discoveryProviders.find(
+    (manifest) => manifest.id === extensions.discoveryExtensionId
   );
   const selectedAcquisition = acquisitionProviders.find(
     (manifest) => manifest.id === extensions.acquisitionExtensionId
@@ -352,24 +371,25 @@ export default function SettingsScreen() {
     if (active !== selectedSection) setSelectedSection(active);
   };
 
-  const chooseFolder = async (setting: LocationSetting) => {
-    if (Platform.OS !== 'android') {
-      Alert.alert(
-        'Not supported here',
-        setting === 'progressSyncLocation'
-          ? 'Choosing a shared progress folder is currently available on Android.'
-          : 'Choosing a custom folder needs Android Storage Access Framework. On iOS, files are saved to the app Documents folder.'
-      );
-      return;
-    }
+  const chooseFolder = async (setting: FolderLocationSetting) => {
     beginFolderPicker();
     try {
       const picked = await pickDownloadFolder(
-        isSafLocation(settings[setting]) ? settings[setting] : null
+        isExternalFolderLocation(settings[setting])
+          ? settings[setting]
+          : settings.folderPickerLocations[setting]
       );
       if (!picked) return;
-      if (setting === 'progressSyncLocation') await validateProgressFolder(picked.uri);
-      await update({ [setting]: picked.uri });
+      if (setting === 'progressSyncLocation' || Platform.OS === 'ios') {
+        await validateProgressFolder(picked.uri);
+      }
+      await update({
+        [setting]: picked.uri,
+        folderPickerLocations: {
+          ...settings.folderPickerLocations,
+          [setting]: picked.uri,
+        },
+      });
     } catch (cause) {
       Alert.alert(
         setting === 'progressSyncLocation'
@@ -382,16 +402,18 @@ export default function SettingsScreen() {
     }
   };
 
-  const resetFolder = async (setting: LocationSetting) => {
+  const resetFolder = async (setting: FolderLocationSetting) => {
     if (setting === 'progressSyncLocation' && settings.progressSyncLocation) {
       await forgetProgressSyncFolder(settings.progressSyncLocation);
     }
+    if (settings[setting]) await forgetNativeDirectory(settings[setting]);
     await update({ [setting]: null });
   };
 
   const setProvider = async (role: ProviderRole, id: string) => {
     try {
-      if (role === 'search') await extensions.setSearchExtension(id);
+      if (role === 'discovery') await extensions.setDiscoveryExtension(id);
+      else if (role === 'search') await extensions.setSearchExtension(id);
       else await extensions.setAcquisitionExtension(id);
       setProviderPicker(null);
     } catch (cause) {
@@ -484,6 +506,16 @@ export default function SettingsScreen() {
         >
           <SettingsOption
             compact={compactOptions}
+            label="Discovery provider"
+            detail="Supplies the catalog rows shown on Home."
+          >
+            <SelectField
+              label={selectedDiscovery?.name ?? 'No provider available'}
+              onPress={() => setProviderPicker('discovery')}
+            />
+          </SettingsOption>
+          <SettingsOption
+            compact={compactOptions}
             label="Search provider"
             detail="Supplies searches across titles, authors and ISBNs."
           >
@@ -527,24 +559,6 @@ export default function SettingsScreen() {
               }
               resetLabel="Use app folder"
               resetIcon="home"
-            />
-          </SettingsOption>
-          <SettingsOption
-            compact={compactOptions}
-            label="Moon+ Reader backup folder"
-            detail="Imports Moon+ catalog, reading progress and history."
-          >
-            <FolderField
-              location={settings.moonReaderBackupLocation}
-              emptyLabel="Not configured"
-              onChoose={() => void chooseFolder('moonReaderBackupLocation')}
-              onReset={
-                settings.moonReaderBackupLocation
-                  ? () => void resetFolder('moonReaderBackupLocation')
-                  : undefined
-              }
-              resetLabel="Disconnect"
-              resetIcon="x"
             />
           </SettingsOption>
         </SettingsSection>
@@ -607,11 +621,19 @@ export default function SettingsScreen() {
 
       <ProviderPicker
         role={providerPicker}
-        options={providerPicker === 'search' ? searchProviders : acquisitionProviders}
+        options={
+          providerPicker === 'discovery'
+            ? discoveryProviders
+            : providerPicker === 'search'
+              ? searchProviders
+              : acquisitionProviders
+        }
         selectedId={
-          providerPicker === 'search'
-            ? extensions.searchExtensionId
-            : extensions.acquisitionExtensionId
+          providerPicker === 'discovery'
+            ? extensions.discoveryExtensionId
+            : providerPicker === 'search'
+              ? extensions.searchExtensionId
+              : extensions.acquisitionExtensionId
         }
         onSelect={(id) => providerPicker && void setProvider(providerPicker, id)}
         onClose={() => setProviderPicker(null)}

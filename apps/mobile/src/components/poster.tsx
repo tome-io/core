@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { useCallback } from 'react';
-import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { colors, SectionHeader, usePageGutter } from '@/components/app-ui';
 import type { DiscoveryBook, FeedBook } from '@/lib/openlibrary';
@@ -63,6 +63,21 @@ export function PosterCard<T extends FeedBook>({
           </View>
         )}
         <RatingChip rating={book.rating} />
+        {book.sourceUrl && book.priceLabel ? (
+          <Pressable
+            accessibilityLabel={`${book.priceLabel}; open source`}
+            accessibilityRole="link"
+            onPress={(event) => {
+              event.stopPropagation();
+              void Linking.openURL(book.sourceUrl!);
+            }}
+            style={styles.priceBadge}
+          >
+            <Text numberOfLines={1} style={styles.priceText}>
+              {book.priceLabel}
+            </Text>
+          </Pressable>
+        ) : null}
         {progress > 0 ? (
           <>
             <View style={styles.progressTrack}>
@@ -137,6 +152,21 @@ const styles = StyleSheet.create({
     left: 0,
     height: 6,
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
+  },
+  priceBadge: {
+    position: 'absolute',
+    right: 6,
+    bottom: 6,
+    maxWidth: '82%',
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.84)',
+  },
+  priceText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '700',
   },
   progressBadge: {
     position: 'absolute',
@@ -254,5 +284,32 @@ export function Rail<T extends FeedBook>({
         </View>
       )}
     </View>
+  );
+}
+
+export function ProviderAttribution({
+  attribution,
+}: {
+  attribution: { label: string; url: string; imageUrl?: string };
+}) {
+  return (
+    <Pressable
+      onPress={() => void Linking.openURL(attribution.url)}
+      accessibilityRole="link"
+      accessibilityLabel={attribution.label}
+      className="self-end"
+    >
+      {attribution.imageUrl ? (
+        <Image
+          source={{ uri: attribution.imageUrl }}
+          contentFit="contain"
+          style={{ width: 62, height: 22 }}
+        />
+      ) : (
+        <Text className="text-[11px] font-medium" style={{ color: colors.textMuted }}>
+          {attribution.label}
+        </Text>
+      )}
+    </Pressable>
   );
 }

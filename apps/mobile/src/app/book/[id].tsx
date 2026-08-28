@@ -2,12 +2,13 @@ import { Feather } from '@expo/vector-icons';
 import type { BookAcquisition, BookMetadata } from '@tomeio/domain';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Linking,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -19,34 +20,60 @@ import {
   LibraryBookActions,
   type LibraryAction,
 } from '@/components/library-book-actions';
-import { colors, usePageBottomPadding } from '@/components/app-ui';
-import { RatingChip } from '@/components/rating-chip';
+import {
+  DescriptionText,
+  descriptionPlainText,
+  normalizeDescription,
+} from '@/components/description-text';
+import {
+  BookStatusChips,
+  colors,
+  usePageBottomPadding,
+} from '@/components/app-ui';
+import { useDownloads, type BookDownloadJob } from '@/context/download-context';
 import { useExtensions } from '@/context/extensions-context';
 import {
   useLibraryActions,
   useLibraryCatalog,
   useLibraryReadingList,
+  useLibraryUiStatus,
 } from '@/context/library-context';
 import { useSettings } from '@/context/settings-context';
+import {
+  acquisitionActionKind,
+  searchAcquisitionCandidatePage,
+} from '@/lib/acquisition-options';
 import { openBookWithAnotherApp, showBookInFiles } from '@/lib/book-file-actions';
-import { bookFilename, downloadBook, type DownloadProgress } from '@/lib/download';
+import { formatBookOffer, primaryBookOffer } from '@/lib/book-offers';
+import { bookFilename } from '@/lib/download';
 import {
   fromDiscoveryBook,
   fromExtensionBook,
+  toExtensionLibraryBook,
   type LibraryBook,
 } from '@/lib/library';
 import { loadLocalCatalogBook } from '@/lib/library-db';
-import { openInMoonReader } from '@/lib/moon-reader-launcher';
 import { getWorkDetails, type DiscoveryBook } from '@/lib/openlibrary';
 
 type Phase =
   | { kind: 'idle' }
   | { kind: 'resolving' }
-  | { kind: 'downloading'; progress: DownloadProgress }
+  | { kind: 'downloading'; progress: { bytesWritten: number; totalBytes: number } }
   | { kind: 'done'; uri: string }
   | { kind: 'error'; message: string };
 
+interface AcquisitionCandidate {
+  kind: 'candidate';
+  matchesCurrentBook: boolean;
+  key: string;
+  extensionId: string;
+  providerName: string;
+  book: BookMetadata;
+}
+
 interface AcquisitionOption {
+  kind: 'option';
+  matchesCurrentBook: boolean;
   key: string;
   extensionId: string;
   providerName: string;
@@ -54,7 +81,26 @@ interface AcquisitionOption {
   acquisition: BookAcquisition;
 }
 
+type AcquisitionEntry = AcquisitionCandidate | AcquisitionOption;
+
+interface AcquisitionOptionPage {
+  items: AcquisitionEntry[];
+  nextPage: number | null;
+}
+
 const IDLE: Phase = { kind: 'idle' };
+
+function phaseFromJob(job?: BookDownloadJob): Phase | null {
+  if (!job) return null;
+  if (job.status === 'done') return { kind: 'done', uri: job.uri ?? '' };
+  if (job.status === 'error') {
+    return { kind: 'error', message: job.error ?? 'Download failed.' };
+  }
+  return {
+    kind: 'downloading',
+    progress: { bytesWritten: job.bytesWritten, totalBytes: job.totalBytes },
+  };
+}
 
 function formatSize(bytes?: number): string {
   if (!bytes) return '';
@@ -76,16 +122,16 @@ function parseParam<T>(json?: string): T | null {
   }
 }
 
-function plainText(value: string): string {
-  return value
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)))
-    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(parseInt(code, 10)))
-    .replace(/&amp;/gi, '&')
-    .replace(/&quot;/gi, '"')
-    .replace(/&apos;/gi, "'")
-    .replace(/\s+/g, ' ')
-    .trim();
+function sameRouteValue(left?: string | null, right?: string | null): boolean {
+  if (!left || !right) return false;
+  const comparable = (value: string) => {
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  };
+  return comparable(left) === comparable(right);
 }
 
 export default function BookDetailScreen() {
@@ -107,14 +153,15 @@ export default function BookDetailScreen() {
   const { settings } = useSettings();
   const { downloaded } = useLibraryCatalog();
   const { readingList } = useLibraryReadingList();
+  const { scanning: libraryScanning } = useLibraryUiStatus();
   const {
-    deleteLocalBook,
     markAsRead,
-    recordDownload,
-    removeSyncedBook,
+    removeLibraryBook,
+    removeLocalFile,
     refreshBookMetadata,
     toggleReadingList,
   } = useLibraryActions();
+  const { jobs: downloadJobs, startBookDownload } = useDownloads();
 
   const extensionBook = useMemo(
     () => parseParam<BookMetadata>(params.extensionBook),
@@ -152,18 +199,23 @@ export default function BookDetailScreen() {
 
   const localParam = useMemo(() => parseParam<LibraryBook>(params.local), [params.local]);
   const [persistedLocalBook, setPersistedLocalBook] = useState<LibraryBook | null>(null);
+  const [localCatalogResolved, setLocalCatalogResolved] = useState(false);
   const [localCatalogError, setLocalCatalogError] = useState<string | null>(null);
   useEffect(() => {
     if (!localParam && !params.localUri) {
       setPersistedLocalBook(null);
+      setLocalCatalogResolved(true);
       setLocalCatalogError(null);
       return;
     }
+    if (libraryScanning) return;
     let active = true;
+    setPersistedLocalBook(null);
+    setLocalCatalogResolved(false);
     setLocalCatalogError(null);
     void loadLocalCatalogBook(
       localParam?.key ?? params.id ?? null,
-      params.localUri ?? localParam?.local?.uri ?? null
+      localParam?.local?.uri ?? params.localUri ?? null
     )
       .then((book) => {
         if (active) setPersistedLocalBook(book);
@@ -174,54 +226,112 @@ export default function BookDetailScreen() {
             `Local catalog lookup failed: ${cause instanceof Error ? cause.message : String(cause)}`
           );
         }
+      })
+      .finally(() => {
+        if (active) setLocalCatalogResolved(true);
       });
     return () => {
       active = false;
     };
-  }, [localParam, params.id, params.localUri]);
+  }, [libraryScanning, localParam, params.id, params.localUri]);
 
   const localBook = useMemo(() => {
     if (!localParam && !params.localUri) return null;
-    const liveBook = downloaded.find(
+    const liveBook = [...downloaded, ...readingList].find(
       (book) =>
         !!book.local &&
-        (book.key === params.id ||
-          book.id === params.id ||
-          book.key === localParam?.key ||
-          book.local.uri === params.localUri ||
-          book.local.uri === localParam?.local?.uri)
+        (sameRouteValue(book.key, params.id) ||
+          sameRouteValue(book.id, params.id) ||
+          sameRouteValue(book.key, localParam?.key) ||
+          sameRouteValue(book.local.uri, params.localUri) ||
+          sameRouteValue(book.local.uri, localParam?.local?.uri))
     );
-    if (!persistedLocalBook) return liveBook ?? localParam;
+    if (!persistedLocalBook) {
+      if (liveBook) return liveBook;
+      if (localCatalogResolved && !localCatalogError) {
+        return { ...localParam, availableLocally: false };
+      }
+      return localParam;
+    }
     return {
       ...localParam,
-      ...liveBook,
       ...persistedLocalBook,
+      ...liveBook,
+      availableLocally: true,
+      moonReader:
+        persistedLocalBook.moonReader || liveBook?.moonReader || localParam?.moonReader
+          ? {
+              ...localParam?.moonReader,
+              ...persistedLocalBook.moonReader,
+              ...liveBook?.moonReader,
+              availableLocally: true,
+            }
+          : undefined,
       cover: persistedLocalBook.cover || liveBook?.cover || localParam?.cover || '',
       description:
         persistedLocalBook.description || liveBook?.description || localParam?.description || '',
       progress: persistedLocalBook.progress ?? liveBook?.progress ?? localParam?.progress,
       isRead: persistedLocalBook.isRead ?? liveBook?.isRead ?? localParam?.isRead,
     };
-  }, [downloaded, localParam, params.id, params.localUri, persistedLocalBook]);
+  }, [
+    downloaded,
+    localCatalogError,
+    localCatalogResolved,
+    localParam,
+    params.id,
+    params.localUri,
+    persistedLocalBook,
+    readingList,
+  ]);
+
+  const localCopyUnavailable =
+    !!localBook &&
+    (localBook.availableLocally === false ||
+      localBook.moonReader?.availableLocally === false);
+  const sourceDiscoveryBook =
+    discoveryBook ?? (localCopyUnavailable ? localBook?.discovery ?? null : null);
+  const acquisitionExtension = useMemo(() => {
+    if (extensionBook) {
+      return { extensionId, book: extensionBook };
+    }
+    if (!localCopyUnavailable || !localBook?.extension) return null;
+
+    const { acquisition, book, extensionId: storedExtensionId } = localBook.extension;
+    if (
+      !acquisition ||
+      book.acquisitions?.some((candidate) => candidate.id === acquisition.id)
+    ) {
+      return { extensionId: storedExtensionId, book };
+    }
+    return {
+      extensionId: storedExtensionId,
+      book: {
+        ...book,
+        acquisitions: [...(book.acquisitions ?? []), acquisition],
+      },
+    };
+  }, [extensionBook, extensionId, localBook, localCopyUnavailable]);
 
   const [remoteDescription, setRemoteDescription] = useState('');
   const [genreLabel, setGenreLabel] = useState('');
   const [metadataError, setMetadataError] = useState<string | null>(null);
   useEffect(() => {
-    if (!discoveryBook) return;
+    if (!sourceDiscoveryBook) return;
     let cancelled = false;
-    const suppliedDescription = plainText(discoveryBook.description);
+    const suppliedDescription = normalizeDescription(sourceDiscoveryBook.description);
     setRemoteDescription(suppliedDescription);
-    setGenreLabel(discoveryBook.genre);
+    setGenreLabel(sourceDiscoveryBook.genre);
     setMetadataError(null);
     if (
-      (!suppliedDescription || !discoveryBook.genre || discoveryBook.genre === 'Open Library') &&
-      discoveryBook.id.startsWith('/works/')
+      (!suppliedDescription ||
+        !sourceDiscoveryBook.genre ||
+        sourceDiscoveryBook.genre === 'Open Library') &&
+      sourceDiscoveryBook.id.startsWith('/works/')
     ) {
-      getWorkDetails(discoveryBook.id)
+      getWorkDetails(sourceDiscoveryBook.id)
         .then((details) => {
           if (cancelled) return;
-          if (details.description) setRemoteDescription(plainText(details.description));
+          if (details.description) setRemoteDescription(normalizeDescription(details.description));
           if (details.subjects.length) setGenreLabel(details.subjects.slice(0, 3).join(', '));
         })
         .catch((cause) => {
@@ -233,88 +343,194 @@ export default function BookDetailScreen() {
     return () => {
       cancelled = true;
     };
-  }, [discoveryBook]);
+  }, [sourceDiscoveryBook]);
 
   const currentDiscovery = useMemo<DiscoveryBook | null>(() => {
-    if (!discoveryBook) return null;
+    if (!sourceDiscoveryBook) return null;
     return {
-      ...discoveryBook,
-      description: remoteDescription || discoveryBook.description,
-      genre: genreLabel || discoveryBook.genre || 'Other',
+      ...sourceDiscoveryBook,
+      description: remoteDescription || sourceDiscoveryBook.description,
+      genre: genreLabel || sourceDiscoveryBook.genre || 'Other',
     };
-  }, [discoveryBook, genreLabel, remoteDescription]);
+  }, [genreLabel, remoteDescription, sourceDiscoveryBook]);
 
-  const [options, setOptions] = useState<AcquisitionOption[] | null>(null);
+  const [options, setOptions] = useState<AcquisitionEntry[] | null>(null);
   const [optionsError, setOptionsError] = useState<string | null>(null);
-  useEffect(() => {
-    if (!extensionBook && !currentDiscovery) {
-      setOptions([]);
-      return;
-    }
-    let cancelled = false;
-    setOptions(null);
-    setOptionsError(null);
+  const [nextOptionsPage, setNextOptionsPage] = useState<number | null>(null);
+  const [loadingMoreOptions, setLoadingMoreOptions] = useState(false);
+  const optionsGeneration = useRef(0);
+  const acquisitionExtensionBook = acquisitionExtension?.book ?? null;
+  const acquisitionSourceExtensionId = acquisitionExtension?.extensionId ?? null;
+  const missingReadingListBook =
+    localCopyUnavailable &&
+    localBook &&
+    readingList.some((book) => book.key === localBook.key)
+      ? localBook
+      : null;
+  const lookupTitle =
+    acquisitionExtensionBook?.title ??
+    currentDiscovery?.title ??
+    missingReadingListBook?.title ??
+    '';
+  const lookupAuthor =
+    acquisitionExtensionBook?.authors[0] ??
+    currentDiscovery?.author ??
+    missingReadingListBook?.author ??
+    '';
+  const hasAcquisitionLookup =
+    !!acquisitionExtensionBook || !!currentDiscovery || !!missingReadingListBook;
 
-    const loadOptions = async () => {
-      if (!acquisitionExtensionId) return [];
+  const loadOptionsPage = useCallback(
+    async (page: number): Promise<AcquisitionOptionPage> => {
+      if (!acquisitionExtensionId) return { items: [], nextPage: null };
       const provider = await loadExtension(acquisitionExtensionId);
       if (!provider.acquisition) {
         throw new Error(`${provider.manifest.name} does not provide downloads.`);
       }
-      if (extensionBook && extensionId === acquisitionExtensionId) {
-        const acquisitions = await provider.acquisition(extensionBook.id);
-        return acquisitions.map((acquisition) => ({
-          key: `${acquisitionExtensionId}:${extensionBook.id}:${acquisition.id}`,
-          extensionId: acquisitionExtensionId,
-          providerName: provider.manifest.name,
-          book: extensionBook,
-          acquisition,
-        }));
+      if (
+        acquisitionExtensionBook &&
+        acquisitionSourceExtensionId === acquisitionExtensionId
+      ) {
+        if (page !== 1) return { items: [], nextPage: null };
+        if (acquisitionExtensionBook.acquisitions?.length) {
+          return {
+            items: acquisitionExtensionBook.acquisitions.map((acquisition) => ({
+              kind: 'option' as const,
+              matchesCurrentBook: true,
+              key: `${acquisitionExtensionId}:${acquisitionExtensionBook.id}:${acquisition.id}`,
+              extensionId: acquisitionExtensionId,
+              providerName: provider.manifest.name,
+              book: acquisitionExtensionBook,
+              acquisition,
+            })),
+            nextPage: null,
+          };
+        }
+        return {
+          items: [{
+            kind: 'candidate' as const,
+            matchesCurrentBook: true,
+            key: `${acquisitionExtensionId}:${acquisitionExtensionBook.id}`,
+            extensionId: acquisitionExtensionId,
+            providerName: provider.manifest.name,
+            book: acquisitionExtensionBook,
+          }],
+          nextPage: null,
+        };
       }
-      const lookupBook = extensionBook ?? currentDiscovery;
-      if (!lookupBook) return [];
-      if (!provider.search) {
+      if (!lookupTitle) return { items: [], nextPage: null };
+      if (!provider.resolve && !provider.search) {
         throw new Error(
           `${provider.manifest.name} cannot resolve books from another search provider.`
         );
       }
-      const page = await provider.search({
-        query: `${lookupBook.title} ${
-          'authors' in lookupBook ? lookupBook.authors[0] ?? '' : lookupBook.author
-        }`.trim(),
-        page: 1,
-        limit: 8,
-      });
-      const results = await Promise.all(
-        page.items.map(async (book) => ({
-          book,
-          acquisitions: await provider.acquisition!(book.id),
-        }))
-      );
-      return results.flatMap((result) =>
-        result.acquisitions.map((acquisition) => ({
-          key: `${acquisitionExtensionId}:${result.book.id}:${acquisition.id}`,
-          extensionId: acquisitionExtensionId,
-          providerName: provider.manifest.name,
-          book: result.book,
-          acquisition,
-        }))
-      );
-    };
+      const resolved = provider.resolve
+        ? await provider.resolve({
+            book: {
+              id: acquisitionExtensionBook?.id ?? currentDiscovery?.id ?? missingReadingListBook?.id,
+              title: lookupTitle,
+              authors: lookupAuthor ? [lookupAuthor] : [],
+              publishedYear:
+                acquisitionExtensionBook?.publishedYear ??
+                (currentDiscovery?.year ? Number(currentDiscovery.year) || undefined : undefined),
+              identifiers: acquisitionExtensionBook?.identifiers ?? {},
+            },
+            page,
+            limit: 3,
+          })
+        : await searchAcquisitionCandidatePage(
+            { search: provider.search! },
+            `${lookupTitle} ${lookupAuthor}`.trim(),
+            page
+          );
+      return {
+        items: resolved.items.slice(0, 3).flatMap((book): AcquisitionEntry[] =>
+          book.acquisitions?.length
+            ? book.acquisitions.map((acquisition) => ({
+                kind: 'option',
+                matchesCurrentBook: false,
+                key: `${acquisitionExtensionId}:${book.id}:${acquisition.id}`,
+                extensionId: acquisitionExtensionId,
+                providerName: provider.manifest.name,
+                book,
+                acquisition,
+              }))
+            : [{
+                kind: 'candidate',
+                matchesCurrentBook: false,
+                key: `${acquisitionExtensionId}:${book.id}`,
+                extensionId: acquisitionExtensionId,
+                providerName: provider.manifest.name,
+                book,
+              }]
+        ),
+        nextPage: resolved.nextPage ?? null,
+      };
+    },
+    [
+      acquisitionExtensionId,
+      acquisitionExtensionBook,
+      acquisitionSourceExtensionId,
+      loadExtension,
+      lookupAuthor,
+      lookupTitle,
+      currentDiscovery,
+      missingReadingListBook,
+    ]
+  );
 
-    loadOptions()
+  useEffect(() => {
+    if (!hasAcquisitionLookup) {
+      setOptions([]);
+      setNextOptionsPage(null);
+      return;
+    }
+    let cancelled = false;
+    const generation = ++optionsGeneration.current;
+    setOptions(null);
+    setOptionsError(null);
+    setNextOptionsPage(null);
+    setLoadingMoreOptions(false);
+
+    loadOptionsPage(1)
       .then((loaded) => {
-        if (!cancelled) setOptions(loaded);
+        if (!cancelled && optionsGeneration.current === generation) {
+          setOptions(loaded.items);
+          setNextOptionsPage(loaded.nextPage);
+        }
       })
       .catch((cause) => {
-        if (!cancelled) {
+        if (!cancelled && optionsGeneration.current === generation) {
           setOptionsError(cause instanceof Error ? cause.message : String(cause));
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [acquisitionExtensionId, currentDiscovery, extensionBook, extensionId, loadExtension]);
+  }, [hasAcquisitionLookup, loadOptionsPage]);
+
+  const loadMoreOptions = useCallback(async () => {
+    if (nextOptionsPage == null || loadingMoreOptions) return;
+    const generation = optionsGeneration.current;
+    setLoadingMoreOptions(true);
+    setOptionsError(null);
+    try {
+      const loaded = await loadOptionsPage(nextOptionsPage);
+      if (optionsGeneration.current !== generation) return;
+      setOptions((current) => {
+        const byKey = new Map((current ?? []).map((option) => [option.key, option]));
+        for (const option of loaded.items) byKey.set(option.key, option);
+        return [...byKey.values()];
+      });
+      setNextOptionsPage(loaded.nextPage);
+    } catch (cause) {
+      if (optionsGeneration.current === generation) {
+        setOptionsError(cause instanceof Error ? cause.message : String(cause));
+      }
+    } finally {
+      if (optionsGeneration.current === generation) setLoadingMoreOptions(false);
+    }
+  }, [loadOptionsPage, loadingMoreOptions, nextOptionsPage]);
 
   const readingListBook = useMemo<LibraryBook | null>(() => {
     if (extensionBook && extensionId) return fromExtensionBook(extensionId, extensionBook);
@@ -330,8 +546,9 @@ export default function BookDetailScreen() {
           }
         : moonBook;
     }
+    if (localBook) return localBook;
     if (currentDiscovery) return fromDiscoveryBook(currentDiscovery);
-    return localBook;
+    return null;
   }, [currentDiscovery, extensionBook, extensionId, localBook, moonBook]);
 
   const [libraryBusy, setLibraryBusy] = useState(false);
@@ -359,22 +576,44 @@ export default function BookDetailScreen() {
 
   const downloadOption = useCallback(
     async (option: AcquisitionOption) => {
-      const { acquisition, book } = option;
-      if (!acquisition.downloadUrl) {
-        if (acquisition.openUrl) await Linking.openURL(acquisition.openUrl);
-        else {
-          setPhases((current) => ({
-            ...current,
-            [option.key]: {
-              kind: 'error',
-              message: 'This acquisition has no downloadable or openable URL.',
-            },
-          }));
-        }
-        return;
-      }
+      const { book } = option;
       setPhases((current) => ({ ...current, [option.key]: { kind: 'resolving' } }));
       try {
+        let acquisition = option.acquisition;
+        if (!acquisition.downloadUrl && !acquisition.openUrl) {
+          const provider = await loadExtension(option.extensionId);
+          if (!provider.acquisition) {
+            throw new Error(`${provider.manifest.name} does not provide downloads.`);
+          }
+          const resolved = await provider.acquisition(book.id);
+          const matching =
+            resolved.find((candidate) => candidate.id === acquisition.id) ??
+            resolved.find((candidate) => candidate.format === acquisition.format) ??
+            resolved[0];
+          if (!matching) {
+            throw new Error(`${provider.manifest.name} returned no files for this book.`);
+          }
+          acquisition = matching;
+          setOptions((current) =>
+            current?.map((entry) =>
+              entry.key === option.key && entry.kind === 'option'
+                ? { ...entry, acquisition: matching }
+                : entry
+            ) ?? null
+          );
+        }
+        if (!acquisition.downloadUrl) {
+          if (acquisition.openUrl) {
+            await Linking.openURL(acquisition.openUrl);
+            setPhases((current) => {
+              const next = { ...current };
+              delete next[option.key];
+              return next;
+            });
+            return;
+          }
+          throw new Error('This acquisition has no downloadable or openable URL.');
+        }
         const filename = bookFilename({
           title: book.title,
           authors: book.authors,
@@ -384,26 +623,23 @@ export default function BookDetailScreen() {
           ...current,
           [option.key]: { kind: 'downloading', progress: { bytesWritten: 0, totalBytes: 0 } },
         }));
-        const uri = await downloadBook(
-          acquisition.downloadUrl,
+        await startBookDownload({
+          requestKey: option.key,
+          url: acquisition.downloadUrl,
           filename,
-          acquisition.headers ?? {},
-          settings.localLibraryLocation,
-          (progress) =>
-            setPhases((current) => ({
-              ...current,
-              [option.key]: { kind: 'downloading', progress },
-            }))
-        );
-        setPhases((current) => ({ ...current, [option.key]: { kind: 'done', uri } }));
-        await recordDownload(
-          fromExtensionBook(option.extensionId, book, {
+          headers: acquisition.headers ?? {},
+          destinationDirectoryUri: settings.localLibraryLocation,
+          book: fromExtensionBook(option.extensionId, book, {
             format: acquisition.format,
             size: acquisition.sizeBytes,
             extension: { extensionId: option.extensionId, book, acquisition },
           }),
-          uri
-        );
+        });
+        setPhases((current) => {
+          const next = { ...current };
+          delete next[option.key];
+          return next;
+        });
       } catch (cause) {
         setPhases((current) => ({
           ...current,
@@ -414,7 +650,52 @@ export default function BookDetailScreen() {
         }));
       }
     },
-    [recordDownload, settings.localLibraryLocation]
+    [loadExtension, settings.localLibraryLocation, startBookDownload]
+  );
+
+  const resolveCandidate = useCallback(
+    async (candidate: AcquisitionCandidate) => {
+      setPhases((current) => ({ ...current, [candidate.key]: { kind: 'resolving' } }));
+      try {
+        const provider = await loadExtension(candidate.extensionId);
+        if (!provider.acquisition) {
+          throw new Error(`${provider.manifest.name} does not provide downloads.`);
+        }
+        const acquisitions = await provider.acquisition(candidate.book.id);
+        if (!acquisitions.length) {
+          throw new Error(`${provider.manifest.name} returned no files for this candidate.`);
+        }
+        const resolved: AcquisitionOption[] = acquisitions.map((acquisition) => ({
+          kind: 'option',
+          matchesCurrentBook: candidate.matchesCurrentBook,
+          key: `${candidate.extensionId}:${candidate.book.id}:${acquisition.id}`,
+          extensionId: candidate.extensionId,
+          providerName: provider.manifest.name,
+          book: candidate.book,
+          acquisition,
+        }));
+        setOptions((current) =>
+          current?.flatMap((entry) => (entry.key === candidate.key ? resolved : [entry])) ?? null
+        );
+        setPhases((current) => {
+          const next = { ...current };
+          delete next[candidate.key];
+          return next;
+        });
+        if (candidate.matchesCurrentBook && resolved.length === 1 && resolved[0]) {
+          await downloadOption(resolved[0]);
+        }
+      } catch (cause) {
+        setPhases((current) => ({
+          ...current,
+          [candidate.key]: {
+            kind: 'error',
+            message: cause instanceof Error ? cause.message : String(cause),
+          },
+        }));
+      }
+    },
+    [downloadOption, loadExtension]
   );
 
   const runLibraryAction = useCallback(
@@ -432,6 +713,27 @@ export default function BookDetailScreen() {
     []
   );
 
+  const libraryActionBook = localBook ?? moonBook;
+  const addonActions = useMemo(() => {
+    if (!libraryActionBook) return [];
+    const book = toExtensionLibraryBook(libraryActionBook);
+    const platform =
+      Platform.OS === 'android' || Platform.OS === 'ios' || Platform.OS === 'web'
+        ? Platform.OS
+        : 'desktop';
+    return extensions.libraryActions(book, 'details', platform).map((action) => ({
+      key: `addon:${action.extensionId}:${action.id}` as const,
+      label: action.title,
+      icon: (action.icon && action.icon in Feather.glyphMap
+        ? action.icon
+        : 'external-link') as 'external-link',
+      onPress: () =>
+        void runLibraryAction(`addon:${action.extensionId}:${action.id}`, () =>
+          extensions.runLibraryAction(action.extensionId, action.id, book)
+        ),
+    }));
+  }, [extensions, libraryActionBook, runLibraryAction]);
+
   const goBack = useCallback(() => {
     if (router.canGoBack()) router.back();
     else router.replace('/home');
@@ -439,7 +741,10 @@ export default function BookDetailScreen() {
 
   if (!extensionBook && !currentDiscovery && !localBook) {
     return (
-      <View className="flex-1 items-center justify-center gap-3 bg-[#0b0b0f]">
+      <View
+        className="flex-1 items-center justify-center gap-3"
+        style={{ backgroundColor: colors.background }}
+      >
         <Text className="text-sm text-neutral-400">Book details unavailable.</Text>
         <Pressable onPress={goBack}>
           <Text className="text-sm font-semibold" style={{ color: colors.accent }}>Go back</Text>
@@ -458,15 +763,31 @@ export default function BookDetailScreen() {
     localBook?.fallbackCover ||
     '';
   const description = extensionBook?.description
-    ? plainText(extensionBook.description)
+    ? normalizeDescription(extensionBook.description)
     : currentDiscovery?.description
-      ? plainText(currentDiscovery.description)
+      ? normalizeDescription(currentDiscovery.description)
       : localBook?.description
-        ? plainText(localBook.description)
+        ? normalizeDescription(localBook.description)
         : '';
   const rating = extensionBook?.rating ?? currentDiscovery?.rating ?? localBook?.rating;
+  const purchaseOffer = extensionBook ? primaryBookOffer(extensionBook) : undefined;
+  const purchaseUrl = purchaseOffer?.url ?? extensionBook?.infoUrl;
+  const purchasePrice = formatBookOffer(purchaseOffer);
+  const purchaseLabel = purchaseOffer
+    ? purchaseOffer.availability === 'free'
+      ? `Get free on ${purchaseOffer.provider}`
+      : `${purchaseOffer.availability === 'preorder' ? 'Pre-order' : 'Buy'}${
+          purchasePrice ? ` for ${purchasePrice}` : ''
+        } on ${purchaseOffer.provider}`
+    : purchaseUrl
+      ? 'View at source'
+      : null;
   const trackedBook = localBook ?? moonBook;
   const progress = trackedBook?.isRead ? 100 : trackedBook?.progress;
+  const localFileAvailable =
+    localBook?.availableLocally !== false &&
+    localBook?.moonReader?.availableLocally !== false &&
+    !!(localBook?.local?.uri || localBook?.fileUri);
   const meta = extensionBook
     ? [extensionBook.publishedYear, extensionBook.subjects.slice(0, 2).join(', ')].filter(Boolean)
     : currentDiscovery
@@ -475,69 +796,18 @@ export default function BookDetailScreen() {
           localBook?.format?.toUpperCase(),
           formatSize(localBook?.size),
           localBook?.year,
-          localBook?.isRead
-            ? 'Read'
-            : localBook?.progress
-              ? `${Math.round(localBook.progress)}% read`
-              : '',
-          localBook?.local?.uri || localBook?.fileUri ? 'Local file' : 'Synced progress',
+          localFileAvailable ? 'Local file' : 'Not downloaded',
         ].filter(Boolean);
   const activeCover = coverUrl && !failedCovers.includes(coverUrl) ? coverUrl : null;
-  const coverWidth = compactLayout ? Math.min(180, Math.max(144, width * 0.42)) : 128;
-  const coverHeight = Math.round(coverWidth * 1.5);
-
-  const cover = (
-    <View
-      style={{ width: coverWidth, height: coverHeight }}
-      className="rounded-xl overflow-hidden bg-[#232329]"
-    >
-      {activeCover ? (
-        <Image
-          source={{ uri: activeCover }}
-          style={{ width: '100%', height: '100%' }}
-          contentFit="cover"
-          cachePolicy="memory-disk"
-          onError={() => setFailedCovers((current) => [...current, activeCover])}
-        />
-      ) : (
-        <View className="flex-1 items-center justify-center">
-          <Text className="text-3xl">📚</Text>
-        </View>
-      )}
-      <RatingChip rating={rating} />
-      {typeof progress === 'number' && progress > 0 ? (
-        <>
-          <View className="absolute bottom-0 left-0 right-0 h-1.5 bg-black/80">
-            <View
-              className="h-full"
-              style={{
-                width: `${Math.max(0, Math.min(100, progress))}%`,
-                backgroundColor: trackedBook?.isRead ? colors.success : colors.accent,
-              }}
-            />
-          </View>
-          <View
-            className="absolute bottom-3 left-1.5 rounded-md px-1.5 py-1"
-            style={{
-              backgroundColor: trackedBook?.isRead
-                ? colors.success
-                : colors.accentMuted,
-            }}
-          >
-            <Text className="text-[9px] font-bold text-white">
-              {trackedBook?.isRead ? 'Read' : `${Math.max(1, Math.round(progress))}%`}
-            </Text>
-          </View>
-        </>
-      ) : null}
-    </View>
-  );
+  const heroHeight = compactLayout
+    ? Math.min(620, Math.max(480, Math.round(width * 1.24)))
+    : 420;
 
   const readingListButton = (
     <Pressable
       onPress={toggleSaved}
       disabled={libraryBusy}
-      className={`${compactLayout ? 'h-11 mt-4 self-stretch' : 'h-9 px-3'} rounded-lg flex-row items-center justify-center gap-2 border disabled:opacity-60`}
+      className="h-11 self-stretch rounded-lg border flex-row items-center justify-center gap-2 disabled:opacity-60"
       style={{
         backgroundColor: onReadingList ? colors.accentMuted : 'transparent',
         borderColor: onReadingList ? colors.accent : colors.border,
@@ -557,64 +827,102 @@ export default function BookDetailScreen() {
   const descriptionPreview = description ? (
     <Pressable
       onPress={() => setDescriptionOpen(true)}
-      className={compactLayout ? 'mt-5' : 'flex-1 mt-3 overflow-hidden'}
+      className="mt-5 overflow-hidden"
     >
-      <Text numberOfLines={compactLayout ? 6 : 5} className="text-sm text-neutral-300 leading-5">
-        {description}
-      </Text>
+      <DescriptionText
+        value={description}
+        numberOfLines={compactLayout ? 6 : 5}
+        className="text-sm text-neutral-300 leading-5"
+      />
     </Pressable>
   ) : null;
 
-  const libraryActionBook = localBook ?? moonBook;
   return (
     <>
       <ScrollView
-        className="flex-1 bg-[#0b0b0f]"
+        className="flex-1"
+        style={{ backgroundColor: colors.background }}
         contentContainerStyle={{ paddingBottom: bottomPadding }}
       >
-        <View className="h-16 px-4 flex-row items-center gap-3">
+        <View className="relative overflow-hidden" style={{ height: heroHeight }}>
+          {activeCover ? (
+            <Image
+              source={{ uri: activeCover }}
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+              contentFit="cover"
+              contentPosition="top"
+              cachePolicy="memory-disk"
+              onError={() =>
+                setFailedCovers((current) =>
+                  current.includes(activeCover) ? current : [...current, activeCover]
+                )
+              }
+            />
+          ) : (
+            <View className="absolute inset-0 items-center justify-center bg-[#232329]">
+              <Text className="text-5xl">📚</Text>
+            </View>
+          )}
+          <View
+            pointerEvents="none"
+            className="absolute inset-0"
+            style={{ backgroundColor: 'rgba(0, 0, 0, 0.12)' }}
+          />
+          <View
+            pointerEvents="none"
+            className="absolute inset-0"
+            style={{
+              experimental_backgroundImage: `linear-gradient(to bottom, rgba(16, 11, 8, 0.02) 0%, rgba(16, 11, 8, 0.08) 34%, rgba(16, 11, 8, 0.68) 70%, ${colors.background} 100%)`,
+            }}
+          />
           <Pressable
             onPress={goBack}
-            className="h-10 w-10 rounded-full bg-[#17171c] items-center justify-center"
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+            className="absolute left-4 top-4 h-11 w-11 items-center justify-center rounded-full"
+            style={{ backgroundColor: 'rgba(10, 10, 14, 0.72)' }}
           >
-            <Feather name="chevron-left" color="#d4d4d8" size={21} />
+            <Feather name="chevron-left" color="#f4f4f5" size={23} />
           </Pressable>
-          <Text numberOfLines={1} className="flex-1 text-lg font-semibold text-neutral-100">
-            {title}
-          </Text>
-        </View>
-
-        {compactLayout ? (
-          <View className="px-5 pt-2">
-            <View className="items-center">{cover}</View>
-            <Text className="mt-5 text-center text-sm text-neutral-400">{author}</Text>
+          <View className="absolute right-0 bottom-0 left-0 px-5 pb-5">
+            <Text
+              numberOfLines={3}
+              className={`${compactLayout ? 'text-[28px] leading-8' : 'text-3xl leading-9'} font-semibold text-white`}
+              style={{ textShadowColor: 'rgba(0,0,0,0.55)', textShadowRadius: 8 }}
+            >
+              {title}
+            </Text>
+            <Text className="mt-2 text-[15px] text-neutral-200">{author}</Text>
             {meta.length ? (
-              <Text className="mt-2 text-center text-xs uppercase tracking-wide text-neutral-400">
+              <Text className="mt-2 text-xs uppercase tracking-wide text-neutral-300">
                 {meta.join(' · ')}
               </Text>
             ) : null}
-            {readingListButton}
-            {descriptionPreview}
+            <BookStatusChips
+              rating={rating}
+              progress={progress}
+              isRead={trackedBook?.isRead}
+            />
           </View>
-        ) : (
-          <View className="px-6 pt-2 flex-row gap-5">
-            {cover}
-            <View className="flex-1 pt-1" style={{ height: coverHeight }}>
-              <View className="flex-row items-center justify-between gap-4">
-                <View className="flex-1">
-                  <Text className="text-sm text-neutral-400">{author}</Text>
-                  {meta.length ? (
-                    <Text className="text-xs uppercase tracking-wide text-neutral-400 mt-2">
-                      {meta.join(' · ')}
-                    </Text>
-                  ) : null}
-                </View>
-                {readingListButton}
-              </View>
-              {descriptionPreview}
-            </View>
-          </View>
-        )}
+        </View>
+
+        <View className="px-5 pt-2">
+          {readingListButton}
+          {descriptionPreview}
+          {purchaseUrl && purchaseLabel ? (
+            <Pressable
+              onPress={() => void Linking.openURL(purchaseUrl)}
+              accessibilityRole="link"
+              className="mt-5 h-12 flex-row items-center justify-center gap-2 rounded-xl"
+              style={{ backgroundColor: colors.accent }}
+            >
+              <Feather name="external-link" size={17} color={colors.onAccent} />
+              <Text className="text-sm font-semibold" style={{ color: colors.onAccent }}>
+                {purchaseLabel}
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
 
         {metadataError || libraryError || localCatalogError ? (
           <View className="px-6 mt-3 gap-1">
@@ -624,7 +932,7 @@ export default function BookDetailScreen() {
           </View>
         ) : null}
 
-        {extensionBook || currentDiscovery ? (
+        {hasAcquisitionLookup ? (
           <View className="px-6 mt-8 gap-3">
             <Text className="text-xs font-bold uppercase tracking-widest text-neutral-400">
               Download options
@@ -641,14 +949,48 @@ export default function BookDetailScreen() {
                 No acquisitions were returned by the selected provider.
               </Text>
             ) : null}
-            {options?.map((option) => (
-              <AcquisitionRow
-                key={option.key}
-                option={option}
-                phase={phases[option.key] ?? IDLE}
-                onDownload={() => void downloadOption(option)}
-              />
-            ))}
+            {options?.map((entry) => {
+              const phase =
+                (entry.kind === 'option' ? phaseFromJob(downloadJobs[entry.key]) : null) ??
+                phases[entry.key] ??
+                IDLE;
+              const onAction = () =>
+                void (entry.kind === 'candidate'
+                  ? resolveCandidate(entry)
+                  : downloadOption(entry));
+              return entry.matchesCurrentBook && entry.kind === 'candidate' ? (
+                <CurrentBookAcquisitionRow
+                  key={entry.key}
+                  entry={entry}
+                  phase={phase}
+                  onAction={onAction}
+                />
+              ) : (
+                <AcquisitionRow
+                  key={entry.key}
+                  entry={entry}
+                  phase={phase}
+                  onAction={onAction}
+                />
+              );
+            })}
+            {nextOptionsPage != null ? (
+              <Pressable
+                onPress={() => void loadMoreOptions()}
+                disabled={loadingMoreOptions}
+                accessibilityRole="button"
+                accessibilityLabel="Find more download options"
+                className="h-11 items-center justify-center rounded-xl border border-[#292932] disabled:opacity-50"
+              >
+                {loadingMoreOptions ? (
+                  <ActivityIndicator color={colors.accent} size="small" />
+                ) : (
+                  <Text className="text-xs font-semibold" style={{ color: colors.accent }}>
+                    Find more options
+                  </Text>
+                )}
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
 
@@ -661,38 +1003,45 @@ export default function BookDetailScreen() {
               compact
               book={libraryActionBook}
               busyAction={busyAction}
-              moonReaderConfigured={!!settings.moonReaderBackupLocation}
-              onOpenMoonReader={() =>
-                void runLibraryAction('moon', () => openInMoonReader(libraryActionBook))
-              }
+              addonActions={addonActions}
               onOpenWith={() =>
                 void runLibraryAction('openWith', () => openBookWithAnotherApp(libraryActionBook))
               }
               onShowInFiles={() =>
-                void runLibraryAction('files', () => showBookInFiles(libraryActionBook))
+                void runLibraryAction('files', () =>
+                  showBookInFiles(libraryActionBook, settings.localLibraryLocation)
+                )
               }
               onDelete={() => {
                 Alert.alert(
-                  'Delete local file?',
-                  `This permanently deletes “${libraryActionBook.title}”.`,
+                  'Remove local file?',
+                  `The file for “${libraryActionBook.title}” will be deleted, but its library and sync record will be kept.`,
                   [
                     { text: 'Cancel', style: 'cancel' },
                     {
-                      text: 'Delete',
+                      text: 'Remove',
                       style: 'destructive',
                       onPress: () =>
                         void runLibraryAction('delete', async () => {
-                          await deleteLocalBook(libraryActionBook);
-                          router.replace('/library');
+                          await removeLocalFile(libraryActionBook);
                         }),
                     },
                   ]
                 );
               }}
               onRemove={() => {
+                const localRecord = !!(
+                  libraryActionBook.local?.uri ?? libraryActionBook.fileUri
+                );
+                const localFileAvailable =
+                  localRecord && libraryActionBook.availableLocally !== false;
                 Alert.alert(
-                  'Remove synced book?',
-                  `Remove “${libraryActionBook.title}” from Tomeio on every synced device? Newer Moon+ Reader activity can add it again.`,
+                  localRecord ? 'Remove from Tomeio?' : 'Remove synced book?',
+                  localRecord
+                    ? localFileAvailable
+                      ? `Permanently delete “${libraryActionBook.title}” and remove it from Tomeio?`
+                      : `Remove “${libraryActionBook.title}” from your library? The missing file will not be deleted again.`
+                    : `Remove “${libraryActionBook.title}” from Tomeio on every synced device? Newer Moon+ Reader activity can add it again.`,
                   [
                     { text: 'Cancel', style: 'cancel' },
                     {
@@ -700,7 +1049,7 @@ export default function BookDetailScreen() {
                       style: 'destructive',
                       onPress: () =>
                         void runLibraryAction('remove', async () => {
-                          await removeSyncedBook(libraryActionBook);
+                          await removeLibraryBook(libraryActionBook);
                           router.replace('/library');
                         }),
                     },
@@ -718,7 +1067,7 @@ export default function BookDetailScreen() {
         {localBook?.fileUri ? (
           <View className="px-6 mt-8 gap-2">
             <Text className="text-xs font-bold uppercase tracking-widest text-neutral-400">
-              Stored locally
+              {localFileAvailable ? 'Stored locally' : 'Last local location'}
             </Text>
             <Text numberOfLines={2} className="text-xs leading-4 text-neutral-500">
               {localBook.fileUri}
@@ -751,7 +1100,10 @@ export default function BookDetailScreen() {
               </Pressable>
             </View>
             <ScrollView contentContainerStyle={{ padding: 20 }}>
-              <Text className="text-sm leading-6 text-neutral-300">{description}</Text>
+              <DescriptionText
+                value={description}
+                className="text-sm leading-6 text-neutral-300"
+              />
             </ScrollView>
           </Pressable>
         </Pressable>
@@ -760,25 +1112,99 @@ export default function BookDetailScreen() {
   );
 }
 
-function AcquisitionRow({
-  option,
+function CurrentBookAcquisitionRow({
+  entry,
   phase,
-  onDownload,
+  onAction,
 }: {
-  option: AcquisitionOption;
+  entry: AcquisitionEntry;
   phase: Phase;
-  onDownload: () => void;
+  onAction: () => void;
 }) {
-  const { acquisition, book } = option;
+  const acquisition = entry.kind === 'option' ? entry.acquisition : null;
+  const metadata = acquisition
+    ? [
+        acquisition.format?.toUpperCase(),
+        formatSize(acquisition.sizeBytes),
+        acquisition.language,
+      ].filter(Boolean)
+    : [];
+  const progress =
+    phase.kind === 'downloading' && phase.progress.totalBytes > 0
+      ? Math.min(100, Math.round((phase.progress.bytesWritten / phase.progress.totalBytes) * 100))
+      : null;
+
+  return (
+    <View className="rounded-2xl border border-[#292932] bg-[#111116] p-4 flex-row items-center gap-3">
+      <View className="h-10 w-10 rounded-xl bg-[#202029] items-center justify-center">
+        <Feather
+          name={acquisition ? 'file-text' : 'download'}
+          size={18}
+          color={colors.textMuted}
+        />
+      </View>
+      <View className="min-w-0 flex-1 gap-1">
+        <Text numberOfLines={1} className="text-sm font-semibold text-neutral-100">
+          {acquisition?.label || 'Download this book'}
+        </Text>
+        <Text numberOfLines={1} className="text-[10px] uppercase tracking-wide text-neutral-500">
+          {metadata.length ? metadata.join(' · ') : entry.providerName}
+        </Text>
+        {phase.kind === 'error' ? (
+          <Text numberOfLines={3} className="text-[11px] text-red-500">
+            {phase.message}
+          </Text>
+        ) : null}
+      </View>
+      {phase.kind === 'done' ? (
+        <View className="h-10 rounded-xl bg-emerald-950 px-4 flex-row items-center gap-2">
+          <Feather name="check" size={15} color="#5ee0a0" />
+          <Text className="text-xs font-semibold text-emerald-300">Saved</Text>
+        </View>
+      ) : phase.kind === 'downloading' || phase.kind === 'resolving' ? (
+        <View className="min-w-[76px] items-center gap-1">
+          <ActivityIndicator color={colors.accent} size="small" />
+          {progress !== null ? (
+            <Text className="text-[10px] text-neutral-400">{progress}%</Text>
+          ) : null}
+        </View>
+      ) : (
+        <Pressable
+          onPress={onAction}
+          className="h-10 rounded-xl px-4 flex-row items-center justify-center gap-2 active:opacity-80"
+          style={{ backgroundColor: colors.accent }}
+        >
+          <Feather name="download" size={15} color={colors.onAccent} />
+          <Text className="text-xs font-semibold" style={{ color: colors.onAccent }}>
+            Download
+          </Text>
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
+function AcquisitionRow({
+  entry,
+  phase,
+  onAction,
+}: {
+  entry: AcquisitionEntry;
+  phase: Phase;
+  onAction: () => void;
+}) {
+  const { book } = entry;
+  const acquisition = entry.kind === 'option' ? entry.acquisition : null;
+  const actionKind = acquisition ? acquisitionActionKind(acquisition) : null;
   const [coverFailed, setCoverFailed] = useState(false);
   const metadata = [
-    acquisition.format?.toUpperCase(),
-    formatSize(acquisition.sizeBytes),
-    acquisition.language,
+    acquisition?.format?.toUpperCase(),
+    formatSize(acquisition?.sizeBytes),
+    acquisition?.language,
     book.publishedYear ? String(book.publishedYear) : '',
-    option.providerName,
+    entry.providerName,
   ].filter(Boolean);
-  const description = book.description ? plainText(book.description) : '';
+  const description = book.description ? descriptionPlainText(book.description) : '';
   const progress =
     phase.kind === 'downloading' && phase.progress.totalBytes > 0
       ? Math.min(100, Math.round((phase.progress.bytesWritten / phase.progress.totalBytes) * 100))
@@ -812,7 +1238,7 @@ function AcquisitionRow({
             {metadata.join(' · ')}
           </Text>
         ) : null}
-        {acquisition.label && acquisition.label.toLocaleLowerCase() !== `download ${acquisition.format}`.toLocaleLowerCase() ? (
+        {acquisition?.label && acquisition.label.toLocaleLowerCase() !== `download ${acquisition.format}`.toLocaleLowerCase() ? (
           <Text numberOfLines={1} className="text-[11px] text-neutral-400">{acquisition.label}</Text>
         ) : null}
         {description ? (
@@ -836,13 +1262,27 @@ function AcquisitionRow({
         </View>
       ) : (
         <Pressable
-          onPress={onDownload}
+          onPress={onAction}
           className="h-10 rounded-xl px-4 flex-row items-center justify-center gap-2 active:opacity-80"
           style={{ backgroundColor: colors.accent }}
         >
-          <Feather name={acquisition.downloadUrl ? 'download' : 'external-link'} size={15} color={colors.onAccent} />
+          <Feather
+            name={
+              entry.kind === 'candidate'
+                ? 'search'
+                : actionKind === 'download'
+                  ? 'download'
+                  : 'external-link'
+            }
+            size={15}
+            color={colors.onAccent}
+          />
           <Text className="text-xs font-semibold" style={{ color: colors.onAccent }}>
-            {acquisition.downloadUrl ? 'Download' : 'Open'}
+            {entry.kind === 'candidate'
+              ? 'View files'
+              : actionKind === 'download'
+                ? 'Download'
+                : 'Open'}
           </Text>
         </Pressable>
       )}

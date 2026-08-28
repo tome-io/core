@@ -1,5 +1,11 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
+import {
+  isNativeFolderLocation,
+  listNativeDirectoryEntries,
+  type FolderDirectoryEntry,
+} from '../../modules/expo-progress-folder/src';
+
 import { filenameFromUri, moonReaderCoverTarget } from './book-metadata';
 import { fromLocalFile, type LibraryBook, type LocalFileBook } from './library';
 
@@ -93,6 +99,46 @@ function toLocalFile(uri: string, size: number, modificationTime: number): Local
     size,
     modificationTime: modificationTime * 1000,
   };
+}
+
+function toNativeLocalFile(entry: FolderDirectoryEntry): LocalFileBook | null {
+  const dot = entry.name.lastIndexOf('.');
+  if (dot <= 0) return null;
+  const format = entry.name.slice(dot + 1).toLowerCase();
+  if (!BOOK_FORMATS.has(format)) return null;
+  return {
+    uri: entry.uri,
+    filename: entry.name,
+    format,
+    size: finiteNumber(entry.size),
+    modificationTime: finiteNumber(entry.modifiedAt),
+  };
+}
+
+async function scanNativeDirectory(
+  directoryUri: string,
+  visited: Set<string>,
+  files: LocalFileBook[]
+): Promise<void> {
+  if (visited.has(directoryUri)) return;
+  visited.add(directoryUri);
+
+  const entries = await listNativeDirectoryEntries(directoryUri);
+  for (const entry of entries) {
+    const normalized = entry.name.toLowerCase();
+    if (
+      entry.isDirectory &&
+      (normalized === '.moonreader' || normalized === '.moon+' || normalized === 'moonreader')
+    ) {
+      continue;
+    }
+    if (entry.isDirectory) {
+      await scanNativeDirectory(entry.uri, visited, files);
+      continue;
+    }
+    const book = toNativeLocalFile(entry);
+    if (book) files.push(book);
+  }
 }
 
 async function scanSafDirectory(
@@ -191,7 +237,9 @@ export async function scanLocalLibrary(directoryUri: string | null): Promise<Loc
   const files: LocalFileBook[] = [];
   const covers = new Map<string, CoverCandidate>();
   const warnings: string[] = [];
-  if (root.startsWith('content:')) {
+  if (isNativeFolderLocation(root)) {
+    await scanNativeDirectory(root, new Set(), files);
+  } else if (root.startsWith('content:')) {
     await scanSafDirectory(root, new Set(), files, covers, warnings);
   } else {
     const info = await FileSystem.getInfoAsync(root);

@@ -1,10 +1,11 @@
 import type { BookAcquisition, BookMetadata } from '@tomeio/domain';
-import type {
-  BookExtension,
-  ExtensionManifest,
-  ExtensionPage,
-  ExtensionQuery,
-} from '@tomeio/extension-protocol';
+import {
+  defineAddon,
+  type BookExtension,
+  type ExtensionManifest,
+  type ExtensionPage,
+  type ExtensionQuery,
+} from '@tomeio/addon-sdk';
 import {
   createSourceHttpClient,
   firstString,
@@ -15,7 +16,7 @@ import {
 export const manifest: ExtensionManifest = {
   manifestVersion: 1,
   id: 'org.tomeio.internet-archive',
-  version: '0.1.0',
+  version: '0.2.0',
   name: 'Internet Archive — Open Books',
   description: 'Internet Archive records with rights-verified native downloads.',
   author: 'Tomeio',
@@ -25,8 +26,10 @@ export const manifest: ExtensionManifest = {
     { name: 'catalog', supportsPagination: true },
     { name: 'search', supportsPagination: true },
     { name: 'meta' },
+    { name: 'resolve', supportsPagination: true },
     { name: 'acquisition' },
   ],
+  providerRoles: ['search', 'acquisition'],
   catalogs: [
     { id: 'popular', name: 'Open Books on Internet Archive', resource: 'catalog' },
   ],
@@ -260,9 +263,15 @@ export function createInternetArchiveExtension(options: SourceHttpOptions = {}):
 
   const search = (query: ExtensionQuery) => find(query, false);
 
-  return {
-    manifest,
+  return defineAddon(manifest, {
     search,
+    resolve: (query) =>
+      search({
+        query: [query.book.title, ...query.book.authors].filter(Boolean).join(' '),
+        page: query.page,
+        limit: query.limit,
+        format: query.format,
+      }),
     catalog: (query) => find({ ...query, query: undefined }, true),
     meta: async (id) => mapDocument((await metadata(id)).metadata ?? {}),
     acquisition: async (id): Promise<BookAcquisition[]> => {
@@ -287,7 +296,7 @@ export function createInternetArchiveExtension(options: SourceHttpOptions = {}):
       });
       return downloads.length > 0 ? downloads : [archiveDetailsAcquisition(id)];
     },
-  };
+  });
 }
 
 export const internetArchiveExtension = createInternetArchiveExtension();

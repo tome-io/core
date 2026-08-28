@@ -36,7 +36,7 @@ export async function listProgressFolderFiles(
 
   const children = await FileSystem.StorageAccessFramework.readDirectoryAsync(directoryUri);
   const files = await Promise.all(
-    children.map(async (uri) => {
+    children.map(async (uri): Promise<ProgressFolderFile | null> => {
       const info = await FileSystem.getInfoAsync(uri);
       if (!info.exists || info.isDirectory) return null;
       return {
@@ -98,10 +98,10 @@ export async function validateProgressFolder(
   if (hasNativeProgressFolder()) {
     const diagnostics = await getNativeProgressFolderDiagnostics(directoryUri);
     if (!diagnostics.isTreeUri) {
-      throw new Error('The selected location is not an Android folder tree.');
+      throw new Error('The selected location is not a folder.');
     }
     if (!diagnostics.persistedReadPermission || !diagnostics.persistedWritePermission) {
-      throw new Error('Reader does not have persistent read and write access to this folder.');
+      throw new Error('Tomeio does not have persistent read and write access to this folder.');
     }
     if (diagnostics.providerError) {
       throw new Error(`The file provider reported: ${diagnostics.providerError}`);

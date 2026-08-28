@@ -1,4 +1,5 @@
 import { Feather } from '@expo/vector-icons';
+import type { BookMetadata } from '@tomeio/domain';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -11,71 +12,67 @@ import {
 } from 'react-native';
 
 import { colors, usePageBottomPadding, usePageGutter } from '@/components/app-ui';
-import { Rail, toDiscoveryBook } from '@/components/poster';
+import { ProviderAttribution, Rail } from '@/components/poster';
+import { useExtensions } from '@/context/extensions-context';
 import { useLibraryCatalog } from '@/context/library-context';
+import { bookPriceLabel, bookSourceUrl } from '@/lib/book-offers';
 import { detailParams, type LibraryBook } from '@/lib/library';
-import { getSubject, getTrending, type FeedBook } from '@/lib/openlibrary';
+import type { FeedBook } from '@/lib/openlibrary';
 
-const SEARCH_DELAY_MS = 650;
 const MIN_CONTINUE_READING_PROGRESS = 1;
 
 interface FeedConfig {
   key: string;
   title: string;
-  subject?: string;
 }
 
-const FEEDS: FeedConfig[] = [
-  { key: 'trending', title: 'Trending this week' },
-  { key: 'fantasy', title: 'Fantasy', subject: 'fantasy' },
-  { key: 'science-fiction', title: 'Science Fiction', subject: 'science-fiction' },
-  { key: 'romance', title: 'Romance', subject: 'romance' },
-  { key: 'mystery', title: 'Mystery & Crime', subject: 'mystery' },
-  { key: 'historical-fiction', title: 'Historical Fiction', subject: 'historical-fiction' },
-  { key: 'self-help', title: 'Self-Help', subject: 'self-help' },
-  { key: 'business', title: 'Business', subject: 'business' },
-  { key: 'science', title: 'Science', subject: 'science' },
-];
+interface ProviderFeedBook extends FeedBook {
+  extensionId: string;
+  metadata: BookMetadata;
+}
+
+function providerFeedBook(book: BookMetadata, extensionId: string): ProviderFeedBook {
+  return {
+    id: `${extensionId}:${book.id}`,
+    title: book.title,
+    author: book.authors[0] || 'Unknown',
+    cover: book.coverUrl || '',
+    year: book.publishedYear ?? '',
+    description: book.description || '',
+    rating: book.rating,
+    ratingsCount: book.ratingsCount,
+    priceLabel: bookPriceLabel(book),
+    sourceUrl: bookSourceUrl(book),
+    extensionId,
+    metadata: book,
+  };
+}
 
 interface FeedState {
-  books: FeedBook[];
+  books: ProviderFeedBook[];
   status: 'loading' | 'ready' | 'error';
   error: string | null;
 }
 
 const EMPTY_FEED: FeedState = { books: [], status: 'loading', error: null };
-function initialFeeds(): Record<string, FeedState> {
-  return Object.fromEntries(FEEDS.map(({ key }) => [key, { ...EMPTY_FEED }]));
+function initialFeeds(feeds: FeedConfig[]): Record<string, FeedState> {
+  return Object.fromEntries(feeds.map(({ key }) => [key, { ...EMPTY_FEED }]));
 }
 
 function HomeSearchBar({ gutter }: { gutter: number }) {
   const router = useRouter();
   const [query, setQuery] = useState('');
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const openSearch = useCallback(
     (value: string) => {
       const cleanQuery = value.trim();
       if (cleanQuery.length < 2) return;
-      if (searchTimer.current) {
-        clearTimeout(searchTimer.current);
-        searchTimer.current = null;
-      }
       setQuery('');
       Keyboard.dismiss();
-      router.push({ pathname: '/search', params: { q: cleanQuery } });
+      router.push({ pathname: '/home/search', params: { q: cleanQuery } });
     },
     [router]
   );
-
-  useEffect(() => {
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    if (query.trim().length < 2) return;
-    searchTimer.current = setTimeout(() => openSearch(query), SEARCH_DELAY_MS);
-    return () => {
-      if (searchTimer.current) clearTimeout(searchTimer.current);
-    };
-  }, [openSearch, query]);
 
   return (
     <View className="pb-6" style={{ paddingHorizontal: gutter }}>
@@ -96,15 +93,22 @@ function HomeSearchBar({ gutter }: { gutter: number }) {
           <Pressable
             onPress={() => setQuery('')}
             accessibilityLabel="Clear search"
-            className="h-12 w-12 items-center justify-center"
+            accessibilityRole="button"
+            className="h-12 w-10 items-center justify-center"
           >
             <Feather name="x" size={19} color={colors.textMuted} />
           </Pressable>
-        ) : (
-          <View className="h-12 w-12 items-center justify-center">
-            <Feather name="search" size={20} color={colors.textMuted} />
-          </View>
-        )}
+        ) : null}
+        <Pressable
+          onPress={() => openSearch(query)}
+          disabled={query.trim().length < 2}
+          accessibilityLabel="Search"
+          accessibilityRole="button"
+          accessibilityState={{ disabled: query.trim().length < 2 }}
+          className="h-12 w-12 items-center justify-center disabled:opacity-40"
+        >
+          <Feather name="search" size={20} color={colors.textMuted} />
+        </Pressable>
       </View>
     </View>
   );
@@ -119,13 +123,13 @@ function HomeFeedRail({
 }: {
   feed: FeedConfig;
   state: FeedState;
-  onOpenBook: (book: FeedBook, genre: string) => void;
+  onOpenBook: (book: ProviderFeedBook) => void;
   onOpenCategory: (feed: FeedConfig) => void;
   onRetry: (feed: FeedConfig) => void;
 }) {
   const onPressBook = useCallback(
-    (book: FeedBook) => onOpenBook(book, feed.title),
-    [feed.title, onOpenBook]
+    (book: ProviderFeedBook) => onOpenBook(book),
+    [onOpenBook]
   );
   const onSeeAll = useCallback(() => onOpenCategory(feed), [feed, onOpenCategory]);
   const handleRetry = useCallback(() => onRetry(feed), [feed, onRetry]);
@@ -148,11 +152,13 @@ function HomeListHeader({
   continueReading,
   onOpenLibraryBook,
   onSeeAllContinue,
+  attribution,
 }: {
   gutter: number;
   continueReading: LibraryBook[];
   onOpenLibraryBook: (book: LibraryBook) => void;
   onSeeAllContinue: () => void;
+  attribution?: { label: string; url: string; imageUrl?: string };
 }) {
   return (
     <View>
@@ -165,6 +171,11 @@ function HomeListHeader({
           onSeeAll={onSeeAllContinue}
         />
       ) : null}
+      {attribution ? (
+        <View className="mb-4" style={{ paddingHorizontal: gutter }}>
+          <ProviderAttribution attribution={attribution} />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -173,10 +184,28 @@ export default function HomeScreen() {
   const gutter = usePageGutter();
   const bottomPadding = usePageBottomPadding();
   const router = useRouter();
+  const extensions = useExtensions();
   const { downloaded } = useLibraryCatalog();
   const generation = useRef(0);
   const requestedFeeds = useRef(new Set<string>());
-  const [feeds, setFeeds] = useState<Record<string, FeedState>>(initialFeeds);
+  const discoveryManifest = useMemo(() => {
+    const manifests = [
+      ...extensions.thirdParty
+        .filter((extension) => extension.enabled)
+        .map((extension) => extension.manifest),
+      ...extensions.bundled,
+    ];
+    return manifests.find((manifest) => manifest.id === extensions.discoveryExtensionId) ?? null;
+  }, [extensions.bundled, extensions.discoveryExtensionId, extensions.thirdParty]);
+  const feedConfigs = useMemo(
+    () =>
+      (discoveryManifest?.catalogs ?? []).map((catalog) => ({
+        key: catalog.id,
+        title: catalog.name,
+      })),
+    [discoveryManifest]
+  );
+  const [feeds, setFeeds] = useState<Record<string, FeedState>>({});
   const continueReading = useMemo(
     () =>
       downloaded
@@ -202,21 +231,35 @@ export default function HomeScreen() {
       [feed.key]: { books: current[feed.key]?.books ?? [], status: 'loading', error: null },
     }));
 
-    const request = feed.subject
-      ? getSubject(feed.subject, 24)
-      : getTrending(24);
+    const extensionId = extensions.discoveryExtensionId;
+    if (!extensionId) {
+      setFeeds((current) => ({
+        ...current,
+        [feed.key]: { books: [], status: 'error', error: 'Choose a discovery provider in Settings.' },
+      }));
+      return;
+    }
+    const request = extensions.catalog(extensionId, {
+      catalogId: feed.key,
+      page: 1,
+      limit: 24,
+      language: 'en',
+    });
 
     request
-      .then((books) => {
+      .then((page) => {
         if (generation.current !== requestGeneration) return;
         setFeeds((current) => ({
           ...current,
-          [feed.key]: { books, status: 'ready', error: null },
+          [feed.key]: {
+            books: page.items.map((book) => providerFeedBook(book, extensionId)),
+            status: 'ready',
+            error: null,
+          },
         }));
       })
       .catch((err) => {
         if (generation.current !== requestGeneration) return;
-        requestedFeeds.current.delete(feed.key);
         setFeeds((current) => ({
           ...current,
           [feed.key]: {
@@ -226,14 +269,14 @@ export default function HomeScreen() {
           },
         }));
       });
-  }, []);
+  }, [extensions.catalog, extensions.discoveryExtensionId]);
 
   const load = useCallback(() => {
     const requestGeneration = ++generation.current;
     requestedFeeds.current.clear();
-    setFeeds(initialFeeds());
-    FEEDS.slice(0, 4).forEach((feed) => requestFeed(feed, requestGeneration));
-  }, [requestFeed]);
+    setFeeds(initialFeeds(feedConfigs));
+    feedConfigs.slice(0, 4).forEach((feed) => requestFeed(feed, requestGeneration));
+  }, [feedConfigs, requestFeed]);
 
   useEffect(() => {
     load();
@@ -243,10 +286,14 @@ export default function HomeScreen() {
   }, [load]);
 
   const openBook = useCallback(
-    (book: FeedBook, genre: string) => {
+    (book: ProviderFeedBook) => {
       router.push({
         pathname: '/book/[id]',
-        params: { id: book.id, ext: JSON.stringify(toDiscoveryBook(book, genre)) },
+        params: {
+          id: book.metadata.id,
+          extensionId: book.extensionId,
+          extensionBook: JSON.stringify(book.metadata),
+        },
       });
     },
     [router]
@@ -261,10 +308,14 @@ export default function HomeScreen() {
     (feed: FeedConfig) => {
       router.push({
         pathname: '/category/[subject]',
-        params: { subject: feed.subject ?? 'trending', title: feed.title },
+        params: {
+          subject: feed.key,
+          title: feed.title,
+          extensionId: extensions.discoveryExtensionId ?? '',
+        },
       });
     },
-    [router]
+    [extensions.discoveryExtensionId, router]
   );
 
   const retryFeed = useCallback((feed: FeedConfig) => {
@@ -282,9 +333,16 @@ export default function HomeScreen() {
         continueReading={continueReading}
         onOpenLibraryBook={openLibraryBook}
         onSeeAllContinue={openContinueReading}
+        attribution={discoveryManifest?.attribution}
       />
     ),
-    [continueReading, gutter, openContinueReading, openLibraryBook]
+    [
+      continueReading,
+      discoveryManifest?.attribution,
+      gutter,
+      openContinueReading,
+      openLibraryBook,
+    ]
   );
   const contentContainerStyle = useMemo(
     () => ({ paddingTop: 12, paddingBottom: bottomPadding }),
@@ -304,9 +362,11 @@ export default function HomeScreen() {
     [feeds, openBook, openCategory, retryFeed]
   );
 
+  const requestFeedRef = useRef(requestFeed);
+  requestFeedRef.current = requestFeed;
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: ViewToken<FeedConfig>[] }) => {
-      viewableItems.forEach(({ item }) => requestFeed(item, generation.current));
+      viewableItems.forEach(({ item }) => requestFeedRef.current(item, generation.current));
     }
   ).current;
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 5 }).current;
@@ -314,7 +374,7 @@ export default function HomeScreen() {
   return (
     <View className="flex-1" style={{ backgroundColor: colors.background }}>
       <FlatList
-        data={FEEDS}
+        data={feedConfigs}
         keyExtractor={(feed) => feed.key}
         initialNumToRender={4}
         maxToRenderPerBatch={3}

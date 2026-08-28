@@ -4,7 +4,7 @@ const {
   AndroidConfig,
   withAndroidManifest,
   withDangerousMod,
-} = require('@expo/config-plugins');
+} = require('expo/config-plugins');
 
 const FULL_ALIAS = '.MainActivityTomeioFull';
 const MONOCHROME_ALIAS = '.MainActivityTomeioMonochrome';

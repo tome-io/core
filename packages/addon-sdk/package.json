@@ -1,0 +1,20 @@
+{
+  "name": "@tomeio/addon-sdk",
+  "version": "0.5.0",
+  "description": "TypeScript SDK for building capability-based Tomeio add-ons",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tomeio/domain": "workspace:*",
+    "@tomeio/extension-protocol": "workspace:*"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}

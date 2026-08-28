@@ -14,6 +14,8 @@ export interface FeedBook {
   description: string;
   rating?: number;
   ratingsCount?: number;
+  priceLabel?: string;
+  sourceUrl?: string;
 }
 
 export interface DiscoveryBook {

@@ -1,16 +1,17 @@
 import type { BookAcquisition, BookMetadata } from '@tomeio/domain';
-import type {
-  BookExtension,
-  ExtensionManifest,
-  ExtensionPage,
-  ExtensionQuery,
-} from '@tomeio/extension-protocol';
+import {
+  defineAddon,
+  type BookExtension,
+  type ExtensionManifest,
+  type ExtensionPage,
+  type ExtensionQuery,
+} from '@tomeio/addon-sdk';
 import { createSourceHttpClient, type SourceHttpOptions } from '@tomeio/sources';
 
 export const manifest: ExtensionManifest = {
   manifestVersion: 1,
   id: 'org.tomeio.project-gutenberg',
-  version: '0.1.0',
+  version: '0.2.0',
   name: 'Project Gutenberg',
   description: 'Public-domain books and downloads from Project Gutenberg.',
   author: 'Tomeio',
@@ -19,8 +20,10 @@ export const manifest: ExtensionManifest = {
   resources: [
     { name: 'catalog', supportsPagination: true },
     { name: 'search', supportsPagination: true },
+    { name: 'resolve', supportsPagination: true },
     { name: 'acquisition' },
   ],
+  providerRoles: ['discovery', 'search', 'acquisition'],
   catalogs: [
     { id: 'popular', name: 'Popular on Project Gutenberg', resource: 'catalog' },
   ],
@@ -193,9 +196,15 @@ export function createProjectGutenbergExtension(options: SourceHttpOptions = {})
     };
   };
 
-  return {
-    manifest,
+  return defineAddon(manifest, {
     search,
+    resolve: (query) =>
+      search({
+        query: [query.book.title, ...query.book.authors].filter(Boolean).join(' '),
+        page: query.page,
+        limit: query.limit,
+        format: query.format,
+      }),
     catalog: (query) => search({ ...query, query: '' }),
     acquisition: async (id) => {
       const cached = acquisitionsById.get(id);
@@ -215,7 +224,7 @@ export function createProjectGutenbergExtension(options: SourceHttpOptions = {})
       acquisitionsById.set(id, acquisitions);
       return acquisitions;
     },
-  };
+  });
 }
 
 export const projectGutenbergExtension = createProjectGutenbergExtension();

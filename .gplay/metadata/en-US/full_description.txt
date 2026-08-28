@@ -1,0 +1,15 @@
+Tomeio brings book discovery, downloads, reading lists, and your local library together in one place.
+
+Explore curated catalogs, search across your enabled book sources, compare available formats, and save books to your device. Tomeio's extension-based design lets each source provide its own catalogs, metadata, and download options through a consistent interface.
+
+Features:
+
+• Discover books through curated and trending catalogs
+• Search across enabled book providers
+• Find EPUB, PDF, MOBI, and other available formats
+• Organize downloads in a local library
+• Track reading progress across supported readers
+• Add or manage book-source extensions
+• Choose where downloaded books are stored
+
+Availability and download formats depend on the selected source and the rights attached to each book. Tomeio's bundled providers focus on public-domain and openly available material.

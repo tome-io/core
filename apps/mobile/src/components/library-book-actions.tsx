@@ -12,23 +12,30 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors } from '@/components/app-ui';
+import { canShowBookInFiles } from '@/lib/book-file-actions';
 import type { LibraryBook } from '@/lib/library';
 
-export type LibraryAction =
-  | 'moon'
+type BuiltInLibraryAction =
   | 'openWith'
   | 'files'
   | 'delete'
   | 'remove'
   | 'read'
   | 'metadata';
+export type LibraryAction = BuiltInLibraryAction | `addon:${string}`;
+
+export interface AddonLibraryAction {
+  key: `addon:${string}`;
+  label: string;
+  icon: keyof typeof Feather.glyphMap;
+  onPress: () => void;
+}
 
 interface ActionsProps {
   book: LibraryBook;
   busyAction?: LibraryAction | null;
   compact?: boolean;
-  moonReaderConfigured: boolean;
-  onOpenMoonReader: () => void;
+  addonActions?: AddonLibraryAction[];
   onOpenWith: () => void;
   onShowInFiles: () => void;
   onDelete: () => void;
@@ -41,8 +48,7 @@ export function LibraryBookActions({
   book,
   busyAction = null,
   compact = false,
-  moonReaderConfigured,
-  onOpenMoonReader,
+  addonActions = [],
   onOpenWith,
   onShowInFiles,
   onDelete,
@@ -51,8 +57,11 @@ export function LibraryBookActions({
   onRefreshMetadata,
 }: ActionsProps) {
   const hasLocalFile =
-    !!(book.local?.uri ?? book.fileUri) && book.moonReader?.availableLocally !== false;
-  const canDeleteLocalFile = !!book.local?.uri && !book.local.uri.startsWith('content:');
+    !!(book.local?.uri ?? book.fileUri) &&
+    book.availableLocally !== false &&
+    book.moonReader?.availableLocally !== false;
+  const hasLocalRecord = !!(book.local?.uri ?? book.fileUri);
+  const canRemoveLocalFile = hasLocalFile && !!book.local?.uri;
   const canRemoveSyncedItem =
     !hasLocalFile &&
     (book.key.startsWith('progress:') ||
@@ -63,9 +72,7 @@ export function LibraryBookActions({
     icon: keyof typeof Feather.glyphMap;
     destructive?: boolean;
   }[] = [
-    ...(Platform.OS === 'android' && moonReaderConfigured && hasLocalFile
-      ? [{ key: 'moon' as const, label: 'Open in Moon+ Reader', icon: 'book-open' as const }]
-      : []),
+    ...addonActions,
     ...(hasLocalFile
       ? [
           ...(Platform.OS !== 'web'
@@ -77,14 +84,11 @@ export function LibraryBookActions({
                 },
               ]
             : []),
-          ...(Platform.OS === 'android'
-            ? [{ key: 'files' as const, label: 'Show in Files', icon: 'folder' as const }]
-            : []),
-          ...(canDeleteLocalFile
+          ...(canRemoveLocalFile
             ? [
                 {
                   key: 'delete' as const,
-                  label: 'Delete local file',
+                  label: 'Remove local file',
                   icon: 'trash-2' as const,
                   destructive: true,
                 },
@@ -92,7 +96,10 @@ export function LibraryBookActions({
             : []),
         ]
       : []),
-    ...(canRemoveSyncedItem
+    ...(canShowBookInFiles(book)
+      ? [{ key: 'files' as const, label: 'Show in Files', icon: 'folder' as const }]
+      : []),
+    ...(hasLocalRecord || canRemoveSyncedItem
       ? [
           {
             key: 'remove' as const,
@@ -105,8 +112,7 @@ export function LibraryBookActions({
     { key: 'read', label: book.isRead ? 'Finished' : 'Mark as finished', icon: 'check-circle' },
     { key: 'metadata', label: 'Refresh metadata', icon: 'refresh-cw' },
   ];
-  const handlers: Record<LibraryAction, () => void> = {
-    moon: onOpenMoonReader,
+  const handlers: Record<BuiltInLibraryAction, () => void> = {
     openWith: onOpenWith,
     files: onShowInFiles,
     delete: onDelete,
@@ -125,7 +131,11 @@ export function LibraryBookActions({
         return (
           <Pressable
             key={action.key}
-            onPress={handlers[action.key]}
+            onPress={
+              action.key.startsWith('addon:')
+                ? addonActions.find((candidate) => candidate.key === action.key)?.onPress
+                : handlers[action.key as BuiltInLibraryAction]
+            }
             disabled={disabled}
             accessibilityRole="button"
             accessibilityLabel={action.label}

@@ -1,7 +1,11 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import type { ExtensionRegistrySnapshot } from '@tomeio/extension-runtime';
 
-const EMPTY_REGISTRY: ExtensionRegistrySnapshot = { bundled: [], thirdParty: [] };
+const EMPTY_REGISTRY: ExtensionRegistrySnapshot = {
+  bundled: [],
+  community: [],
+  thirdParty: [],
+};
 
 export function App() {
   const [registry, setRegistry] = useState<ExtensionRegistrySnapshot>(EMPTY_REGISTRY);

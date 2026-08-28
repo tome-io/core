@@ -53,7 +53,8 @@ export async function writeExtensionConfiguration(
         else await AsyncStorage.removeItem(key);
         return;
       }
-      const serialized = String(value);
+      const serialized =
+        field.type === 'password' ? String(value).trim() : String(value);
       if (field.type === 'password') await secureSet(key, serialized);
       else await AsyncStorage.setItem(key, serialized);
     })

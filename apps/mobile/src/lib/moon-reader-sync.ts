@@ -1,62 +1,21 @@
 import type { LibraryBook } from './library';
 import {
-  getSyncFingerprint,
-  loadMoonReaderCatalog,
   persistCatalogBook,
   persistMetadataSource,
-  persistMoonReaderCatalog,
-  setSyncFingerprint,
 } from './library-db';
-import { syncMoonReaderLibrary } from './moon-reader';
-import { findLatestMoonReaderBackup } from './moon-reader-source';
 import { findBookMetadata, getWorkDetails } from './openlibrary';
 
 const METADATA_BATCH_SIZE = 6;
 const METADATA_REFRESH_MS = 7 * 24 * 60 * 60 * 1000;
 const METADATA_FAILURE_RETRY_MS = 15 * 60 * 1000;
-const MOON_METADATA_VERSION = 5;
+const READER_METADATA_VERSION = 5;
 
-export interface MoonReaderCatalogResult {
+export interface ReaderCatalogResult {
   books: LibraryBook[];
   warnings: string[];
 }
 
-function hashSyncInput(value: string): string {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(36);
-}
-
-export async function indexMoonReaderCatalog(
-  sourceKey: string,
-  directoryUri: string,
-  localBooks: LibraryBook[]
-): Promise<MoonReaderCatalogResult> {
-  const backup = await findLatestMoonReaderBackup(directoryUri);
-  const fingerprint = `v4:${backup.filename}:${backup.size}:${backup.modificationTime}:${hashSyncInput(
-    localBooks
-      .map((book) => book.local?.filename.toLowerCase() ?? '')
-      .sort()
-      .join('\n')
-  )}`;
-  const syncKey = `moonreader-catalog:${sourceKey}`;
-  if ((await getSyncFingerprint(syncKey)) === fingerprint) {
-    return { books: await loadMoonReaderCatalog(sourceKey), warnings: [] };
-  }
-
-  const result = await syncMoonReaderLibrary(localBooks, backup);
-  await persistMoonReaderCatalog(sourceKey, result.books);
-  await setSyncFingerprint(syncKey, fingerprint);
-  return {
-    books: await loadMoonReaderCatalog(sourceKey),
-    warnings: result.warning ? [result.warning] : [],
-  };
-}
-
-async function enrichMoonReaderBook(book: LibraryBook): Promise<{
+async function enrichReaderBook(book: LibraryBook): Promise<{
   book: LibraryBook;
   warning?: string;
 }> {
@@ -85,7 +44,7 @@ async function enrichMoonReaderBook(book: LibraryBook): Promise<{
           ...book,
           metadataPending: false,
           metadataUpdatedAt: Date.now(),
-          metadataVersion: MOON_METADATA_VERSION,
+          metadataVersion: READER_METADATA_VERSION,
         },
       };
     }
@@ -103,7 +62,7 @@ async function enrichMoonReaderBook(book: LibraryBook): Promise<{
         discovery: metadata,
         metadataPending: false,
         metadataUpdatedAt: Date.now(),
-        metadataVersion: MOON_METADATA_VERSION,
+        metadataVersion: READER_METADATA_VERSION,
       },
     };
   } catch (err: any) {
@@ -112,17 +71,17 @@ async function enrichMoonReaderBook(book: LibraryBook): Promise<{
         ...book,
         metadataPending: true,
         metadataUpdatedAt: Date.now(),
-        metadataVersion: MOON_METADATA_VERSION,
+        metadataVersion: READER_METADATA_VERSION,
       },
       warning: `${book.title}: ${err.message || String(err)}`,
     };
   }
 }
 
-export async function enrichIndexedMoonReaderCatalog(
+export async function enrichIndexedReaderCatalog(
   initialBooks: LibraryBook[],
   onBookUpdated?: (book: LibraryBook) => void
-): Promise<MoonReaderCatalogResult> {
+): Promise<ReaderCatalogResult> {
   let books = initialBooks;
   const warnings: string[] = [];
   const now = Date.now();
@@ -131,7 +90,7 @@ export async function enrichIndexedMoonReaderCatalog(
   const candidates = books.filter(
     (book) =>
       !book.local &&
-      (book.metadataVersion !== MOON_METADATA_VERSION ||
+      (book.metadataVersion !== READER_METADATA_VERSION ||
         !book.metadataUpdatedAt ||
         book.metadataUpdatedAt < staleBefore ||
         (book.metadataPending && book.metadataUpdatedAt < retryFailuresBefore))
@@ -139,7 +98,7 @@ export async function enrichIndexedMoonReaderCatalog(
 
   for (let offset = 0; offset < candidates.length; offset += METADATA_BATCH_SIZE) {
     const batch = candidates.slice(offset, offset + METADATA_BATCH_SIZE);
-    const results = await Promise.all(batch.map(enrichMoonReaderBook));
+    const results = await Promise.all(batch.map(enrichReaderBook));
     for (const result of results) {
       await persistCatalogBook(result.book);
       if (result.book.discovery) {

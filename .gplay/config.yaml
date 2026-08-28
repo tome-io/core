@@ -1,0 +1,11 @@
+# gplay local configuration
+# See: gplay --help for all available options
+
+default_package: org.tomeio.app
+# Authenticate locally with:
+# gplay auth login --service-account ~/.gplay/tomeio-play-console.json --local --profile tomeio
+
+# timeout: 30s
+# upload_timeout: 5m
+# max_retries: 3
+# debug: false
