@@ -72,7 +72,7 @@ test('forces metadata enrichment after hosted sync even during the failure retry
     addedAt: now,
     metadataPending: true,
     metadataUpdatedAt: now - 1_000,
-    metadataVersion: 5,
+    metadataVersion: 6,
   };
   assert.equal(shouldEnrichReaderMetadata(book, now), false);
   assert.equal(shouldEnrichReaderMetadata(book, now, true), true);

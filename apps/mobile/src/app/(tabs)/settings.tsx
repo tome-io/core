@@ -1,15 +1,21 @@
-import { Feather } from '@expo/vector-icons';
-import * as Application from 'expo-application';
-import Constants from 'expo-constants';
-import { Image } from 'expo-image';
+import { Feather } from "@expo/vector-icons";
+import * as Application from "expo-application";
+import Constants from "expo-constants";
+import { Image } from "expo-image";
 import {
   supportsExtensionProviderRole,
   type ExtensionManifest,
-} from '@tomeio/extension-protocol';
-import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
+} from "@tomeio/extension-protocol";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 import {
   ActivityIndicator,
-  Alert,
   Platform,
   Pressable,
   ScrollView,
@@ -19,8 +25,9 @@ import {
   View,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
-} from 'react-native';
+} from "react-native";
 
+import { AppErrorDialog } from "@/components/app-error-dialog";
 import {
   AppDialog,
   colors,
@@ -30,47 +37,47 @@ import {
   SettingsSection,
   usePageBottomPadding,
   usePageGutter,
-} from '@/components/app-ui';
-import { useExtensions } from '@/context/extensions-context';
-import {
-  useLibraryActions,
-  useLibrarySyncStatus,
-} from '@/context/library-context';
-import { useSettings } from '@/context/settings-context';
+} from "@/components/app-ui";
+import { useExtensions } from "@/context/extensions-context";
+import { useLibraryActions } from "@/context/library-context";
+import { useSettings } from "@/context/settings-context";
 import {
   folderLocationLabel,
   isExternalFolderLocation,
   pickDownloadFolder,
-} from '@/lib/download';
-import { beginFolderPicker, endFolderPicker } from '@/lib/folder-picker-lock';
+} from "@/lib/download";
+import { beginFolderPicker, endFolderPicker } from "@/lib/folder-picker-lock";
 import {
   getNativeLauncherIcon,
   hasNativeLauncherIcon,
   setNativeLauncherIcon,
   type LauncherIcon,
-} from '@/lib/launcher-icon';
-import { validateProgressFolder } from '@/lib/progress-folder-provider';
-import { forgetProgressSyncFolder } from '@/lib/progress-sync';
+} from "@/lib/launcher-icon";
 import {
   getHostedSyncAccount,
+  HostedSyncError,
   loginHostedSync,
   logoutHostedSync,
   registerHostedSync,
+  requestHostedSyncCode,
+  resetHostedSyncPassword,
   synchronizeHostedProgress,
+  verifyHostedSyncEmail,
+  verifyHostedSyncRecoveryCode,
   type HostedSyncAccount,
-} from '@/lib/hosted-sync';
-import type { FolderLocationSetting } from '@/lib/settings';
-import { forgetNativeDirectory } from '../../../modules/expo-progress-folder/src';
+} from "@/lib/hosted-sync";
+import type { FolderLocationSetting } from "@/lib/settings";
+import { forgetNativeDirectory } from "../../../modules/expo-progress-folder/src";
 
-type ProviderRole = 'discovery' | 'search' | 'acquisition';
-type SettingsSectionId = 'appearance' | 'providers' | 'library' | 'sync';
+type ProviderRole = "discovery" | "search" | "acquisition";
+type SettingsSectionId = "appearance" | "providers" | "library" | "sync";
 const SECTIONS: { id: SettingsSectionId; label: string }[] = [
-  ...(Platform.OS === 'android'
-    ? [{ id: 'appearance' as const, label: 'Appearance' }]
+  ...(Platform.OS === "android"
+    ? [{ id: "appearance" as const, label: "Appearance" }]
     : []),
-  { id: 'providers', label: 'Providers' },
-  { id: 'library', label: 'Library' },
-  { id: 'sync', label: 'Progress sync' },
+  { id: "providers", label: "Providers" },
+  { id: "library", label: "Library" },
+  { id: "sync", label: "Progress sync" },
 ];
 
 const APP_VERSION =
@@ -83,23 +90,23 @@ const LAUNCHER_ICONS: {
   source: number;
 }[] = [
   {
-    id: 'full',
-    label: 'Full colour',
-    detail: 'The complete orange Tomeio artwork.',
-    source: require('../../../assets/images/icon.png'),
+    id: "full",
+    label: "Full colour",
+    detail: "The complete orange Tomeio artwork.",
+    source: require("../../../assets/images/icon.png"),
   },
   {
-    id: 'monochrome',
-    label: 'Monochrome',
-    detail: 'The simplified book mark on a golden background.',
-    source: require('../../../assets/images/android-icon-monochrome.png'),
+    id: "monochrome",
+    label: "Monochrome",
+    detail: "The simplified book mark on a golden background.",
+    source: require("../../../assets/images/android-icon-monochrome.png"),
   },
 ];
 
 function providerRoleLabel(role: ProviderRole | null): string {
-  if (role === 'discovery') return 'Discovery provider';
-  if (role === 'search') return 'Search provider';
-  return 'Download provider';
+  if (role === "discovery") return "Discovery provider";
+  if (role === "search") return "Search provider";
+  return "Download provider";
 }
 
 function SettingsMenu({
@@ -120,19 +127,29 @@ function SettingsMenu({
             className="mb-2 h-14 w-full justify-center px-6 active:opacity-75"
             style={{
               borderRadius: 999,
-              backgroundColor: active ? colors.surfaceRaised : 'transparent',
+              backgroundColor: active ? colors.surfaceRaised : "transparent",
               opacity: active ? 1 : 0.45,
             }}
           >
-            <Text className={active ? 'text-base font-semibold' : 'text-base font-medium'} style={{ color: colors.text }}>
+            <Text
+              className={
+                active ? "text-base font-semibold" : "text-base font-medium"
+              }
+              style={{ color: colors.text }}
+            >
               {section.label}
             </Text>
           </Pressable>
         );
       })}
       <View className="flex-1" />
-      <Text className="px-6 text-xs" style={{ color: colors.textMuted, opacity: 0.45 }}>
-        {APP_VERSION ? `Tomeio · v${APP_VERSION}` : 'Tomeio · Version unavailable'}
+      <Text
+        className="px-6 text-xs"
+        style={{ color: colors.textMuted, opacity: 0.45 }}
+      >
+        {APP_VERSION
+          ? `Tomeio · v${APP_VERSION}`
+          : "Tomeio · Version unavailable"}
       </Text>
     </View>
   );
@@ -158,7 +175,8 @@ function ProviderPicker({
       onClose={onClose}
     >
       <Text className="mb-4 text-sm" style={{ color: colors.textMuted }}>
-        Choose one active provider. Add-ons are installed and configured from the Add-ons page.
+        Choose one active provider. Add-ons are installed and configured from
+        the Add-ons page.
       </Text>
       <ScrollView className="max-h-[500px]" contentContainerClassName="gap-2">
         {options.map((manifest) => {
@@ -171,19 +189,28 @@ function ProviderPicker({
               style={{
                 borderRadius: 16,
                 borderColor: selected ? colors.accent : colors.border,
-                backgroundColor: selected ? colors.accentMuted : colors.surfaceRaised,
+                backgroundColor: selected
+                  ? colors.accentMuted
+                  : colors.surfaceRaised,
               }}
             >
               <Feather
-                name={selected ? 'check-circle' : 'circle'}
+                name={selected ? "check-circle" : "circle"}
                 size={19}
                 color={selected ? colors.accent : colors.textMuted}
               />
               <View className="flex-1 py-2">
-                <Text className="text-sm font-medium" style={{ color: colors.text }}>
+                <Text
+                  className="text-sm font-medium"
+                  style={{ color: colors.text }}
+                >
                   {manifest.name}
                 </Text>
-                <Text numberOfLines={1} className="mt-0.5 text-xs" style={{ color: colors.textMuted }}>
+                <Text
+                  numberOfLines={1}
+                  className="mt-0.5 text-xs"
+                  style={{ color: colors.textMuted }}
+                >
                   {manifest.description}
                 </Text>
               </View>
@@ -224,26 +251,35 @@ function LauncherIconPicker({
               style={{
                 borderRadius: 16,
                 borderColor: active ? colors.accent : colors.border,
-                backgroundColor: active ? colors.accentMuted : colors.surfaceRaised,
+                backgroundColor: active
+                  ? colors.accentMuted
+                  : colors.surfaceRaised,
               }}
             >
               <View
                 className="h-14 w-14 overflow-hidden rounded-2xl"
                 style={{
-                  backgroundColor: option.id === 'monochrome' ? '#FFB511' : colors.surface,
+                  backgroundColor:
+                    option.id === "monochrome" ? "#FFB511" : colors.surface,
                 }}
               >
                 <Image
                   source={option.source}
-                  contentFit={option.id === 'monochrome' ? 'contain' : 'cover'}
-                  style={{ width: '100%', height: '100%' }}
+                  contentFit={option.id === "monochrome" ? "contain" : "cover"}
+                  style={{ width: "100%", height: "100%" }}
                 />
               </View>
               <View className="flex-1">
-                <Text className="text-sm font-semibold" style={{ color: colors.text }}>
+                <Text
+                  className="text-sm font-semibold"
+                  style={{ color: colors.text }}
+                >
                   {option.label}
                 </Text>
-                <Text className="mt-1 text-xs" style={{ color: colors.textMuted }}>
+                <Text
+                  className="mt-1 text-xs"
+                  style={{ color: colors.textMuted }}
+                >
                   {option.detail}
                 </Text>
               </View>
@@ -251,7 +287,7 @@ function LauncherIconPicker({
                 <ActivityIndicator size="small" color={colors.accent} />
               ) : (
                 <Feather
-                  name={active ? 'check-circle' : 'circle'}
+                  name={active ? "check-circle" : "circle"}
                   size={20}
                   color={active ? colors.accent : colors.textMuted}
                 />
@@ -260,9 +296,12 @@ function LauncherIconPicker({
           );
         })}
       </View>
-      <Text className="mt-4 text-xs leading-5" style={{ color: colors.textMuted }}>
-        Android launchers can take a few seconds to refresh the home-screen icon. System themed
-        icons may still apply the wallpaper palette.
+      <Text
+        className="mt-4 text-xs leading-5"
+        style={{ color: colors.textMuted }}
+      >
+        Android launchers can take a few seconds to refresh the home-screen
+        icon. System themed icons may still apply the wallpaper palette.
       </Text>
     </AppDialog>
   );
@@ -281,75 +320,389 @@ function FolderField({
   onChoose: () => void;
   onReset?: () => void;
   resetLabel: string;
-  resetIcon: ComponentProps<typeof Feather>['name'];
+  resetIcon: ComponentProps<typeof Feather>["name"];
 }) {
   const label = !location ? emptyLabel : folderLocationLabel(location);
   return (
     <View className="gap-2">
       <SelectField label={label} icon="folder" onPress={onChoose} />
       {onReset ? (
-        <PillButton label={resetLabel} icon={resetIcon} variant="overlay" onPress={onReset} />
+        <PillButton
+          label={resetLabel}
+          icon={resetIcon}
+          variant="overlay"
+          onPress={onReset}
+        />
       ) : null}
     </View>
   );
 }
 
 function HostedSyncDialog({
-  visible,
-  busy,
   onClose,
-  onSubmit,
+  onAuthenticated,
 }: {
-  visible: boolean;
-  busy: boolean;
   onClose: () => void;
-  onSubmit: (mode: 'login' | 'register', email: string, password: string) => void;
+  onAuthenticated: (account: HostedSyncAccount) => void;
 }) {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  type Step =
+    | "login"
+    | "register"
+    | "verify"
+    | "forgot"
+    | "recovery-code"
+    | "reset";
+  const [step, setStep] = useState<Step>("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const [code, setCode] = useState("");
+  const [recoveryToken, setRecoveryToken] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [debugCode, setDebugCode] = useState<string | null>(null);
+
+  const fail = (cause: unknown) => {
+    setError(cause instanceof Error ? cause.message : String(cause));
+  };
+
+  const acceptChallenge = (challenge: { debugCode?: string }) => {
+    const developmentCode = challenge.debugCode ?? null;
+    setDebugCode(developmentCode);
+    setCode(developmentCode ?? "");
+  };
+
+  const submitCredentials = async () => {
+    const normalizedEmail = email.trim();
+    setBusy(true);
+    setError(null);
+    try {
+      if (step === "register") {
+        const challenge = await registerHostedSync(normalizedEmail, password);
+        acceptChallenge(challenge);
+        setStep("verify");
+        return;
+      }
+      const account = await loginHostedSync(normalizedEmail, password);
+      onAuthenticated(account);
+    } catch (cause) {
+      if (
+        cause instanceof HostedSyncError &&
+        cause.code === "email_unverified"
+      ) {
+        try {
+          const challenge = await requestHostedSyncCode(
+            normalizedEmail,
+            "confirm",
+          );
+          acceptChallenge(challenge);
+          setStep("verify");
+        } catch (verificationCause) {
+          fail(verificationCause);
+        }
+      } else {
+        fail(cause);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const requestRecovery = async () => {
+    const normalizedEmail = email.trim();
+    setBusy(true);
+    setError(null);
+    try {
+      const challenge = await requestHostedSyncCode(
+        normalizedEmail,
+        "recovery",
+      );
+      acceptChallenge(challenge);
+      setStep("recovery-code");
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitCode = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (step === "verify") {
+        const account = await verifyHostedSyncEmail(email.trim(), code);
+        onAuthenticated(account);
+        return;
+      }
+      const recovery = await verifyHostedSyncRecoveryCode(email.trim(), code);
+      setRecoveryToken(recovery.recoveryToken);
+      setPassword("");
+      setPasswordConfirmation("");
+      setStep("reset");
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resendCode = async () => {
+    const action = step === "verify" ? "confirm" : "recovery";
+    setBusy(true);
+    setError(null);
+    try {
+      const challenge = await requestHostedSyncCode(email.trim(), action);
+      if (action === "confirm" && challenge.state === "verified") {
+        setStep("login");
+        setCode("");
+        setDebugCode(null);
+        setError("This email is already verified. Sign in with your password.");
+        return;
+      }
+      acceptChallenge(challenge);
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resetPassword = async () => {
+    if (recoveryToken == null) {
+      setError("Request a new password-reset code.");
+      setStep("forgot");
+      return;
+    }
+    if (password !== passwordConfirmation) {
+      setError("The passwords do not match.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const account = await resetHostedSyncPassword(recoveryToken, password);
+      onAuthenticated(account);
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const title =
+    step === "register"
+      ? "Create sync account"
+      : step === "verify"
+        ? "Confirm your email"
+        : step === "forgot"
+          ? "Reset password"
+          : step === "recovery-code"
+            ? "Enter reset code"
+            : step === "reset"
+              ? "Choose a new password"
+              : "Tomeio Sync";
+
+  const codeStep = step === "verify" || step === "recovery-code";
+  const credentialStep = step === "login" || step === "register";
 
   return (
-    <AppDialog visible={visible} title={mode === 'login' ? 'Tomeio Sync' : 'Create sync account'} onClose={onClose}>
-      <Text className="mb-4 text-sm leading-5" style={{ color: colors.textMuted }}>
-        Sync is optional. Your library remains available on this device without an account.
+    <AppDialog
+      visible
+      title={title}
+      onClose={() => {
+        if (!busy) onClose();
+      }}
+    >
+      <Text
+        className="mb-4 text-sm leading-5"
+        style={{ color: colors.textMuted }}
+      >
+        {step === "verify"
+          ? `Enter the six-digit code sent to ${email.trim()}.`
+          : step === "forgot"
+            ? "Enter your account email and we’ll send a six-digit reset code."
+            : step === "recovery-code"
+              ? `Enter the six-digit reset code sent to ${email.trim()}.`
+              : step === "reset"
+                ? "Your new password will also become the password used by KOReader and Moon+ Reader."
+                : "Sync is optional. Your library remains available on this device without an account."}
       </Text>
       <View className="gap-3">
-        <TextInput
-          value={email}
-          onChangeText={setEmail}
-          editable={!busy}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="email-address"
-          placeholder="Email"
-          placeholderTextColor={colors.textMuted}
-          className="h-14 px-5 text-[15px]"
-          style={{ color: colors.text, backgroundColor: colors.surfaceRaised, borderRadius: 999 }}
-        />
-        <TextInput
-          value={password}
-          onChangeText={setPassword}
-          editable={!busy}
-          autoCapitalize="none"
-          autoCorrect={false}
-          secureTextEntry
-          placeholder="Password"
-          placeholderTextColor={colors.textMuted}
-          className="h-14 px-5 text-[15px]"
-          style={{ color: colors.text, backgroundColor: colors.surfaceRaised, borderRadius: 999 }}
-        />
+        {credentialStep || step === "forgot" ? (
+          <TextInput
+            value={email}
+            onChangeText={setEmail}
+            editable={!busy}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="email"
+            keyboardType="email-address"
+            placeholder="Email"
+            placeholderTextColor={colors.textMuted}
+            className="h-14 px-5 text-[15px]"
+            style={{
+              color: colors.text,
+              backgroundColor: colors.surfaceRaised,
+              borderRadius: 999,
+            }}
+          />
+        ) : null}
+        {credentialStep || step === "reset" ? (
+          <TextInput
+            value={password}
+            onChangeText={setPassword}
+            editable={!busy}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete={
+              step === "reset" || step === "register"
+                ? "new-password"
+                : "current-password"
+            }
+            secureTextEntry
+            placeholder={step === "reset" ? "New password" : "Password"}
+            placeholderTextColor={colors.textMuted}
+            className="h-14 px-5 text-[15px]"
+            style={{
+              color: colors.text,
+              backgroundColor: colors.surfaceRaised,
+              borderRadius: 999,
+            }}
+          />
+        ) : null}
+        {step === "reset" ? (
+          <TextInput
+            value={passwordConfirmation}
+            onChangeText={setPasswordConfirmation}
+            editable={!busy}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="new-password"
+            secureTextEntry
+            placeholder="Confirm new password"
+            placeholderTextColor={colors.textMuted}
+            className="h-14 px-5 text-[15px]"
+            style={{
+              color: colors.text,
+              backgroundColor: colors.surfaceRaised,
+              borderRadius: 999,
+            }}
+          />
+        ) : null}
+        {codeStep ? (
+          <TextInput
+            value={code}
+            onChangeText={(value) =>
+              setCode(value.replace(/\D/gu, "").slice(0, 6))
+            }
+            editable={!busy}
+            autoComplete="one-time-code"
+            keyboardType="number-pad"
+            maxLength={6}
+            placeholder="000000"
+            placeholderTextColor={colors.textMuted}
+            className="h-16 px-5 text-center text-2xl tracking-[10px]"
+            style={{
+              color: colors.text,
+              backgroundColor: colors.surfaceRaised,
+              borderRadius: 999,
+            }}
+          />
+        ) : null}
+        {debugCode ? (
+          <Text
+            className="text-center text-xs"
+            style={{ color: colors.textMuted }}
+          >
+            Development code: {debugCode}
+          </Text>
+        ) : null}
+        {error ? (
+          <Text className="text-sm leading-5 text-red-400">{error}</Text>
+        ) : null}
+        {credentialStep ? (
+          <PillButton
+            label={
+              busy
+                ? "Please wait…"
+                : step === "login"
+                  ? "Sign in"
+                  : "Create account"
+            }
+            variant="accent"
+            disabled={busy || !email.trim() || password.length < 10}
+            onPress={() => void submitCredentials()}
+          />
+        ) : step === "forgot" ? (
+          <PillButton
+            label={busy ? "Sending…" : "Send reset code"}
+            variant="accent"
+            disabled={busy || !email.trim()}
+            onPress={() => void requestRecovery()}
+          />
+        ) : codeStep ? (
+          <PillButton
+            label={
+              busy
+                ? "Checking…"
+                : step === "verify"
+                  ? "Confirm email"
+                  : "Continue"
+            }
+            variant="accent"
+            disabled={busy || code.length !== 6}
+            onPress={() => void submitCode()}
+          />
+        ) : (
+          <PillButton
+            label={busy ? "Saving…" : "Save new password"}
+            variant="accent"
+            disabled={
+              busy || password.length < 10 || passwordConfirmation.length < 10
+            }
+            onPress={() => void resetPassword()}
+          />
+        )}
+        {codeStep ? (
+          <PillButton
+            label="Send another code"
+            variant="overlay"
+            disabled={busy}
+            onPress={() => void resendCode()}
+          />
+        ) : null}
+        {step === "login" ? (
+          <PillButton
+            label="Forgot password?"
+            variant="overlay"
+            disabled={busy}
+            onPress={() => {
+              setError(null);
+              setPassword("");
+              setStep("forgot");
+            }}
+          />
+        ) : null}
         <PillButton
-          label={busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
-          variant="accent"
-          disabled={busy || !email.trim() || password.length < 10}
-          onPress={() => onSubmit(mode, email.trim(), password)}
-        />
-        <PillButton
-          label={mode === 'login' ? 'Create an account' : 'I already have an account'}
+          label={
+            step === "register"
+              ? "I already have an account"
+              : step === "login"
+                ? "Create an account"
+                : "Back to sign in"
+          }
           variant="overlay"
           disabled={busy}
-          onPress={() => setMode((current) => current === 'login' ? 'register' : 'login')}
+          onPress={() => {
+            setError(null);
+            setCode("");
+            setDebugCode(null);
+            setRecoveryToken(null);
+            setPassword("");
+            setPasswordConfirmation("");
+            setStep(step === "login" ? "register" : "login");
+          }}
         />
       </View>
     </AppDialog>
@@ -361,25 +714,41 @@ export default function SettingsScreen() {
   const gutter = usePageGutter();
   const bottomPadding = usePageBottomPadding(54);
   const showMenu = width >= 800;
-  const availableSectionWidth = width - (width >= 700 ? 76 : 0) - (showMenu ? 360 : 48);
+  const availableSectionWidth =
+    width - (width >= 700 ? 76 : 0) - (showMenu ? 360 : 48);
   const compactOptions = availableSectionWidth < 560;
   const scrollRef = useRef<ScrollView>(null);
   const sectionOffsets = useRef<Partial<Record<SettingsSectionId, number>>>({});
-  const [selectedSection, setSelectedSection] = useState<SettingsSectionId>(SECTIONS[0].id);
-  const [providerPicker, setProviderPicker] = useState<ProviderRole | null>(null);
+  const [selectedSection, setSelectedSection] = useState<SettingsSectionId>(
+    SECTIONS[0].id,
+  );
+  const [providerPicker, setProviderPicker] = useState<ProviderRole | null>(
+    null,
+  );
   const [launcherIconPicker, setLauncherIconPicker] = useState(false);
-  const [launcherIcon, setLauncherIcon] = useState<LauncherIcon>('full');
+  const [launcherIcon, setLauncherIcon] = useState<LauncherIcon>("full");
   const [launcherIconBusy, setLauncherIconBusy] = useState(false);
-  const [launcherIconError, setLauncherIconError] = useState<string | null>(null);
-  const [hostedSyncAccount, setHostedSyncAccount] = useState<HostedSyncAccount | null>(null);
+  const [settingsError, setSettingsError] = useState<{
+    title: string;
+    message: string;
+  } | null>(null);
+  const [hostedSyncAccount, setHostedSyncAccount] =
+    useState<HostedSyncAccount | null>(null);
   const [hostedSyncDialog, setHostedSyncDialog] = useState(false);
   const [hostedSyncBusy, setHostedSyncBusy] = useState(false);
-  const [hostedSyncLastSyncedAt, setHostedSyncLastSyncedAt] = useState<number | null>(null);
-  const [hostedSyncError, setHostedSyncError] = useState<string | null>(null);
+  const [hostedSyncLastSyncedAt, setHostedSyncLastSyncedAt] = useState<
+    number | null
+  >(null);
   const extensions = useExtensions();
   const { settings, update } = useSettings();
-  const { cloudLastSyncedAt, cloudSyncing } = useLibrarySyncStatus();
-  const { refreshProgressSyncBooks, syncCloudProgress } = useLibraryActions();
+  const { refreshProgressSyncBooks } = useLibraryActions();
+
+  const showError = useCallback((title: string, cause: unknown) => {
+    setSettingsError({
+      title,
+      message: cause instanceof Error ? cause.message : String(cause),
+    });
+  }, []);
 
   const enabledManifests = useMemo(
     () => [
@@ -388,74 +757,79 @@ export default function SettingsScreen() {
         .map((extension) => extension.manifest),
       ...extensions.bundled,
     ],
-    [extensions.bundled, extensions.thirdParty]
+    [extensions.bundled, extensions.thirdParty],
   );
   const searchProviders = useMemo(
     () =>
       enabledManifests.filter((manifest) =>
-        supportsExtensionProviderRole(manifest, 'search')
+        supportsExtensionProviderRole(manifest, "search"),
       ),
-    [enabledManifests]
+    [enabledManifests],
   );
   const discoveryProviders = useMemo(
     () =>
       enabledManifests.filter((manifest) =>
-        supportsExtensionProviderRole(manifest, 'discovery')
+        supportsExtensionProviderRole(manifest, "discovery"),
       ),
-    [enabledManifests]
+    [enabledManifests],
   );
   const acquisitionProviders = useMemo(
     () =>
       enabledManifests.filter((manifest) =>
-        supportsExtensionProviderRole(manifest, 'acquisition')
+        supportsExtensionProviderRole(manifest, "acquisition"),
       ),
-    [enabledManifests]
+    [enabledManifests],
   );
   const selectedSearch = searchProviders.find(
-    (manifest) => manifest.id === extensions.searchExtensionId
+    (manifest) => manifest.id === extensions.searchExtensionId,
   );
   const selectedDiscovery = discoveryProviders.find(
-    (manifest) => manifest.id === extensions.discoveryExtensionId
+    (manifest) => manifest.id === extensions.discoveryExtensionId,
   );
   const selectedAcquisition = acquisitionProviders.find(
-    (manifest) => manifest.id === extensions.acquisitionExtensionId
+    (manifest) => manifest.id === extensions.acquisitionExtensionId,
   );
 
   useEffect(() => {
-    if (Platform.OS !== 'android' || !hasNativeLauncherIcon()) return;
+    if (Platform.OS !== "android" || !hasNativeLauncherIcon()) return;
     getNativeLauncherIcon()
       .then((icon) => {
         setLauncherIcon(icon);
-        setLauncherIconError(null);
       })
       .catch((cause) => {
-        setLauncherIconError(cause instanceof Error ? cause.message : String(cause));
+        showError("Could not load app icon", cause);
       });
-  }, []);
+  }, [showError]);
 
   useEffect(() => {
-    if (Platform.OS === 'web') return;
+    if (Platform.OS === "web") return;
     getHostedSyncAccount()
       .then((account) => {
         setHostedSyncAccount(account);
-        setHostedSyncError(null);
       })
       .catch((cause) => {
-        setHostedSyncError(cause instanceof Error ? cause.message : String(cause));
+        showError("Could not load Tomeio Sync", cause);
       });
-  }, []);
+  }, [showError]);
 
   const scrollToSection = (section: SettingsSectionId) => {
     setSelectedSection(section);
-    scrollRef.current?.scrollTo({ y: sectionOffsets.current[section] ?? 0, animated: true });
+    scrollRef.current?.scrollTo({
+      y: sectionOffsets.current[section] ?? 0,
+      animated: true,
+    });
   };
 
-  const updateSelectedSection = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+  const updateSelectedSection = (
+    event: NativeSyntheticEvent<NativeScrollEvent>,
+  ) => {
     const marker = event.nativeEvent.contentOffset.y + 60;
     const active = SECTIONS.reduce<SettingsSectionId>((current, section) => {
       const offset = sectionOffsets.current[section.id];
-      return typeof offset === 'number' && offset <= marker ? section.id : current;
-    }, 'providers');
+      return typeof offset === "number" && offset <= marker
+        ? section.id
+        : current;
+    }, "providers");
     if (active !== selectedSection) setSelectedSection(active);
   };
 
@@ -465,12 +839,9 @@ export default function SettingsScreen() {
       const picked = await pickDownloadFolder(
         isExternalFolderLocation(settings[setting])
           ? settings[setting]
-          : settings.folderPickerLocations[setting]
+          : settings.folderPickerLocations[setting],
       );
       if (!picked) return;
-      if (setting === 'progressSyncLocation' || Platform.OS === 'ios') {
-        await validateProgressFolder(picked.uri);
-      }
       await update({
         [setting]: picked.uri,
         folderPickerLocations: {
@@ -479,36 +850,25 @@ export default function SettingsScreen() {
         },
       });
     } catch (cause) {
-      Alert.alert(
-        setting === 'progressSyncLocation'
-          ? 'Progress sync folder unavailable'
-          : 'Folder picker failed',
-        cause instanceof Error ? cause.message : String(cause)
-      );
+      showError("Folder picker failed", cause);
     } finally {
       endFolderPicker();
     }
   };
 
   const resetFolder = async (setting: FolderLocationSetting) => {
-    if (setting === 'progressSyncLocation' && settings.progressSyncLocation) {
-      await forgetProgressSyncFolder(settings.progressSyncLocation);
-    }
     if (settings[setting]) await forgetNativeDirectory(settings[setting]);
     await update({ [setting]: null });
   };
 
   const setProvider = async (role: ProviderRole, id: string) => {
     try {
-      if (role === 'discovery') await extensions.setDiscoveryExtension(id);
-      else if (role === 'search') await extensions.setSearchExtension(id);
+      if (role === "discovery") await extensions.setDiscoveryExtension(id);
+      else if (role === "search") await extensions.setSearchExtension(id);
       else await extensions.setAcquisitionExtension(id);
       setProviderPicker(null);
     } catch (cause) {
-      Alert.alert(
-        'Could not change provider',
-        cause instanceof Error ? cause.message : String(cause)
-      );
+      showError("Could not change provider", cause);
     }
   };
 
@@ -521,47 +881,11 @@ export default function SettingsScreen() {
     try {
       const selected = await setNativeLauncherIcon(icon);
       setLauncherIcon(selected);
-      setLauncherIconError(null);
       setLauncherIconPicker(false);
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
-      setLauncherIconError(message);
-      Alert.alert(
-        'Could not change app icon',
-        message
-      );
+      showError("Could not change app icon", cause);
     } finally {
       setLauncherIconBusy(false);
-    }
-  };
-
-  const syncProgressNow = async () => {
-    try {
-      await syncCloudProgress();
-    } catch (cause) {
-      Alert.alert('Progress sync failed', cause instanceof Error ? cause.message : String(cause));
-    }
-  };
-
-  const submitHostedSync = async (
-    mode: 'login' | 'register',
-    email: string,
-    password: string,
-  ) => {
-    setHostedSyncBusy(true);
-    try {
-      const account = await (mode === 'login'
-        ? loginHostedSync(email, password)
-        : registerHostedSync(email, password));
-      setHostedSyncAccount(account);
-      setHostedSyncError(null);
-      setHostedSyncDialog(false);
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
-      setHostedSyncError(message);
-      Alert.alert(mode === 'login' ? 'Could not sign in' : 'Could not create account', message);
-    } finally {
-      setHostedSyncBusy(false);
     }
   };
 
@@ -571,15 +895,14 @@ export default function SettingsScreen() {
       const result = await synchronizeHostedProgress();
       await refreshProgressSyncBooks();
       setHostedSyncLastSyncedAt(result.syncedAt);
-      setHostedSyncError(
-        result.unmatchedRecords > 0
-          ? `${result.unmatchedRecords} remote book${result.unmatchedRecords === 1 ? '' : 's'} could not be matched on this device.`
-          : null
-      );
+      if (result.unmatchedRecords > 0) {
+        setSettingsError({
+          title: "Sync incomplete",
+          message: `${result.unmatchedRecords} remote book${result.unmatchedRecords === 1 ? "" : "s"} could not be matched on this device.`,
+        });
+      }
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
-      setHostedSyncError(message);
-      Alert.alert('Tomeio Sync failed', message);
+      showError("Tomeio Sync failed", cause);
     } finally {
       setHostedSyncBusy(false);
     }
@@ -591,19 +914,21 @@ export default function SettingsScreen() {
       await logoutHostedSync();
       setHostedSyncAccount(null);
       setHostedSyncLastSyncedAt(null);
-      setHostedSyncError(null);
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
-      setHostedSyncError(message);
-      Alert.alert('Could not sign out', message);
+      showError("Could not sign out", cause);
     } finally {
       setHostedSyncBusy(false);
     }
   };
 
   return (
-    <View className="flex-1 flex-row" style={{ backgroundColor: colors.background }}>
-      {showMenu ? <SettingsMenu selected={selectedSection} onSelect={scrollToSection} /> : null}
+    <View
+      className="flex-1 flex-row"
+      style={{ backgroundColor: colors.background }}
+    >
+      {showMenu ? (
+        <SettingsMenu selected={selectedSection} onSelect={scrollToSection} />
+      ) : null}
       <ScrollView
         ref={scrollRef}
         onScroll={updateSelectedSection}
@@ -616,7 +941,7 @@ export default function SettingsScreen() {
           paddingBottom: bottomPadding,
         }}
       >
-        {Platform.OS === 'android' ? (
+        {Platform.OS === "android" ? (
           <SettingsSection
             title="Appearance"
             compact={compactOptions}
@@ -627,14 +952,12 @@ export default function SettingsScreen() {
             <SettingsOption
               compact={compactOptions}
               label="App icon"
-              detail={
-                launcherIconError ?? 'Choose the Tomeio icon shown by the Android launcher.'
-              }
+              detail={"Choose the Tomeio icon shown by the Android launcher."}
             >
               <SelectField
                 label={
-                  LAUNCHER_ICONS.find((option) => option.id === launcherIcon)?.label ??
-                  'Full colour'
+                  LAUNCHER_ICONS.find((option) => option.id === launcherIcon)
+                    ?.label ?? "Full colour"
                 }
                 icon="book-open"
                 onPress={() => setLauncherIconPicker(true)}
@@ -656,8 +979,8 @@ export default function SettingsScreen() {
             detail="Supplies the catalog rows shown on Home."
           >
             <SelectField
-              label={selectedDiscovery?.name ?? 'No provider available'}
-              onPress={() => setProviderPicker('discovery')}
+              label={selectedDiscovery?.name ?? "No provider available"}
+              onPress={() => setProviderPicker("discovery")}
             />
           </SettingsOption>
           <SettingsOption
@@ -666,8 +989,8 @@ export default function SettingsScreen() {
             detail="Supplies searches across titles, authors and ISBNs."
           >
             <SelectField
-              label={selectedSearch?.name ?? 'No provider available'}
-              onPress={() => setProviderPicker('search')}
+              label={selectedSearch?.name ?? "No provider available"}
+              onPress={() => setProviderPicker("search")}
             />
           </SettingsOption>
           <SettingsOption
@@ -676,8 +999,8 @@ export default function SettingsScreen() {
             detail="Resolves a selected book into downloadable editions and formats."
           >
             <SelectField
-              label={selectedAcquisition?.name ?? 'No provider available'}
-              onPress={() => setProviderPicker('acquisition')}
+              label={selectedAcquisition?.name ?? "No provider available"}
+              onPress={() => setProviderPicker("acquisition")}
             />
           </SettingsOption>
         </SettingsSection>
@@ -697,10 +1020,10 @@ export default function SettingsScreen() {
             <FolderField
               location={settings.localLibraryLocation}
               emptyLabel="App-private Documents/downloads"
-              onChoose={() => void chooseFolder('localLibraryLocation')}
+              onChoose={() => void chooseFolder("localLibraryLocation")}
               onReset={
                 settings.localLibraryLocation
-                  ? () => void resetFolder('localLibraryLocation')
+                  ? () => void resetFolder("localLibraryLocation")
                   : undefined
               }
               resetLabel="Use app folder"
@@ -720,14 +1043,15 @@ export default function SettingsScreen() {
             compact={compactOptions}
             label="Tomeio Sync"
             detail={
-              Platform.OS === 'web'
-                ? 'Secure account sync is available in the Android and iOS apps.'
-                : hostedSyncError ?? hostedSyncAccount?.email ?? 'Optional sync for Tomeio and KOReader devices.'
+              Platform.OS === "web"
+                ? "Secure account sync is available in the Android and iOS apps."
+                : (hostedSyncAccount?.email ??
+                  "Optional sync for Tomeio, KOReader, and Moon+ Reader.")
             }
           >
             {hostedSyncAccount ? (
               <PillButton
-                label={hostedSyncBusy ? 'Please wait…' : 'Sign out'}
+                label={hostedSyncBusy ? "Please wait…" : "Sign out"}
                 icon="log-out"
                 variant="overlay"
                 disabled={hostedSyncBusy}
@@ -738,7 +1062,7 @@ export default function SettingsScreen() {
                 label="Sign in"
                 icon="log-in"
                 variant="accent"
-                disabled={Platform.OS === 'web'}
+                disabled={Platform.OS === "web"}
                 onPress={() => setHostedSyncDialog(true)}
               />
             )}
@@ -750,62 +1074,16 @@ export default function SettingsScreen() {
               detail={
                 hostedSyncLastSyncedAt
                   ? `Last synced ${new Date(hostedSyncLastSyncedAt).toLocaleString()}`
-                  : 'Sync progress with your other Tomeio and KOReader devices.'
+                  : "Sync progress with your Tomeio, KOReader, and Moon+ Reader devices."
               }
             >
               <PillButton
-                label={hostedSyncBusy ? 'Syncing…' : 'Sync now'}
-                icon={hostedSyncBusy ? undefined : 'refresh-cw'}
+                label={hostedSyncBusy ? "Syncing…" : "Sync now"}
+                icon={hostedSyncBusy ? undefined : "refresh-cw"}
                 variant="accent"
                 disabled={hostedSyncBusy}
                 onPress={() => void syncHostedNow()}
               />
-            </SettingsOption>
-          ) : null}
-          <SettingsOption
-            compact={compactOptions}
-            label="Legacy sync folder"
-            detail="Keep using Google Drive or a mirrored local folder during the hosted-sync transition."
-          >
-            <FolderField
-              location={settings.progressSyncLocation}
-              emptyLabel="Not configured"
-              onChoose={() => void chooseFolder('progressSyncLocation')}
-              onReset={
-                settings.progressSyncLocation
-                  ? () => void resetFolder('progressSyncLocation')
-                  : undefined
-              }
-              resetLabel="Disable sync"
-              resetIcon="slash"
-            />
-          </SettingsOption>
-          {settings.progressSyncLocation ? (
-            <SettingsOption
-              compact={compactOptions}
-              label="Synchronize now"
-              detail={
-                cloudLastSyncedAt
-                  ? `Last synced ${new Date(cloudLastSyncedAt).toLocaleString()}`
-                  : 'Not synced yet'
-              }
-            >
-              <View>
-                <PillButton
-                  label={cloudSyncing ? 'Syncing…' : 'Sync now'}
-                  icon={cloudSyncing ? undefined : 'refresh-cw'}
-                  variant="accent"
-                  disabled={cloudSyncing}
-                  onPress={() => void syncProgressNow()}
-                />
-                {cloudSyncing ? (
-                  <ActivityIndicator
-                    className="absolute left-5 top-[14px]"
-                    size="small"
-                    color={colors.text}
-                  />
-                ) : null}
-              </View>
             </SettingsOption>
           ) : null}
         </SettingsSection>
@@ -814,20 +1092,22 @@ export default function SettingsScreen() {
       <ProviderPicker
         role={providerPicker}
         options={
-          providerPicker === 'discovery'
+          providerPicker === "discovery"
             ? discoveryProviders
-            : providerPicker === 'search'
+            : providerPicker === "search"
               ? searchProviders
               : acquisitionProviders
         }
         selectedId={
-          providerPicker === 'discovery'
+          providerPicker === "discovery"
             ? extensions.discoveryExtensionId
-            : providerPicker === 'search'
+            : providerPicker === "search"
               ? extensions.searchExtensionId
               : extensions.acquisitionExtensionId
         }
-        onSelect={(id) => providerPicker && void setProvider(providerPicker, id)}
+        onSelect={(id) =>
+          providerPicker && void setProvider(providerPicker, id)
+        }
         onClose={() => setProviderPicker(null)}
       />
       <LauncherIconPicker
@@ -839,13 +1119,21 @@ export default function SettingsScreen() {
           if (!launcherIconBusy) setLauncherIconPicker(false);
         }}
       />
-      <HostedSyncDialog
-        visible={hostedSyncDialog}
-        busy={hostedSyncBusy}
-        onSubmit={(mode, email, password) => void submitHostedSync(mode, email, password)}
-        onClose={() => {
-          if (!hostedSyncBusy) setHostedSyncDialog(false);
-        }}
+      {hostedSyncDialog ? (
+        <HostedSyncDialog
+          onAuthenticated={(account) => {
+            setHostedSyncAccount(account);
+            setHostedSyncDialog(false);
+          }}
+          onClose={() => {
+            if (!hostedSyncBusy) setHostedSyncDialog(false);
+          }}
+        />
+      ) : null}
+      <AppErrorDialog
+        title={settingsError?.title ?? "Something went wrong"}
+        message={settingsError?.message ?? null}
+        onClose={() => setSettingsError(null)}
       />
     </View>
   );

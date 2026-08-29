@@ -1,4 +1,5 @@
 import type { LibraryBook } from './library';
+import { resolveBookCover } from './book-cover';
 import {
   persistCatalogBook,
   persistMetadataSource,
@@ -49,12 +50,25 @@ async function enrichReaderBook(book: LibraryBook): Promise<{
         },
       };
     }
+    const coverSources = {
+      ...book.coverSources,
+      ...(metadata.cover ? { catalog: metadata.cover } : {}),
+    };
+    const resolvedCover = resolveBookCover(coverSources, book.coverPreference, [
+      book.moonReader?.detailCoverUri,
+      book.moonReader?.coverUri,
+      book.cover,
+      book.fallbackCover,
+    ]);
     return {
       book: {
         ...book,
         title: metadata.title || book.title,
         author: metadata.author || book.author,
-        cover: metadata.cover || book.cover,
+        cover: resolvedCover.cover,
+        fallbackCover: resolvedCover.fallbackCover,
+        coverSources,
+        coverPreference: book.coverPreference ?? 'auto',
         description: metadata.description || book.description,
         year: metadata.year || book.year,
         genre: metadata.genre !== 'Other' ? metadata.genre : book.genre,

@@ -153,17 +153,6 @@ export function metadataFromFilename(
   };
 }
 
-export function moonReaderCoverTarget(filename: string): {
-  bookFilename: string;
-  priority: number;
-} | null {
-  const match = filename.match(
-    /^(.*\.(?:azw3|cbr|cbz|djvu|epub|fb2|mobi|pdf))_(\d+)\.(?:jpe?g|png|webp)$/i
-  );
-  if (!match) return null;
-  return { bookFilename: match[1] ?? '', priority: Number(match[2]) };
-}
-
 export function normalizeBookIdentityPart(value: string): string {
   return value
     .normalize('NFKD')

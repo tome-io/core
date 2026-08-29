@@ -27,10 +27,9 @@ app does not download or execute third-party JavaScript. Reviewed native integra
 publish JSON device workflows interpreted through fixed directory, file, archive,
 SQLite, preferences, and Android-intent primitives.
 
-Moon+ Reader's backup format, queries, record mapping, package ids, MIME types, and action
-definition all live in the community extension repository. Core knows only the generic
-operations and normalized reader result. The workflow remains inactive until the
-community add-on is installed and configured.
+The Moon+ Reader community add-on contains only its package ids, MIME types, and
+local-file action definition. Moon+ progress uses Tomeio Sync's first-party WebDAV
+compatibility endpoint. Legacy backup-database parsing is not part of the live sync path.
 
 ## Desktop
 

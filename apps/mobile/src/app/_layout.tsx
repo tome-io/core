@@ -1,25 +1,41 @@
-import '../global.css';
+import "../global.css";
 
-import { colors } from '@tomeio/design';
-import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useWindowDimensions, View } from 'react-native';
+import { colors } from "@tomeio/design";
+import { DarkTheme, Stack, ThemeProvider } from "expo-router";
+import { StatusBar } from "expo-status-bar";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useWindowDimensions, View } from "react-native";
 import {
   initialWindowMetrics,
   SafeAreaProvider,
   SafeAreaView,
-} from 'react-native-safe-area-context';
+} from "react-native-safe-area-context";
 
-import { Sidebar } from '@/components/sidebar';
-import { DownloadProvider } from '@/context/download-context';
-import { ExtensionsProvider } from '@/context/extensions-context';
-import { HomeNavigationProvider } from '@/context/home-navigation-context';
-import { LibraryProvider } from '@/context/library-context';
-import { SettingsContext } from '@/context/settings-context';
-import { loadSettings, saveSettings } from '@/lib/settings';
-import type { Settings } from '@/lib/settings';
-import { DEFAULT_SETTINGS } from '@/lib/settings';
+import { Sidebar } from "@/components/sidebar";
+import { AppErrorDialog } from "@/components/app-error-dialog";
+import { DownloadProvider } from "@/context/download-context";
+import { ExtensionsProvider } from "@/context/extensions-context";
+import { HomeNavigationProvider } from "@/context/home-navigation-context";
+import { LibraryProvider, useLibraryUiStatus } from "@/context/library-context";
+import { SettingsContext } from "@/context/settings-context";
+import {
+  DEFAULT_SETTINGS,
+  loadSettings,
+  saveSettings,
+  type Settings,
+} from "@/lib/settings";
+
+function LibraryStatusDialog() {
+  const { error, warning, dismissError, dismissWarning } = useLibraryUiStatus();
+  const message = error ?? warning;
+  return (
+    <AppErrorDialog
+      title={error ? "Library error" : "Library needs attention"}
+      message={message}
+      onClose={error ? dismissError : dismissWarning}
+    />
+  );
+}
 
 export default function RootLayout() {
   const { width } = useWindowDimensions();
@@ -48,7 +64,10 @@ export default function RootLayout() {
     return operation;
   }, []);
 
-  const value = useMemo(() => ({ settings, ready, update }), [settings, ready, update]);
+  const value = useMemo(
+    () => ({ settings, ready, update }),
+    [settings, ready, update],
+  );
 
   // Stremio is a dark-first product; we go dark-only and drop light/dark mixing
   const theme = useMemo(
@@ -61,7 +80,7 @@ export default function RootLayout() {
         primary: colors.accent,
       },
     }),
-    []
+    [],
   );
 
   return (
@@ -75,22 +94,32 @@ export default function RootLayout() {
                   <StatusBar style="light" />
                   <SafeAreaView
                     className="flex-1"
-                    edges={['top', 'right', 'bottom', 'left']}
+                    edges={["top", "right", "bottom", "left"]}
                     style={{ backgroundColor: colors.background }}
                   >
                     <View
                       className="flex-1"
-                      style={{ flexDirection: useBottomNavigation ? 'column' : 'row' }}
+                      style={{
+                        flexDirection: useBottomNavigation ? "column" : "row",
+                      }}
                     >
                       {!useBottomNavigation && <Sidebar />}
-                      <View className="flex-1" style={{ backgroundColor: colors.background }}>
-                        <Stack screenOptions={{ headerShown: false, animation: 'none' }} />
+                      <View
+                        className="flex-1"
+                        style={{ backgroundColor: colors.background }}
+                      >
+                        <Stack
+                          screenOptions={{
+                            headerShown: false,
+                            animation: "none",
+                          }}
+                        />
                       </View>
                       {useBottomNavigation && (
                         <View
                           pointerEvents="box-none"
                           style={{
-                            position: 'absolute',
+                            position: "absolute",
                             right: 0,
                             bottom: 0,
                             left: 0,
@@ -101,6 +130,7 @@ export default function RootLayout() {
                         </View>
                       )}
                     </View>
+                    <LibraryStatusDialog />
                   </SafeAreaView>
                 </HomeNavigationProvider>
               </DownloadProvider>
