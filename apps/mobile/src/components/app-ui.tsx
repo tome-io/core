@@ -75,7 +75,7 @@ export function SettingsOption({
 }) {
   return (
     <View className={compact ? 'w-full gap-3' : 'w-full min-h-14 flex-row items-center gap-8'}>
-      <View className="flex-1 flex-row items-center gap-3">
+      <View className={`${compact ? 'w-full' : 'flex-1'} flex-row items-center gap-3`}>
         {icon ? <Feather name={icon} size={21} color={colors.text} /> : null}
         <View className="flex-1 gap-1">
           <Text className="text-[15px] leading-5" style={{ color: colors.text }}>
