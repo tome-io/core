@@ -5,6 +5,7 @@ import {
   hostedAccountMetadata,
   progressRecordFromHosted,
 } from '../src/lib/hosted-sync-record';
+import { shouldEnrichReaderMetadata } from '../src/lib/reader-metadata-policy';
 
 test('creates a remote-only library record from shared document metadata', () => {
   assert.deepEqual(progressRecordFromHosted({
@@ -55,4 +56,24 @@ test('does not repeat bibliographic metadata in the private progress payload', (
     },
   });
   assert.equal('title' in (metadata.syncRecord as Record<string, unknown>), false);
+});
+
+test('forces metadata enrichment after hosted sync even during the failure retry window', () => {
+  const now = 1_780_000_000_000;
+  const book = {
+    key: 'progress:fingerprint',
+    id: 'progress:fingerprint',
+    title: 'Project Hail Mary',
+    author: 'Andy Weir',
+    cover: '',
+    description: '',
+    year: '',
+    genre: 'Other',
+    addedAt: now,
+    metadataPending: true,
+    metadataUpdatedAt: now - 1_000,
+    metadataVersion: 5,
+  };
+  assert.equal(shouldEnrichReaderMetadata(book, now), false);
+  assert.equal(shouldEnrichReaderMetadata(book, now, true), true);
 });

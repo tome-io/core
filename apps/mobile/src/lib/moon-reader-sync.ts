@@ -4,11 +4,12 @@ import {
   persistMetadataSource,
 } from './library-db';
 import { findBookMetadata, getWorkDetails } from './openlibrary';
+import {
+  READER_METADATA_VERSION,
+  shouldEnrichReaderMetadata,
+} from './reader-metadata-policy';
 
 const METADATA_BATCH_SIZE = 6;
-const METADATA_REFRESH_MS = 7 * 24 * 60 * 60 * 1000;
-const METADATA_FAILURE_RETRY_MS = 15 * 60 * 1000;
-const READER_METADATA_VERSION = 5;
 
 export interface ReaderCatalogResult {
   books: LibraryBook[];
@@ -80,20 +81,14 @@ async function enrichReaderBook(book: LibraryBook): Promise<{
 
 export async function enrichIndexedReaderCatalog(
   initialBooks: LibraryBook[],
-  onBookUpdated?: (book: LibraryBook) => void
+  onBookUpdated?: (book: LibraryBook) => void,
+  options: { force?: boolean } = {}
 ): Promise<ReaderCatalogResult> {
   let books = initialBooks;
   const warnings: string[] = [];
   const now = Date.now();
-  const staleBefore = now - METADATA_REFRESH_MS;
-  const retryFailuresBefore = now - METADATA_FAILURE_RETRY_MS;
   const candidates = books.filter(
-    (book) =>
-      !book.local &&
-      (book.metadataVersion !== READER_METADATA_VERSION ||
-        !book.metadataUpdatedAt ||
-        book.metadataUpdatedAt < staleBefore ||
-        (book.metadataPending && book.metadataUpdatedAt < retryFailuresBefore))
+    (book) => shouldEnrichReaderMetadata(book, now, options.force)
   );
 
   for (let offset = 0; offset < candidates.length; offset += METADATA_BATCH_SIZE) {

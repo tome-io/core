@@ -379,7 +379,7 @@ export default function SettingsScreen() {
   const extensions = useExtensions();
   const { settings, update } = useSettings();
   const { cloudLastSyncedAt, cloudSyncing } = useLibrarySyncStatus();
-  const { refreshLocalBooks, syncCloudProgress } = useLibraryActions();
+  const { refreshProgressSyncBooks, syncCloudProgress } = useLibraryActions();
 
   const enabledManifests = useMemo(
     () => [
@@ -569,7 +569,7 @@ export default function SettingsScreen() {
     setHostedSyncBusy(true);
     try {
       const result = await synchronizeHostedProgress();
-      await refreshLocalBooks();
+      await refreshProgressSyncBooks();
       setHostedSyncLastSyncedAt(result.syncedAt);
       setHostedSyncError(
         result.unmatchedRecords > 0

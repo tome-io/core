@@ -72,6 +72,7 @@ interface LibrarySyncStatusValue {
 
 interface LibraryActionsValue {
   refreshLocalBooks: () => Promise<void>;
+  refreshProgressSyncBooks: () => Promise<void>;
   syncCloudProgress: () => Promise<void>;
   refreshBookMetadata: (book: LibraryBook) => Promise<void>;
   markAsRead: (book: LibraryBook) => Promise<void>;
@@ -160,6 +161,7 @@ const LibrarySyncStatusContext = createContext<LibrarySyncStatusValue>({
 });
 const LibraryActionsContext = createContext<LibraryActionsValue>({
   refreshLocalBooks: async () => {},
+  refreshProgressSyncBooks: async () => {},
   syncCloudProgress: async () => {},
   refreshBookMetadata: async () => {},
   markAsRead: async () => {},
@@ -542,6 +544,17 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     extensions,
   ]);
 
+  const refreshProgressSyncBooks = useCallback(async (): Promise<void> => {
+    const activeScan = pendingScan.current?.promise;
+    if (activeScan) await activeScan;
+
+    const books = await loadProgressSyncCatalog();
+    const enriched = await enrichIndexedReaderCatalog(books, undefined, { force: true });
+    progressSyncBookBatcher.cancel();
+    setProgressSyncBooks(enriched.books);
+    if (enriched.warnings.length) setWarning(enriched.warnings.join(' '));
+  }, [progressSyncBookBatcher]);
+
   useEffect(() => {
     void refreshLocalBooks();
   }, [refreshLocalBooks]);
@@ -895,6 +908,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
   const actionsValue = useMemo<LibraryActionsValue>(
     () => ({
       refreshLocalBooks,
+      refreshProgressSyncBooks,
       syncCloudProgress,
       refreshBookMetadata,
       markAsRead,
@@ -911,6 +925,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       recordDownload,
       refreshBookMetadata,
       refreshLocalBooks,
+      refreshProgressSyncBooks,
       removeLibraryBook,
       syncCloudProgress,
       toggleReadingList,
