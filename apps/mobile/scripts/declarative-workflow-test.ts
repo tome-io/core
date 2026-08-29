@@ -102,7 +102,7 @@ test('rejects workflow requests to undeclared origins', async () => {
   });
   const extension = await loader.load(manifest);
 
-  await assert.rejects(() => extension.search?.({ query: 'dune' }), /undeclared origin/);
+  await assert.rejects(() => extension.search!({ query: 'dune' }), /undeclared origin/);
 });
 
 test('surfaces a declarative provider error message without exposing request details', async () => {
@@ -119,7 +119,7 @@ test('surfaces a declarative provider error message without exposing request det
   const extension = await loader.load(manifest, { token: 'scoped-secret' });
 
   await assert.rejects(
-    () => extension.search?.({ query: 'dune' }),
+    () => extension.search!({ query: 'dune' }),
     /HTTP 403: The configured API key cannot use this service\./
   );
 });
@@ -264,6 +264,79 @@ test('maps a reviewed device workflow to normalized reader books', async () => {
   assert.deepEqual(operations, ['directory.scan', 'file.read']);
   assert.equal(result?.books?.[0]?.title, 'Dune');
   assert.equal(result?.progress[0]?.progress, 42);
+});
+
+test('runs a host-selected backup through a reviewed library import workflow', async () => {
+  const importManifest: ExtensionManifest = {
+    ...deviceManifest,
+    resources: [{ name: 'libraryImport' }],
+    config: undefined,
+    libraryImports: [
+      {
+        id: 'backup',
+        title: 'Import reader backup',
+        fileExtensions: ['reader-backup'],
+        platforms: ['android'],
+      },
+    ],
+    permissions: {
+      hosts: ['https://raw.githubusercontent.com'],
+      device: ['file.read'],
+    },
+  };
+  const importDefinition: ExtensionDeviceWorkflowDefinition = {
+    deviceWorkflowVersion: 1,
+    resources: {
+      libraryImport: {
+        steps: [
+          {
+            id: 'backup',
+            operation: {
+              kind: 'file.read',
+              file: { $op: 'path', path: 'input.sourceUri' },
+              response: 'json',
+            },
+          },
+        ],
+        output: { books: { $op: 'path', path: 'steps.backup.json.books' } },
+      },
+    },
+  };
+  const loader = new ExtensionLoader({
+    bundled: new Map(),
+    fetchFn: async () => Response.json(importDefinition),
+    device: {
+      async execute(operation, context) {
+        if (operation.kind !== 'file.read') {
+          throw new Error(`Unexpected operation ${operation.kind}`);
+        }
+        assert.equal(context.evaluate(operation.file), 'content://backup/reader.reader-backup');
+        return {
+          json: {
+            books: [
+              {
+                sourceId: 'book-1',
+                title: 'Dune',
+                authors: ['Frank Herbert'],
+                identifiers: {},
+                progress: 21,
+              },
+            ],
+          },
+        };
+      },
+    },
+  });
+  const extension = await loader.load(importManifest);
+  const result = await extension.libraryImport?.({
+    importId: 'backup',
+    sourceUri: 'content://backup/reader.reader-backup',
+    filename: 'reader.reader-backup',
+    platform: 'android',
+  });
+
+  assert.equal(result?.books?.[0]?.title, 'Dune');
+  assert.equal(result?.progress[0]?.progress, 21);
 });
 
 test('rejects device operations without a declared capability', () => {

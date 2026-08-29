@@ -199,7 +199,7 @@ function validateOperation(
 function validateResource(
   input: unknown,
   manifest: ExtensionManifest,
-  name: 'reader' | 'libraryAction'
+  name: 'reader' | 'libraryAction' | 'libraryImport'
 ): ExtensionDeviceWorkflowResource {
   const resource = record(input);
   if (!resource || !Array.isArray(resource.steps) || !resource.steps.length) {
@@ -250,7 +250,11 @@ export function parseDeviceWorkflowDefinition(
   if (!resources) throw new Error('Device workflow must declare resources.');
   const parsed: ExtensionDeviceWorkflowDefinition['resources'] = {};
   for (const resource of manifest.resources) {
-    if (resource.name !== 'reader' && resource.name !== 'libraryAction') {
+    if (
+      resource.name !== 'reader' &&
+      resource.name !== 'libraryAction' &&
+      resource.name !== 'libraryImport'
+    ) {
       throw new Error(`Device workflows cannot implement ${resource.name}.`);
     }
     const workflow = resources[resource.name];
@@ -449,17 +453,20 @@ export function createDeviceWorkflowExtension(
   host: ExtensionDeviceHost,
   configuration: Record<string, ExtensionConfigValue>
 ): BookExtension {
-  const run = (resource: 'reader' | 'libraryAction', input: unknown) => {
+  const run = (resource: 'reader' | 'libraryAction' | 'libraryImport', input: unknown) => {
     const workflow = definition.resources[resource];
     if (!workflow) throw new Error(`Device workflow does not implement ${resource}.`);
     return executeResource(workflow, input, configuration, manifest, host);
   };
-  const has = (resource: 'reader' | 'libraryAction') =>
+  const has = (resource: 'reader' | 'libraryAction' | 'libraryImport') =>
     manifest.resources.some((candidate) => candidate.name === resource);
   return {
     manifest,
     ...(has('reader')
       ? { readerSync: (request) => run('reader', request).then(parseReaderResult) }
+      : {}),
+    ...(has('libraryImport')
+      ? { libraryImport: (request) => run('libraryImport', request).then(parseReaderResult) }
       : {}),
     ...(has('libraryAction')
       ? {

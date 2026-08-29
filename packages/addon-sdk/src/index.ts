@@ -2,6 +2,7 @@ import {
   parseExtensionManifest,
   type BookExtension,
   type ExtensionLibraryActionRequest,
+  type ExtensionLibraryImportRequest,
   type ExtensionManifest,
   type ExtensionInvocationContext,
   type ExtensionQuery,
@@ -20,6 +21,7 @@ export type AddonManifest = ExtensionManifest;
 export type AddonQuery = ExtensionQuery;
 export type AddonResolveQuery = ExtensionResolveQuery;
 export type AddonLibraryActionRequest = ExtensionLibraryActionRequest;
+export type AddonLibraryImportRequest = ExtensionLibraryImportRequest;
 
 export interface AddonRequestContext extends ExtensionInvocationContext {
   request: Request;
@@ -95,6 +97,7 @@ export function defineAddon(
     'acquisition',
     'readerSync',
     'libraryAction',
+    'libraryImport',
   ] as const) {
     if (!handlers[resource]) continue;
     const manifestResource = resource === 'readerSync' ? 'reader' : resource;

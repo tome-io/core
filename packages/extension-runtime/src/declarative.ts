@@ -98,6 +98,7 @@ const OPERATIONS = new Set([
   'distinct',
   'compact',
   'get',
+  'lookup',
   'trim',
   'basename',
   'fileStem',
@@ -249,12 +250,14 @@ function evaluate(
   }
   if (value.$op === 'split') {
     const result = nested(value.value);
-    const parts = String(result ?? '').split(value.separator ?? '');
+    const separator = typeof value.separator === 'string' ? value.separator : '';
+    const parts = String(result ?? '').split(separator);
     return typeof value.index === 'number' ? parts.at(value.index) : parts;
   }
   if (value.$op === 'join') {
     const result = nested(value.value);
-    return Array.isArray(result) ? result.join(value.separator ?? '') : '';
+    const separator = typeof value.separator === 'string' ? value.separator : '';
+    return Array.isArray(result) ? result.join(separator) : '';
   }
   if (value.$op === 'encode') {
     return encodeURIComponent(String(nested(value.value) ?? ''));
@@ -317,8 +320,9 @@ function evaluate(
     }
     const alias = typeof value.as === 'string' && value.as ? value.as : 'item';
     if (!safeKey(alias)) throw new Error(`Declarative workflow alias "${alias}" is unsafe.`);
+    const mapper = Array.isArray(value.values) ? value.values[0] : undefined;
     return result.map((item, index) =>
-      evaluate(value.values?.[0], { ...context, [alias]: item, index }, state, depth + 1)
+      evaluate(mapper, { ...context, [alias]: item, index }, state, depth + 1)
     );
   }
   if (value.$op === 'filter' || value.$op === 'find') {
@@ -330,7 +334,7 @@ function evaluate(
     }
     const alias = typeof value.as === 'string' && value.as ? value.as : 'item';
     if (!safeKey(alias)) throw new Error(`Declarative workflow alias "${alias}" is unsafe.`);
-    const predicate = value.values?.[0];
+    const predicate = Array.isArray(value.values) ? value.values[0] : undefined;
     if (value.$op === 'find') {
       return result.find((item, index) =>
         Boolean(evaluate(predicate, { ...context, [alias]: item, index }, state, depth + 1))
@@ -380,6 +384,13 @@ function evaluate(
   if (value.$op === 'get') {
     if (typeof value.path !== 'string') throw new Error('Get expressions require a path.');
     const result = nestedPathValue(nested(value.value), value.path);
+    return result === undefined && 'default' in value ? nested(value.default) : result;
+  }
+  if (value.$op === 'lookup') {
+    const source = record(nested(value.value));
+    const key = nested(value.by);
+    if (!source || typeof key !== 'string' || !safeKey(key)) return undefined;
+    const result = source[key];
     return result === undefined && 'default' in value ? nested(value.default) : result;
   }
   if (value.$op === 'trim') {

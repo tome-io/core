@@ -27,9 +27,12 @@ app does not download or execute third-party JavaScript. Reviewed native integra
 publish JSON device workflows interpreted through fixed directory, file, archive,
 SQLite, preferences, and Android-intent primitives.
 
-The Moon+ Reader community add-on contains only its package ids, MIME types, and
-local-file action definition. Moon+ progress uses Tomeio Sync's first-party WebDAV
-compatibility endpoint. Legacy backup-database parsing is not part of the live sync path.
+The Moon+ Reader community add-on contains its backup mapping, package ids, MIME types,
+and local-file action definition. Its backup importer uses the generic reviewed
+`libraryImport` capability and appears only while the add-on is installed and enabled.
+Moon+ progress uses Tomeio Sync's first-party WebDAV compatibility endpoint. Tomeio Sync
+owns cross-device logical library, reading-list, and progress state. Drive, iCloud,
+Dropbox, and folders remain file-storage locations only.
 
 ## Desktop
 

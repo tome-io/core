@@ -38,8 +38,14 @@ import {
   usePageBottomPadding,
   usePageGutter,
 } from "@/components/app-ui";
-import { useExtensions } from "@/context/extensions-context";
-import { useLibraryActions } from "@/context/library-context";
+import {
+  useExtensions,
+  type AvailableLibraryImport,
+} from "@/context/extensions-context";
+import {
+  useLibraryActions,
+  useLibraryCatalog,
+} from "@/context/library-context";
 import { useSettings } from "@/context/settings-context";
 import {
   folderLocationLabel,
@@ -66,6 +72,14 @@ import {
   verifyHostedSyncRecoveryCode,
   type HostedSyncAccount,
 } from "@/lib/hosted-sync";
+import {
+  createLibraryImportPreview,
+  importLibraryBackup,
+  pickLibraryImportFile,
+  type LibraryImportPreview,
+} from "@/lib/library-import";
+import { bookIdentity } from "@/lib/book-metadata";
+import type { LibraryBook } from "@/lib/library";
 import type { FolderLocationSetting } from "@/lib/settings";
 import { forgetNativeDirectory } from "../../../modules/expo-progress-folder/src";
 
@@ -77,7 +91,7 @@ const SECTIONS: { id: SettingsSectionId; label: string }[] = [
     : []),
   { id: "providers", label: "Providers" },
   { id: "library", label: "Library" },
-  { id: "sync", label: "Progress sync" },
+  { id: "sync", label: "Sync" },
 ];
 
 const APP_VERSION =
@@ -709,6 +723,88 @@ function HostedSyncDialog({
   );
 }
 
+function LibraryImportDialog({
+  preview,
+  books,
+  busy,
+  onImport,
+  onClose,
+}: {
+  preview: LibraryImportPreview | null;
+  books: LibraryBook[];
+  busy: boolean;
+  onImport: () => void;
+  onClose: () => void;
+}) {
+  const localAliases = useMemo(() => {
+    const aliases = new Set<string>();
+    for (const book of books) {
+      aliases.add(bookIdentity(book.title, book.author));
+      if (book.local?.filename) {
+        aliases.add(`filename:${book.local.filename.toLowerCase()}`);
+      }
+    }
+    return aliases;
+  }, [books]);
+  const matched =
+    preview?.libraryRecords.filter((record) =>
+      [record.identity, ...record.aliases].some((alias) =>
+        localAliases.has(alias),
+      ),
+    ).length ?? 0;
+
+  return (
+    <AppDialog
+      visible={preview != null}
+      title={preview?.importTitle ?? "Import reader backup"}
+      onClose={onClose}
+    >
+      {preview ? (
+        <View className="gap-5">
+          <Text className="text-sm leading-6" style={{ color: colors.textMuted }}>
+            {preview.name} contains {preview.libraryRecords.length} book
+            {preview.libraryRecords.length === 1 ? "" : "s"} and {preview.records.length}{" "}
+            progress record{preview.records.length === 1 ? "" : "s"}.
+          </Text>
+          <View
+            className="gap-2 rounded-2xl border p-4"
+            style={{ borderColor: colors.border, backgroundColor: colors.surfaceRaised }}
+          >
+            <Text className="text-sm font-semibold" style={{ color: colors.text }}>
+              {matched} matched on this device
+            </Text>
+            <Text className="text-xs leading-5" style={{ color: colors.textMuted }}>
+              {preview.libraryRecords.length - matched} unmatched book
+              {preview.libraryRecords.length - matched === 1 ? "" : "s"} will appear as not local.
+              The backup and book files stay on this device; normalized library metadata and progress are synced.
+            </Text>
+            {preview.warnings.length ? (
+              <Text className="text-xs leading-5" style={{ color: colors.textMuted }}>
+                {preview.warnings.join("\n")}
+              </Text>
+            ) : null}
+          </View>
+          <View className="gap-3">
+            <PillButton
+              label={busy ? "Importing…" : "Import and sync"}
+              icon={busy ? undefined : "upload-cloud"}
+              variant="accent"
+              disabled={busy}
+              onPress={onImport}
+            />
+            <PillButton
+              label="Cancel"
+              variant="overlay"
+              disabled={busy}
+              onPress={onClose}
+            />
+          </View>
+        </View>
+      ) : null}
+    </AppDialog>
+  );
+}
+
 export default function SettingsScreen() {
   const { width } = useWindowDimensions();
   const gutter = usePageGutter();
@@ -739,9 +835,16 @@ export default function SettingsScreen() {
   const [hostedSyncLastSyncedAt, setHostedSyncLastSyncedAt] = useState<
     number | null
   >(null);
+  const [libraryImport, setLibraryImport] =
+    useState<LibraryImportPreview | null>(null);
+  const [libraryImportBusy, setLibraryImportBusy] = useState(false);
+  const [libraryImportSummaries, setLibraryImportSummaries] = useState<
+    Record<string, string>
+  >({});
   const extensions = useExtensions();
   const { settings, update } = useSettings();
-  const { refreshProgressSyncBooks } = useLibraryActions();
+  const { downloaded } = useLibraryCatalog();
+  const { refreshLocalBooks } = useLibraryActions();
 
   const showError = useCallback((title: string, cause: unknown) => {
     setSettingsError({
@@ -779,6 +882,10 @@ export default function SettingsScreen() {
         supportsExtensionProviderRole(manifest, "acquisition"),
       ),
     [enabledManifests],
+  );
+  const libraryImports = useMemo(
+    () => extensions.libraryImports(),
+    [extensions],
   );
   const selectedSearch = searchProviders.find(
     (manifest) => manifest.id === extensions.searchExtensionId,
@@ -893,7 +1000,7 @@ export default function SettingsScreen() {
     setHostedSyncBusy(true);
     try {
       const result = await synchronizeHostedProgress();
-      await refreshProgressSyncBooks();
+      await refreshLocalBooks();
       setHostedSyncLastSyncedAt(result.syncedAt);
       if (result.unmatchedRecords > 0) {
         setSettingsError({
@@ -918,6 +1025,53 @@ export default function SettingsScreen() {
       showError("Could not sign out", cause);
     } finally {
       setHostedSyncBusy(false);
+    }
+  };
+
+  const chooseLibraryBackup = async (available: AvailableLibraryImport) => {
+    setLibraryImportBusy(true);
+    try {
+      const file = await pickLibraryImportFile(available);
+      if (!file) return;
+      const result = await extensions.runLibraryImport(
+        available.extensionId,
+        available.id,
+        file.uri,
+        file.name,
+      );
+      setLibraryImport(
+        createLibraryImportPreview(
+          available.extensionId,
+          available.extensionName,
+          available.id,
+          available.title,
+          file,
+          result,
+        ),
+      );
+    } catch (cause) {
+      showError("Could not read reader backup", cause);
+    } finally {
+      setLibraryImportBusy(false);
+    }
+  };
+
+  const confirmLibraryImport = async () => {
+    if (!libraryImport) return;
+    setLibraryImportBusy(true);
+    try {
+      const result = await importLibraryBackup(libraryImport);
+      await refreshLocalBooks();
+      setLibraryImportSummaries((current) => ({
+        ...current,
+        [`${libraryImport.extensionId}:${libraryImport.importId}`]:
+          `${result.books} book${result.books === 1 ? "" : "s"} and ${result.progressRecords} progress record${result.progressRecords === 1 ? "" : "s"} imported from ${libraryImport.name}.`,
+      }));
+      setLibraryImport(null);
+    } catch (cause) {
+      showError("Reader backup import failed", cause);
+    } finally {
+      setLibraryImportBusy(false);
     }
   };
 
@@ -1033,7 +1187,7 @@ export default function SettingsScreen() {
         </SettingsSection>
 
         <SettingsSection
-          title="Progress sync"
+          title="Sync"
           compact={compactOptions}
           onLayout={(event) => {
             sectionOffsets.current.sync = event.nativeEvent.layout.y;
@@ -1074,7 +1228,7 @@ export default function SettingsScreen() {
               detail={
                 hostedSyncLastSyncedAt
                   ? `Last synced ${new Date(hostedSyncLastSyncedAt).toLocaleString()}`
-                  : "Sync progress with your Tomeio, KOReader, and Moon+ Reader devices."
+                  : "Sync your library and reading list across Tomeio devices, with shared progress from KOReader and Moon+ Reader."
               }
             >
               <PillButton
@@ -1086,6 +1240,26 @@ export default function SettingsScreen() {
               />
             </SettingsOption>
           ) : null}
+          {libraryImports.map((available) => (
+            <SettingsOption
+              key={`${available.extensionId}:${available.id}`}
+              compact={compactOptions}
+              label={available.title}
+              detail={
+                libraryImportSummaries[`${available.extensionId}:${available.id}`] ??
+                available.description ??
+                `Import books and progress using ${available.extensionName}.`
+              }
+            >
+              <PillButton
+                label={libraryImportBusy ? "Reading…" : "Choose backup"}
+                icon={libraryImportBusy ? undefined : "file-plus"}
+                variant="overlay"
+                disabled={libraryImportBusy || Platform.OS === "web"}
+                onPress={() => void chooseLibraryBackup(available)}
+              />
+            </SettingsOption>
+          ))}
         </SettingsSection>
       </ScrollView>
 
@@ -1124,12 +1298,22 @@ export default function SettingsScreen() {
           onAuthenticated={(account) => {
             setHostedSyncAccount(account);
             setHostedSyncDialog(false);
+            void syncHostedNow();
           }}
           onClose={() => {
             if (!hostedSyncBusy) setHostedSyncDialog(false);
           }}
         />
       ) : null}
+      <LibraryImportDialog
+        preview={libraryImport}
+        books={downloaded}
+        busy={libraryImportBusy}
+        onImport={() => void confirmLibraryImport()}
+        onClose={() => {
+          if (!libraryImportBusy) setLibraryImport(null);
+        }}
+      />
       <AppErrorDialog
         title={settingsError?.title ?? "Something went wrong"}
         message={settingsError?.message ?? null}

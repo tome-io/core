@@ -16,7 +16,8 @@ Tomeio itself.
 - `resolve`: provider-neutral handoff from a discovered book to provider candidates;
 - `acquisition`: downloadable or externally openable editions for a provider-owned id;
 - `reader`: imported reading progress from a reader integration;
-- `libraryAction`: host-rendered actions on library and detail screens.
+- `libraryAction`: host-rendered actions on library and detail screens;
+- `libraryImport`: host-rendered backup imports owned by an installed reader integration.
 
 `resolve` receives a book reference containing title, authors, year, and all known
 identifiers. Download providers should implement it instead of making Tomeio guess a
@@ -38,6 +39,15 @@ Reviewed device workflows may additionally receive the selected local file and i
 registered device capability. This is how the Moon+ Reader add-on contributes “Open in Moon+
 Reader”, while the Google Books add-on can hand EPUB/PDF files to Google Play Books and fall back
 to an HTTPS Google Books page when no compatible local file exists.
+
+## Library imports
+
+Reviewed local integrations can declare `libraryImports` with accepted file extensions and
+platforms. Tomeio shows those actions in Settings only while the add-on is installed and
+enabled, owns the document picker, and passes the selected local URI only to that add-on's
+`host` or `device` workflow. The workflow maps its format into neutral
+`ExtensionReaderBook` records; Tomeio owns preview, persistence, matching, and sync. Raw
+backup and book files are not uploaded.
 
 ## Transports and trust
 
@@ -64,9 +74,9 @@ Gutenberg. They implement the same handlers as external add-ons.
 
 Community add-ons are reviewed entries shown under the Community filter. Installing an
 entry creates a normal local installation and may require configuration before it can be
-enabled. Moon+ Reader is the first community entry. Its manifest and local-file action
-workflow live in `tome-io/extensions`; live progress synchronization is provided by
-Tomeio Sync rather than by an extension or Moon+ backup importer.
+enabled. Moon+ Reader is the first community entry. Its manifest, local-file action, and
+`.mrpro` import workflow live in `tome-io/extensions`; live progress synchronization is
+provided by Tomeio Sync rather than by the extension.
 
 Third-party add-ons are installed from a trusted HTTPS GitHub repository or direct
 manifest URL and are not listed in community discovery. A repository resolves to
@@ -77,7 +87,7 @@ provider.
 Device workflows are community-only because local storage and Android package access
 need capability review. Adding a reader integration consists of:
 
-1. declaring `reader` and, optionally, `libraryAction` resources;
+1. declaring `reader`, `libraryImport`, and/or `libraryAction` resources;
 2. defining required directory settings, device capabilities, and Android packages;
 3. publishing a `device-workflow.json` built with `defineDeviceWorkflow`;
 4. mapping the reader's data into normalized books and progress;
