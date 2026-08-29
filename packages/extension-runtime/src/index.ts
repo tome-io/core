@@ -9,6 +9,7 @@ import {
   type ExtensionManifest,
   type ExtensionConfigValue,
   type ExtensionLibraryActionRequest,
+  type ExtensionLibraryImportRequest,
   type ExtensionResourceName,
   type ExtensionResolveQuery,
   type ExtensionReaderSyncRequest,
@@ -765,6 +766,12 @@ export class ExtensionLoader {
           ? {
               libraryAction: (request: ExtensionLibraryActionRequest) =>
                 extension.libraryAction!(request, context),
+            }
+          : {}),
+        ...(extension.libraryImport
+          ? {
+              libraryImport: (request: ExtensionLibraryImportRequest) =>
+                extension.libraryImport!(request, context),
             }
           : {}),
         ...(extension.readerSync

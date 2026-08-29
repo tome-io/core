@@ -1,6 +1,7 @@
-# Hosted progress sync
+# Hosted sync
 
-Hosted sync is optional and is Tomeio's only cross-device reading-progress mechanism. The
+Hosted sync is optional and is Tomeio's cross-device library, reading-list, and
+reading-progress mechanism. The
 service implementation lives in `tome-io/sync`; this repository owns the app client,
 local merge, secure session storage, and KOReader-compatible book hashing.
 
@@ -13,7 +14,7 @@ local merge, secure session storage, and KOReader-compatible book hashing.
 - Web does not offer account sync because this client does not downgrade secrets to
   unencrypted browser storage.
 - Drive, iCloud, and user-selected folders remain book-file storage and import locations.
-  They are not parallel progress-sync transports.
+  They are not parallel library or progress-sync transports.
 - Signed-in devices synchronize during library refresh, when the app returns to the
   foreground, and after progress-changing library actions. Manual **Sync now** remains
   available for explicit control and troubleshooting.
@@ -29,10 +30,10 @@ book identity as an alias. A device without the local file can therefore resolve
 same account-scoped book after another Tomeio device registers the file digest.
 
 The service stores no book file bytes. It deduplicates shared title, author, and format
-metadata in a global row keyed by the fingerprint, while account membership and reading
-progress remain private. When metadata arrives for a synced fingerprint, Tomeio can add
-an unavailable-local library entry. The user must still obtain the file before opening
-the book on that device.
+metadata in a global row keyed by the fingerprint. Per-account library membership,
+reading-list membership, and reading progress remain private. Every Tomeio library item
+is synchronized, including unread books with no progress. A device without the file gets
+an unavailable-local entry and must still obtain the file before opening it.
 
 The current client maps an incoming KOReader update by percentage. Exact CREngine
 XPointer-to-EPUB-locator conversion remains a later interoperability stage.
@@ -65,3 +66,10 @@ Moon+ filenames are private, account-scoped aliases. Tomeio sends the local file
 alongside its content fingerprint so identical filenames link automatically. Exact
 title/author matches may link renamed files; ambiguous matches remain unlinked rather
 than creating a false merge. ISBNs are supporting publication metadata, not file keys.
+
+Existing Moon+ users who install and enable the Moon+ Reader add-on can select a local
+`.mrpro` backup from **Settings → Sync → Import Moon+ Reader backup**. The reviewed add-on
+workflow reads the backup locally, and Tomeio previews matched
+and unmatched books, imports the complete backup catalog plus any normalized progress
+and reading statistics, and then uses the same hosted-sync reconciliation path. The
+backup and book files are never uploaded.

@@ -51,6 +51,7 @@ Version 1 exposes fixed, bounded primitives:
 - read a ZIP entry;
 - run allow-listed read-only `SELECT` statements against discovered SQLite data;
 - parse Android SharedPreferences XML;
+- receive a backup file explicitly selected by the user;
 - open a Tomeio-supplied local book URI in a declared Android package.
 
 Every primitive requires a manifest capability. File reads are limited to URIs supplied
@@ -73,7 +74,8 @@ reviewed manifest URL, repository, minimum client version, review timestamp, and
 device capabilities. The client fetches and validates its manifests for community
 discovery; Moon+ Reader is not statically registered in the app.
 
-The Moon+ add-on lives in `tome-io/extensions/community/moon-reader` and contributes only
-the local-file **Open in Moon+ Reader** action. Live Moon+ progress is exchanged by the
-first-party hosted sync service through its WebDAV compatibility endpoint; the add-on
-does not import Moon+ backup databases.
+The Moon+ add-on lives in `tome-io/extensions/community/moon-reader` and contributes the
+local-file **Open in Moon+ Reader** action plus a reviewed `.mrpro` import workflow. The
+import action appears in Settings only while the add-on is installed and enabled. Live
+Moon+ progress is exchanged by the first-party hosted sync service through its WebDAV
+compatibility endpoint.

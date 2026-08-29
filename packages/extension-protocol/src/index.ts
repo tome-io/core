@@ -9,7 +9,8 @@ export type ExtensionResourceName =
   | 'resolve'
   | 'acquisition'
   | 'reader'
-  | 'libraryAction';
+  | 'libraryAction'
+  | 'libraryImport';
 
 export interface ExtensionResource {
   name: ExtensionResourceName;
@@ -92,6 +93,17 @@ export interface ExtensionLibraryAction {
   };
 }
 
+/** A host-rendered file import supplied only to a reviewed local integration. */
+export interface ExtensionLibraryImport {
+  id: string;
+  title: string;
+  description?: string;
+  icon?: string;
+  fileExtensions: string[];
+  mimeTypes?: string[];
+  platforms?: ExtensionPlatform[];
+}
+
 export type ExtensionTransport =
   | {
       kind: 'bundled';
@@ -144,6 +156,7 @@ export interface ExtensionManifest {
   behaviorHints?: ExtensionBehaviorHints;
   attribution?: ExtensionAttribution;
   libraryActions?: ExtensionLibraryAction[];
+  libraryImports?: ExtensionLibraryImport[];
   transport: ExtensionTransport;
   permissions?: {
     hosts?: string[];
@@ -215,6 +228,13 @@ export type ExtensionLibraryActionResult =
   | { kind: 'handled' }
   | { kind: 'openUrl'; url: string }
   | { kind: 'openLocalFile'; packageName: string };
+
+export interface ExtensionLibraryImportRequest {
+  importId: string;
+  sourceUri: string;
+  filename: string;
+  platform: ExtensionPlatform;
+}
 
 export interface ExtensionReaderSyncRequest {
   /** Present only for reviewed host/device integrations. Remote add-ons never receive local URIs. */
@@ -293,6 +313,7 @@ export type ExtensionWorkflowExpression =
         | 'distinct'
         | 'compact'
         | 'get'
+        | 'lookup'
         | 'trim'
         | 'basename'
         | 'fileStem'
@@ -373,7 +394,7 @@ export interface ExtensionDeviceWorkflowResource {
 export interface ExtensionDeviceWorkflowDefinition {
   deviceWorkflowVersion: 1;
   resources: Partial<
-    Record<'reader' | 'libraryAction', ExtensionDeviceWorkflowResource>
+    Record<'reader' | 'libraryAction' | 'libraryImport', ExtensionDeviceWorkflowResource>
   >;
 }
 
@@ -428,6 +449,10 @@ export interface BookExtension {
     request: ExtensionLibraryActionRequest,
     context?: ExtensionInvocationContext
   ): Promise<ExtensionLibraryActionResult>;
+  libraryImport?(
+    request: ExtensionLibraryImportRequest,
+    context?: ExtensionInvocationContext
+  ): Promise<ExtensionReaderSyncResult>;
   readerSync?(
     request: ExtensionReaderSyncRequest,
     context?: ExtensionInvocationContext
@@ -485,6 +510,7 @@ const RESOURCE_NAMES = new Set<ExtensionResourceName>([
   'acquisition',
   'reader',
   'libraryAction',
+  'libraryImport',
 ]);
 
 const CONFIG_FIELD_TYPES = new Set<ExtensionConfigField['type']>([
@@ -626,11 +652,14 @@ export function parseExtensionManifest(input: unknown): ExtensionManifest {
   if (
     parsedTransport.kind === 'device' &&
     resources.some(
-      (resource) => resource.name !== 'reader' && resource.name !== 'libraryAction'
+      (resource) =>
+        resource.name !== 'reader' &&
+        resource.name !== 'libraryAction' &&
+        resource.name !== 'libraryImport'
     )
   ) {
     throw new InvalidExtensionManifestError(
-      'Device integrations may declare only reader and libraryAction resources.'
+      'Device integrations may declare only reader, libraryAction, and libraryImport resources.'
     );
   }
 
@@ -881,6 +910,95 @@ export function parseExtensionManifest(input: unknown): ExtensionManifest {
     );
   }
 
+  const libraryImports = Array.isArray(value.libraryImports)
+    ? value.libraryImports.map((candidate, index): ExtensionLibraryImport => {
+        const libraryImport = record(candidate);
+        if (!libraryImport) {
+          throw new InvalidExtensionManifestError(`Invalid library import at index ${index}.`);
+        }
+        const importId = requiredString(libraryImport, 'id');
+        const rawExtensions = libraryImport.fileExtensions;
+        if (
+          !Array.isArray(rawExtensions) ||
+          !rawExtensions.length ||
+          rawExtensions.some(
+            (extension) =>
+              typeof extension !== 'string' || !/^[a-z0-9][a-z0-9._+-]*$/i.test(extension)
+          )
+        ) {
+          throw new InvalidExtensionManifestError(
+            `Library import "${importId}" must declare valid fileExtensions.`
+          );
+        }
+        const rawMimeTypes = libraryImport.mimeTypes;
+        if (
+          rawMimeTypes != null &&
+          (!Array.isArray(rawMimeTypes) ||
+            rawMimeTypes.some(
+              (mimeType) =>
+                typeof mimeType !== 'string' || !/^[^/\s]+\/[^/\s]+$/.test(mimeType)
+            ))
+        ) {
+          throw new InvalidExtensionManifestError(
+            `Library import "${importId}" declares an invalid MIME type.`
+          );
+        }
+        const rawPlatforms = libraryImport.platforms;
+        const platforms = Array.isArray(rawPlatforms)
+          ? rawPlatforms.filter(
+              (platform): platform is ExtensionPlatform =>
+                platform === 'android' ||
+                platform === 'ios' ||
+                platform === 'web' ||
+                platform === 'desktop'
+            )
+          : undefined;
+        if (
+          rawPlatforms != null &&
+          (!Array.isArray(rawPlatforms) || platforms?.length !== rawPlatforms.length)
+        ) {
+          throw new InvalidExtensionManifestError(
+            `Library import "${importId}" declares an unsupported platform.`
+          );
+        }
+        return {
+          id: importId,
+          title: requiredString(libraryImport, 'title'),
+          ...(typeof libraryImport.description === 'string'
+            ? { description: libraryImport.description }
+            : {}),
+          ...(typeof libraryImport.icon === 'string' ? { icon: libraryImport.icon } : {}),
+          fileExtensions: rawExtensions.map((extension) => extension.toLowerCase()),
+          ...(Array.isArray(rawMimeTypes) ? { mimeTypes: [...rawMimeTypes] } : {}),
+          ...(platforms ? { platforms } : {}),
+        };
+      })
+    : undefined;
+  if (
+    libraryImports &&
+    new Set(libraryImports.map((libraryImport) => libraryImport.id)).size !==
+      libraryImports.length
+  ) {
+    throw new InvalidExtensionManifestError('Library import ids must be unique.');
+  }
+  if (
+    libraryImports?.length &&
+    !resources.some((resource) => resource.name === 'libraryImport')
+  ) {
+    throw new InvalidExtensionManifestError(
+      'Manifests with libraryImports must declare the libraryImport resource.'
+    );
+  }
+  if (
+    (libraryImports?.length || resources.some((resource) => resource.name === 'libraryImport')) &&
+    parsedTransport.kind !== 'host' &&
+    parsedTransport.kind !== 'device'
+  ) {
+    throw new InvalidExtensionManifestError(
+      'Library imports are available only to reviewed local integrations.'
+    );
+  }
+
   const permissions = record(value.permissions);
   const hosts = permissions?.hosts;
   if (hosts != null && !Array.isArray(hosts)) {
@@ -998,6 +1116,7 @@ export function parseExtensionManifest(input: unknown): ExtensionManifest {
   if (behaviorHints) manifest.behaviorHints = behaviorHints;
   if (attribution) manifest.attribution = attribution;
   if (libraryActions) manifest.libraryActions = libraryActions;
+  if (libraryImports) manifest.libraryImports = libraryImports;
   if (parsedHosts || parsedDevice || parsedAndroidPackages) {
     manifest.permissions = {
       ...(parsedHosts ? { hosts: parsedHosts } : {}),

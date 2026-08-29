@@ -200,7 +200,10 @@ function decodeXml(value: string): string {
     .replace(/&gt;/gi, '>');
 }
 
-function parseAndroidPreferences(text: string): { entries: { key: string; value: unknown }[] } {
+function parseAndroidPreferences(text: string): {
+  entries: { key: string; value: unknown }[];
+  byBasename: Record<string, unknown>;
+} {
   if (text.length > MAX_TEXT_BYTES) throw new Error('Android preferences XML exceeds 10 MB.');
   const entries: { key: string; value: unknown }[] = [];
   for (const match of text.matchAll(/<string\s+name="([^"]+)">([\s\S]*?)<\/string>/gi)) {
@@ -216,7 +219,13 @@ function parseAndroidPreferences(text: string): { entries: { key: string; value:
       value: type === 'boolean' ? raw.toLowerCase() === 'true' : Number(raw),
     });
   }
-  return { entries };
+  const byBasename = Object.fromEntries(
+    entries.map((entry) => [
+      entry.key.replaceAll('\\', '/').split('/').filter(Boolean).at(-1)?.toLowerCase() ?? '',
+      entry.value,
+    ]).filter(([key]) => !!key)
+  );
+  return { entries, byBasename };
 }
 
 function assertReadOnlyQuery(query: string): void {
@@ -299,23 +308,24 @@ export function createMobileDeviceExtensionHost(): ExtensionDeviceHost {
         const zip = await archive(uri);
         const names = Object.keys(zip.files);
         let entryPath: string | undefined;
-        if ('suffix' in operation.entry) {
+        const selector = operation.entry;
+        if ('suffix' in selector) {
           entryPath = names.find((name) =>
-            name.toLowerCase().endsWith(operation.entry.suffix.toLowerCase())
+            name.toLowerCase().endsWith(selector.suffix.toLowerCase())
           );
         } else {
-          const indexed = context.evaluate(operation.entry.indexed) as
+          const indexed = context.evaluate(selector.indexed) as
             | { path?: unknown; text?: unknown }
             | null;
           const indexPath = requiredString(indexed?.path, 'Archive index path');
           const indexText = requiredString(indexed?.text, 'Archive index text');
           const entries = indexText.split(/\r?\n/).filter(Boolean);
           const index = entries.findIndex((name) =>
-            name.toLowerCase().endsWith(operation.entry.targetSuffix.toLowerCase())
+            name.toLowerCase().endsWith(selector.targetSuffix.toLowerCase())
           );
           if (index >= 0) {
             const parent = indexPath.split('/').slice(0, -1).join('/');
-            entryPath = `${parent ? `${parent}/` : ''}${index + 1}${operation.entry.entryExtension ?? '.tag'}`;
+            entryPath = `${parent ? `${parent}/` : ''}${index + 1}${selector.entryExtension ?? '.tag'}`;
           }
         }
         if (!entryPath) throw new Error('The requested archive entry was not found.');

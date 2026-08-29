@@ -61,6 +61,7 @@ const RESOURCE_FILTERS: { label: string; value: ResourceFilter }[] = [
   { label: 'Downloads', value: 'acquisition' },
   { label: 'Readers', value: 'reader' },
   { label: 'Library actions', value: 'libraryAction' },
+  { label: 'Library imports', value: 'libraryImport' },
 ];
 
 const RESOURCE_LABELS: Record<ExtensionResourceName, string> = {
@@ -71,6 +72,7 @@ const RESOURCE_LABELS: Record<ExtensionResourceName, string> = {
   acquisition: 'Downloads',
   reader: 'Reader sync',
   libraryAction: 'Library actions',
+  libraryImport: 'Library imports',
 };
 
 type ExtensionBranding = {

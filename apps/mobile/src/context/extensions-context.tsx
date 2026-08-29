@@ -13,6 +13,7 @@ import type {
   ExtensionConfigValue,
   ExtensionLibraryAction,
   ExtensionLibraryBook,
+  ExtensionLibraryImport,
   ExtensionManifest,
   ExtensionPage,
   ExtensionQuery,
@@ -51,6 +52,11 @@ export interface AvailableLibraryAction extends ExtensionLibraryAction {
   extensionId: string;
 }
 
+export interface AvailableLibraryImport extends ExtensionLibraryImport {
+  extensionId: string;
+  extensionName: string;
+}
+
 interface ExtensionsContextValue extends ExtensionRegistrySnapshot {
   ready: boolean;
   error: string | null;
@@ -84,6 +90,13 @@ interface ExtensionsContextValue extends ExtensionRegistrySnapshot {
     actionId: string,
     book: ExtensionLibraryBook
   ): Promise<void>;
+  libraryImports(): AvailableLibraryImport[];
+  runLibraryImport(
+    extensionId: string,
+    importId: string,
+    sourceUri: string,
+    filename: string
+  ): Promise<ExtensionReaderSyncResult>;
   readerSync(
     extensionId: string,
     request: ExtensionReaderSyncRequest
@@ -131,6 +144,10 @@ const EMPTY: ExtensionsContextValue = {
   },
   libraryActions: () => [],
   runLibraryAction: async () => {
+    throw new Error('Extensions provider is unavailable.');
+  },
+  libraryImports: () => [],
+  runLibraryImport: async () => {
     throw new Error('Extensions provider is unavailable.');
   },
   readerSync: async () => {
@@ -479,6 +496,49 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
     },
     [load]
   );
+  const libraryImports = useCallback((): AvailableLibraryImport[] => {
+    const platform =
+      Platform.OS === 'android' || Platform.OS === 'ios' || Platform.OS === 'web'
+        ? Platform.OS
+        : 'desktop';
+    return snapshot.thirdParty
+      .filter((extension) => extension.enabled)
+      .flatMap((extension) =>
+        (extension.manifest.libraryImports ?? [])
+          .filter(
+            (libraryImport) =>
+              !libraryImport.platforms?.length || libraryImport.platforms.includes(platform)
+          )
+          .map((libraryImport) => ({
+            ...libraryImport,
+            extensionId: extension.manifest.id,
+            extensionName: extension.manifest.name,
+          }))
+      );
+  }, [snapshot.thirdParty]);
+  const runLibraryImport = useCallback(
+    async (extensionId: string, importId: string, sourceUri: string, filename: string) => {
+      const extension = await load(extensionId);
+      if (
+        extension.manifest.transport.kind !== 'host' &&
+        extension.manifest.transport.kind !== 'device'
+      ) {
+        throw new Error('Backup files may be read only by reviewed local integrations.');
+      }
+      const descriptor = extension.manifest.libraryImports?.find(
+        (candidate) => candidate.id === importId
+      );
+      if (!descriptor || !extension.libraryImport) {
+        throw new Error(`Extension "${extension.manifest.name}" does not provide this import.`);
+      }
+      const platform =
+        Platform.OS === 'android' || Platform.OS === 'ios' || Platform.OS === 'web'
+          ? Platform.OS
+          : 'desktop';
+      return extension.libraryImport({ importId, sourceUri, filename, platform });
+    },
+    [load]
+  );
   const setEnabled = useCallback(
     async (id: string, enabled: boolean) => {
       if (enabled) {
@@ -574,6 +634,8 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       search,
       libraryActions,
       runLibraryAction,
+      libraryImports,
+      runLibraryImport,
       readerSync,
     }),
     [
@@ -599,6 +661,8 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       search,
       libraryActions,
       runLibraryAction,
+      libraryImports,
+      runLibraryImport,
       readerSync,
     ]
   );
