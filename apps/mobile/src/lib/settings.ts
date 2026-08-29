@@ -3,25 +3,21 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export interface Settings {
   localLibraryLocation: string | null; // Local books and download destination
   moonReaderBackupLocation: string | null; // Moon+ Reader backup folder only
-  progressSyncLocation: string | null; // Provider-neutral shared progress folder
   folderPickerLocations: Record<FolderLocationSetting, string | null>;
 }
 
 export type FolderLocationSetting =
   | 'localLibraryLocation'
-  | 'moonReaderBackupLocation'
-  | 'progressSyncLocation';
+  | 'moonReaderBackupLocation';
 
 const EMPTY_FOLDER_PICKER_LOCATIONS: Settings['folderPickerLocations'] = {
   localLibraryLocation: null,
   moonReaderBackupLocation: null,
-  progressSyncLocation: null,
 };
 
 export const DEFAULT_SETTINGS: Settings = {
   localLibraryLocation: null,
   moonReaderBackupLocation: null,
-  progressSyncLocation: null,
   folderPickerLocations: EMPTY_FOLDER_PICKER_LOCATIONS,
 };
 

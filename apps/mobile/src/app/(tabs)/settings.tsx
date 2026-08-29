@@ -32,10 +32,7 @@ import {
   usePageGutter,
 } from '@/components/app-ui';
 import { useExtensions } from '@/context/extensions-context';
-import {
-  useLibraryActions,
-  useLibrarySyncStatus,
-} from '@/context/library-context';
+import { useLibraryActions } from '@/context/library-context';
 import { useSettings } from '@/context/settings-context';
 import {
   folderLocationLabel,
@@ -49,8 +46,6 @@ import {
   setNativeLauncherIcon,
   type LauncherIcon,
 } from '@/lib/launcher-icon';
-import { validateProgressFolder } from '@/lib/progress-folder-provider';
-import { forgetProgressSyncFolder } from '@/lib/progress-sync';
 import {
   getHostedSyncAccount,
   loginHostedSync,
@@ -378,8 +373,7 @@ export default function SettingsScreen() {
   const [hostedSyncError, setHostedSyncError] = useState<string | null>(null);
   const extensions = useExtensions();
   const { settings, update } = useSettings();
-  const { cloudLastSyncedAt, cloudSyncing } = useLibrarySyncStatus();
-  const { refreshProgressSyncBooks, syncCloudProgress } = useLibraryActions();
+  const { refreshProgressSyncBooks } = useLibraryActions();
 
   const enabledManifests = useMemo(
     () => [
@@ -468,9 +462,6 @@ export default function SettingsScreen() {
           : settings.folderPickerLocations[setting]
       );
       if (!picked) return;
-      if (setting === 'progressSyncLocation' || Platform.OS === 'ios') {
-        await validateProgressFolder(picked.uri);
-      }
       await update({
         [setting]: picked.uri,
         folderPickerLocations: {
@@ -479,21 +470,13 @@ export default function SettingsScreen() {
         },
       });
     } catch (cause) {
-      Alert.alert(
-        setting === 'progressSyncLocation'
-          ? 'Progress sync folder unavailable'
-          : 'Folder picker failed',
-        cause instanceof Error ? cause.message : String(cause)
-      );
+      Alert.alert('Folder picker failed', cause instanceof Error ? cause.message : String(cause));
     } finally {
       endFolderPicker();
     }
   };
 
   const resetFolder = async (setting: FolderLocationSetting) => {
-    if (setting === 'progressSyncLocation' && settings.progressSyncLocation) {
-      await forgetProgressSyncFolder(settings.progressSyncLocation);
-    }
     if (settings[setting]) await forgetNativeDirectory(settings[setting]);
     await update({ [setting]: null });
   };
@@ -532,14 +515,6 @@ export default function SettingsScreen() {
       );
     } finally {
       setLauncherIconBusy(false);
-    }
-  };
-
-  const syncProgressNow = async () => {
-    try {
-      await syncCloudProgress();
-    } catch (cause) {
-      Alert.alert('Progress sync failed', cause instanceof Error ? cause.message : String(cause));
     }
   };
 
@@ -760,52 +735,6 @@ export default function SettingsScreen() {
                 disabled={hostedSyncBusy}
                 onPress={() => void syncHostedNow()}
               />
-            </SettingsOption>
-          ) : null}
-          <SettingsOption
-            compact={compactOptions}
-            label="Legacy sync folder"
-            detail="Keep using Google Drive or a mirrored local folder during the hosted-sync transition."
-          >
-            <FolderField
-              location={settings.progressSyncLocation}
-              emptyLabel="Not configured"
-              onChoose={() => void chooseFolder('progressSyncLocation')}
-              onReset={
-                settings.progressSyncLocation
-                  ? () => void resetFolder('progressSyncLocation')
-                  : undefined
-              }
-              resetLabel="Disable sync"
-              resetIcon="slash"
-            />
-          </SettingsOption>
-          {settings.progressSyncLocation ? (
-            <SettingsOption
-              compact={compactOptions}
-              label="Synchronize now"
-              detail={
-                cloudLastSyncedAt
-                  ? `Last synced ${new Date(cloudLastSyncedAt).toLocaleString()}`
-                  : 'Not synced yet'
-              }
-            >
-              <View>
-                <PillButton
-                  label={cloudSyncing ? 'Syncing…' : 'Sync now'}
-                  icon={cloudSyncing ? undefined : 'refresh-cw'}
-                  variant="accent"
-                  disabled={cloudSyncing}
-                  onPress={() => void syncProgressNow()}
-                />
-                {cloudSyncing ? (
-                  <ActivityIndicator
-                    className="absolute left-5 top-[14px]"
-                    size="small"
-                    color={colors.text}
-                  />
-                ) : null}
-              </View>
             </SettingsOption>
           ) : null}
         </SettingsSection>

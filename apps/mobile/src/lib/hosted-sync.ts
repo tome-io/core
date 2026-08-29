@@ -13,7 +13,7 @@ import {
   mergeProgressRecords,
   type ProgressSyncRecord,
 } from './progress-sync-model';
-import { getProgressSyncDeviceId } from './progress-sync';
+import { getSyncDeviceId } from './sync-device';
 import {
   hostedAccountMetadata,
   progressRecordFromHosted,
@@ -170,7 +170,7 @@ async function authenticate(
     body: JSON.stringify({
       email,
       password,
-      deviceId: await getProgressSyncDeviceId(),
+      deviceId: await getSyncDeviceId(),
       deviceName: deviceName(),
     }),
   });
@@ -257,7 +257,7 @@ async function documentIds(records: ProgressSyncRecord[]) {
   return { byRecord, recordsByDocument };
 }
 
-export async function synchronizeHostedProgress(): Promise<HostedSyncResult> {
+async function performHostedProgressSync(): Promise<HostedSyncResult> {
   const localBeforePull = await loadProgressSyncRecords();
   const identifiersBeforePull = await documentIds(localBeforePull);
   const remote = await authenticatedRequest<{
@@ -285,7 +285,7 @@ export async function synchronizeHostedProgress(): Promise<HostedSyncResult> {
   const importedRecords = await applyProgressSyncRecords(mergedBeforeImport);
   const merged = mergeProgressRecords(remoteRecords, await loadProgressSyncRecords());
   const identifiers = await documentIds(merged);
-  const deviceId = await getProgressSyncDeviceId();
+  const deviceId = await getSyncDeviceId();
   for (const record of merged) {
     const document = identifiers.byRecord.get(record);
     if (document == null) throw new Error(`No hosted sync identifier for ${record.identity}.`);
@@ -314,4 +314,21 @@ export async function synchronizeHostedProgress(): Promise<HostedSyncResult> {
     unmatchedRecords: unmatched.length,
     syncedAt: remote.serverTime,
   };
+}
+
+let pendingHostedSync: Promise<HostedSyncResult> | null = null;
+
+export function synchronizeHostedProgress(): Promise<HostedSyncResult> {
+  if (pendingHostedSync != null) return pendingHostedSync;
+  const operation = performHostedProgressSync().finally(() => {
+    if (pendingHostedSync === operation) pendingHostedSync = null;
+  });
+  pendingHostedSync = operation;
+  return operation;
+}
+
+export async function synchronizeHostedProgressIfEnabled(): Promise<HostedSyncResult | null> {
+  return (await getHostedSyncAccount()) == null
+    ? null
+    : synchronizeHostedProgress();
 }

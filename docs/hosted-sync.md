@@ -1,6 +1,6 @@
 # Hosted progress sync
 
-Hosted sync is optional and additive to the existing progress-folder workflow. The
+Hosted sync is optional and is Tomeio's only cross-device state-sync mechanism. The
 service implementation lives in `tome-io/sync`; this repository owns the app client,
 local merge, secure session storage, and KOReader-compatible book hashing.
 
@@ -10,10 +10,11 @@ local merge, secure session storage, and KOReader-compatible book hashing.
 - Android and iOS store only access and refresh tokens in Expo SecureStore.
 - Web does not offer account sync because this client does not downgrade secrets to
   unencrypted browser storage.
-- The existing Drive/iCloud/shared-folder setting remains available as **Legacy sync
-  folder** during migration.
-- Hosted sync is manual in this foundation branch. Automatic lifecycle triggers should
-  be added only after the staging service has been exercised across multiple devices.
+- Drive, iCloud, and user-selected folders remain available for EPUB/PDF storage and
+  imports. They no longer exchange progress JSON between Tomeio installations.
+- Signed-in devices synchronize during library refresh, when the app returns to the
+  foreground, and after progress-changing library actions. Manual **Sync now** remains
+  available for explicit control and troubleshooting.
 
 The service origin defaults to `https://sync.tomeio.app`. A development build can set
 `EXPO_PUBLIC_SYNC_URL` to a staging Worker origin.

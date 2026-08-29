@@ -36,12 +36,12 @@ import {
   removeProgressSyncBook,
 } from '@/lib/library-db';
 import { enrichIndexedLocalLibrary, indexLocalLibrary } from '@/lib/library-sync';
+import { synchronizeHostedProgressIfEnabled } from '@/lib/hosted-sync';
 import {
   indexReaderExtensionCatalog,
   type ReaderExtensionSyncOutput,
 } from '@/lib/reader-extension-sync';
 import { enrichIndexedReaderCatalog } from '@/lib/moon-reader-sync';
-import { synchronizeProgressFolder } from '@/lib/progress-sync';
 import {
   deleteNativeProgressFolderFile,
   isNativeFolderLocation,
@@ -65,15 +65,9 @@ interface LibraryUiStatusValue {
   showWarning: (message: string) => void;
 }
 
-interface LibrarySyncStatusValue {
-  cloudSyncing: boolean;
-  cloudLastSyncedAt: number | null;
-}
-
 interface LibraryActionsValue {
   refreshLocalBooks: () => Promise<void>;
   refreshProgressSyncBooks: () => Promise<void>;
-  syncCloudProgress: () => Promise<void>;
   refreshBookMetadata: (book: LibraryBook) => Promise<void>;
   markAsRead: (book: LibraryBook) => Promise<void>;
   removeLocalFile: (book: LibraryBook) => Promise<void>;
@@ -87,7 +81,6 @@ interface LibraryContextValue
   extends LibraryCatalogValue,
     LibraryReadingListValue,
     LibraryUiStatusValue,
-    LibrarySyncStatusValue,
     LibraryActionsValue {}
 
 function createBookBatcher(setBooks: Dispatch<SetStateAction<LibraryBook[]>>) {
@@ -155,14 +148,9 @@ const LibraryUiStatusContext = createContext<LibraryUiStatusValue>({
   dismissWarning: () => {},
   showWarning: () => {},
 });
-const LibrarySyncStatusContext = createContext<LibrarySyncStatusValue>({
-  cloudSyncing: false,
-  cloudLastSyncedAt: null,
-});
 const LibraryActionsContext = createContext<LibraryActionsValue>({
   refreshLocalBooks: async () => {},
   refreshProgressSyncBooks: async () => {},
-  syncCloudProgress: async () => {},
   refreshBookMetadata: async () => {},
   markAsRead: async () => {},
   removeLocalFile: async () => {},
@@ -209,14 +197,11 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
-  const [cloudSyncing, setCloudSyncing] = useState(false);
-  const [cloudLastSyncedAt, setCloudLastSyncedAt] = useState<number | null>(null);
   const stateRef = useRef(state);
   const mutationQueue = useRef<Promise<void>>(Promise.resolve());
   const scanGeneration = useRef(0);
   const lastScanKey = useRef<string | null>(null);
   const pendingScan = useRef<{ key: string; promise: Promise<void> } | null>(null);
-  const pendingCloudSync = useRef<Promise<void> | null>(null);
   const localBookBatcher = useBookBatcher(setLocalBooks);
   const moonReaderBookBatcher = useBookBatcher(setMoonReaderBooks);
   const progressSyncBookBatcher = useBookBatcher(setProgressSyncBooks);
@@ -313,69 +298,12 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const syncCloudProgress = useCallback((): Promise<void> => {
-    if (
-      !settingsReady ||
-      !readerConfigurationReady ||
-      !settings.progressSyncLocation
-    ) return Promise.resolve();
-    if (pendingCloudSync.current) return pendingCloudSync.current;
-
-    setCloudSyncing(true);
-    const localKey = settings.localLibraryLocation ?? '__app_downloads__';
-    const readerKey = readerSourceKey ?? '__no_reader_addons__';
-    let promise: Promise<void>;
-    promise = synchronizeProgressFolder(settings.progressSyncLocation)
-      .then(async (result) => {
-        const [syncedLocal, syncedMoonReader, syncedProgressBooks] = await Promise.all([
-          loadLocalCatalog(localKey),
-          readerSourceKey
-            ? loadMoonReaderCatalog(readerKey)
-            : Promise.resolve([]),
-          loadProgressSyncCatalog(),
-        ]);
-        localBookBatcher.cancel();
-        moonReaderBookBatcher.cancel();
-        progressSyncBookBatcher.cancel();
-        setLocalBooks(syncedLocal);
-        setMoonReaderBooks(syncedMoonReader);
-        setProgressSyncBooks(syncedProgressBooks);
-        setCloudLastSyncedAt(result.syncedAt);
-        setSyncError(null);
-        console.info(
-          `[progress-sync] Imported ${result.importedRecords} updates; ${result.recordCount} records available.`
-        );
-      })
-      .catch((cause) => {
-        const message = cause instanceof Error ? cause.message : String(cause);
-        setSyncError(`Progress folder sync failed: ${message}`);
-        console.error('[progress-sync] Synchronization failed:', cause);
-        throw cause;
-      })
-      .finally(() => {
-        setCloudSyncing(false);
-        if (pendingCloudSync.current === promise) pendingCloudSync.current = null;
-      });
-    pendingCloudSync.current = promise;
-    return promise;
-  }, [
-    localBookBatcher,
-    moonReaderBookBatcher,
-    progressSyncBookBatcher,
-    settings.localLibraryLocation,
-    readerSourceKey,
-    readerConfigurationReady,
-    settings.progressSyncLocation,
-    settingsReady,
-  ]);
-
   const refreshLocalBooks = useCallback((): Promise<void> => {
     if (!settingsReady || !readerConfigurationReady || !ready) return Promise.resolve();
 
     const localKey = settings.localLibraryLocation ?? '__app_downloads__';
     const readerKey = readerSourceKey ?? '__no_reader_addons__';
-    const progressSyncKey = settings.progressSyncLocation ?? '__no_progress_sync__';
-    const key = `${localKey}|${readerKey}|${progressSyncKey}`;
+    const key = `${localKey}|${readerKey}`;
     if (pendingScan.current?.key === key) return pendingScan.current.promise;
 
     const generation = ++scanGeneration.current;
@@ -448,9 +376,9 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       let enrichmentMoonReaderBooks = moonReader.books;
       let enrichmentProgressBooks = cachedProgressBooks;
 
-      if (settings.progressSyncLocation) {
-        try {
-          await syncCloudProgress();
+      try {
+        const hosted = await synchronizeHostedProgressIfEnabled();
+        if (hosted != null) {
           [enrichmentLocalBooks, enrichmentMoonReaderBooks, enrichmentProgressBooks] =
             await Promise.all([
             loadLocalCatalog(localKey),
@@ -459,9 +387,9 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
               : Promise.resolve([]),
             loadProgressSyncCatalog(),
           ]);
-        } catch (err: any) {
-          warnings.push(`Progress folder sync failed: ${err.message || String(err)}`);
         }
+      } catch (err: any) {
+        warnings.push(`Tomeio Sync failed: ${err.message || String(err)}`);
       }
 
       const moonLocalByKey = new Map(
@@ -537,10 +465,8 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     readerIntegrations,
     readerSourceKey,
     readerConfigurationReady,
-    settings.progressSyncLocation,
     settingsReady,
     ready,
-    syncCloudProgress,
     extensions,
   ]);
 
@@ -633,9 +559,11 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         downloaded: current.downloaded.map(applyRead),
         readingList: current.readingList.map(applyRead),
       }));
-      if (settings.progressSyncLocation) await syncCloudProgress();
+      if (await synchronizeHostedProgressIfEnabled()) {
+        await refreshProgressSyncBooks();
+      }
     },
-    [commit, settings.progressSyncLocation, syncCloudProgress]
+    [commit, refreshProgressSyncBooks]
   );
 
   const removeLocalFile = useCallback(
@@ -712,9 +640,11 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
             bookIdentity(item.title, item.author) !== identity
         ),
       }));
-      if (settings.progressSyncLocation) await syncCloudProgress();
+      if (await synchronizeHostedProgressIfEnabled()) {
+        await refreshProgressSyncBooks();
+      }
     },
-    [commit, settings.progressSyncLocation, syncCloudProgress]
+    [commit, refreshProgressSyncBooks]
   );
 
   const refreshBookMetadata = useCallback(
@@ -901,15 +831,10 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     }),
     [dismissWarning, error, scanning, showWarning, syncError, warning]
   );
-  const syncStatusValue = useMemo<LibrarySyncStatusValue>(
-    () => ({ cloudSyncing, cloudLastSyncedAt }),
-    [cloudLastSyncedAt, cloudSyncing]
-  );
   const actionsValue = useMemo<LibraryActionsValue>(
     () => ({
       refreshLocalBooks,
       refreshProgressSyncBooks,
-      syncCloudProgress,
       refreshBookMetadata,
       markAsRead,
       removeLocalFile,
@@ -927,7 +852,6 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       refreshLocalBooks,
       refreshProgressSyncBooks,
       removeLibraryBook,
-      syncCloudProgress,
       toggleReadingList,
     ]
   );
@@ -936,11 +860,9 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     <LibraryCatalogContext.Provider value={catalogValue}>
       <LibraryReadingListContext.Provider value={readingListValue}>
         <LibraryUiStatusContext.Provider value={uiStatusValue}>
-          <LibrarySyncStatusContext.Provider value={syncStatusValue}>
-            <LibraryActionsContext.Provider value={actionsValue}>
-              {children}
-            </LibraryActionsContext.Provider>
-          </LibrarySyncStatusContext.Provider>
+          <LibraryActionsContext.Provider value={actionsValue}>
+            {children}
+          </LibraryActionsContext.Provider>
         </LibraryUiStatusContext.Provider>
       </LibraryReadingListContext.Provider>
     </LibraryCatalogContext.Provider>
@@ -959,10 +881,6 @@ export function useLibraryUiStatus(): LibraryUiStatusValue {
   return useContext(LibraryUiStatusContext);
 }
 
-export function useLibrarySyncStatus(): LibrarySyncStatusValue {
-  return useContext(LibrarySyncStatusContext);
-}
-
 export function useLibraryActions(): LibraryActionsValue {
   return useContext(LibraryActionsContext);
 }
@@ -972,7 +890,6 @@ export function useLibrary(): LibraryContextValue {
     ...useLibraryCatalog(),
     ...useLibraryReadingList(),
     ...useLibraryUiStatus(),
-    ...useLibrarySyncStatus(),
     ...useLibraryActions(),
   };
 }
