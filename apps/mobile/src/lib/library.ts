@@ -3,11 +3,14 @@ import { loadPersistedLibrary, savePersistedLibrary } from './library-db';
 import type { BookAcquisition, BookMetadata } from '@tomeio/domain';
 import type { ExtensionLibraryBook } from '@tomeio/extension-protocol';
 import { metadataFromFilename } from './book-metadata';
+import type { BookCoverPreference, BookCoverSources } from './book-cover';
 
 export interface LibraryBook extends FeedBook {
   key: string;
   genre: string;
   fallbackCover?: string;
+  coverSources?: BookCoverSources;
+  coverPreference?: BookCoverPreference;
   format?: string;
   size?: number;
   addedAt: number;

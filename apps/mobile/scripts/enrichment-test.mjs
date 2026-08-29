@@ -6,9 +6,36 @@ import {
   filenameFromUri,
   metadataFromFilename,
 } from '../src/lib/book-metadata.ts';
+import {
+  isUsableBookCoverSize,
+  resolveBookCover,
+} from '../src/lib/book-cover.ts';
 import { findBookMetadata, getWorkDetails } from '../src/lib/openlibrary.ts';
 
 const LIVE = process.env.LIVE_OPENLIBRARY === '1';
+
+test('prefers a usable local cover and keeps the catalog cover as fallback', () => {
+  assert.deepEqual(
+    resolveBookCover({ local: 'file:///local.jpg', catalog: 'https://catalog.jpg' }),
+    { cover: 'file:///local.jpg', fallbackCover: 'https://catalog.jpg' }
+  );
+});
+
+test('honors a catalog cover preference while retaining local failover', () => {
+  assert.deepEqual(
+    resolveBookCover(
+      { local: 'file:///local.jpg', catalog: 'https://catalog.jpg' },
+      'catalog'
+    ),
+    { cover: 'https://catalog.jpg', fallbackCover: 'file:///local.jpg' }
+  );
+});
+
+test('rejects tiny or non-cover-shaped embedded images', () => {
+  assert.equal(isUsableBookCoverSize(600, 900), true);
+  assert.equal(isUsableBookCoverSize(120, 180), false);
+  assert.equal(isUsableBookCoverSize(1200, 400), false);
+});
 
 test('normalizes the real Moon+ and Z-Library filename shapes', () => {
   const cases = [

@@ -15,6 +15,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   LibraryBookActions,
@@ -45,6 +46,7 @@ import {
 } from '@/lib/acquisition-options';
 import { openBookWithAnotherApp, showBookInFiles } from '@/lib/book-file-actions';
 import { formatBookOffer, primaryBookOffer } from '@/lib/book-offers';
+import type { BookCoverPreference, BookCoverSources } from '@/lib/book-cover';
 import { bookFilename } from '@/lib/download';
 import {
   fromDiscoveryBook,
@@ -159,6 +161,7 @@ export default function BookDetailScreen() {
     removeLibraryBook,
     removeLocalFile,
     refreshBookMetadata,
+    setBookCoverPreference,
     toggleReadingList,
   } = useLibraryActions();
   const { jobs: downloadJobs, startBookDownload } = useDownloads();
@@ -235,7 +238,7 @@ export default function BookDetailScreen() {
     };
   }, [libraryScanning, localParam, params.id, params.localUri]);
 
-  const localBook = useMemo(() => {
+  const localBook = useMemo<LibraryBook | null>(() => {
     if (!localParam && !params.localUri) return null;
     const liveBook = [...downloaded, ...readingList].find(
       (book) =>
@@ -248,26 +251,28 @@ export default function BookDetailScreen() {
     );
     if (!persistedLocalBook) {
       if (liveBook) return liveBook;
-      if (localCatalogResolved && !localCatalogError) {
+      if (localParam && localCatalogResolved && !localCatalogError) {
         return { ...localParam, availableLocally: false };
       }
       return localParam;
     }
+    const baseMoonReader =
+      persistedLocalBook.moonReader ?? liveBook?.moonReader ?? localParam?.moonReader;
     return {
       ...localParam,
       ...persistedLocalBook,
       ...liveBook,
       availableLocally: true,
-      moonReader:
-        persistedLocalBook.moonReader || liveBook?.moonReader || localParam?.moonReader
-          ? {
+      moonReader: baseMoonReader
+        ? {
+              ...baseMoonReader,
               ...localParam?.moonReader,
               ...persistedLocalBook.moonReader,
               ...liveBook?.moonReader,
               availableLocally: true,
             }
-          : undefined,
-      cover: persistedLocalBook.cover || liveBook?.cover || localParam?.cover || '',
+        : undefined,
+      cover: liveBook?.cover || persistedLocalBook.cover || localParam?.cover || '',
       description:
         persistedLocalBook.description || liveBook?.description || localParam?.description || '',
       progress: persistedLocalBook.progress ?? liveBook?.progress ?? localParam?.progress,
@@ -555,6 +560,8 @@ export default function BookDetailScreen() {
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<LibraryAction | null>(null);
   const [descriptionOpen, setDescriptionOpen] = useState(false);
+  const [coverPickerOpen, setCoverPickerOpen] = useState(false);
+  const [coverBusy, setCoverBusy] = useState(false);
   const [failedCovers, setFailedCovers] = useState<string[]>([]);
   const [phases, setPhases] = useState<Record<string, Phase>>({});
   const onReadingList = readingListBook
@@ -714,6 +721,34 @@ export default function BookDetailScreen() {
   );
 
   const libraryActionBook = localBook ?? moonBook;
+  const chooseCover = useCallback(
+    async (preference: BookCoverPreference) => {
+      if (!libraryActionBook || coverBusy) return;
+      setCoverBusy(true);
+      setLibraryError(null);
+      try {
+        await setBookCoverPreference(libraryActionBook, preference);
+        setCoverPickerOpen(false);
+      } catch (cause) {
+        setLibraryError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        setCoverBusy(false);
+      }
+    },
+    [coverBusy, libraryActionBook, setBookCoverPreference]
+  );
+  const refreshCoverMetadata = useCallback(async () => {
+    if (!libraryActionBook || coverBusy) return;
+    setCoverBusy(true);
+    setLibraryError(null);
+    try {
+      await refreshBookMetadata(libraryActionBook);
+    } catch (cause) {
+      setLibraryError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setCoverBusy(false);
+    }
+  }, [coverBusy, libraryActionBook, refreshBookMetadata]);
   const addonActions = useMemo(() => {
     if (!libraryActionBook) return [];
     const book = toExtensionLibraryBook(libraryActionBook);
@@ -756,12 +791,14 @@ export default function BookDetailScreen() {
   const title = extensionBook?.title || currentDiscovery?.title || localBook?.title || 'Untitled';
   const author =
     extensionBook?.authors[0] || currentDiscovery?.author || localBook?.author || 'Unknown';
-  const coverUrl =
-    extensionBook?.coverUrl ||
-    currentDiscovery?.cover ||
-    localBook?.cover ||
-    localBook?.fallbackCover ||
-    '';
+  const coverCandidates = [
+    localBook?.cover,
+    localBook?.fallbackCover,
+    extensionBook?.coverUrl,
+    currentDiscovery?.cover,
+  ].filter(
+    (cover, index, covers): cover is string => !!cover && covers.indexOf(cover) === index
+  );
   const description = extensionBook?.description
     ? normalizeDescription(extensionBook.description)
     : currentDiscovery?.description
@@ -798,7 +835,7 @@ export default function BookDetailScreen() {
           localBook?.year,
           localFileAvailable ? 'Local file' : 'Not downloaded',
         ].filter(Boolean);
-  const activeCover = coverUrl && !failedCovers.includes(coverUrl) ? coverUrl : null;
+  const activeCover = coverCandidates.find((cover) => !failedCovers.includes(cover)) ?? null;
   const heroHeight = compactLayout
     ? Math.min(620, Math.max(480, Math.round(width * 1.24)))
     : 420;
@@ -884,6 +921,17 @@ export default function BookDetailScreen() {
           >
             <Feather name="chevron-left" color="#f4f4f5" size={23} />
           </Pressable>
+          {libraryActionBook ? (
+            <Pressable
+              onPress={() => setCoverPickerOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Cover settings"
+              className="absolute right-4 top-4 h-11 w-11 items-center justify-center rounded-full"
+              style={{ backgroundColor: 'rgba(10, 10, 14, 0.72)' }}
+            >
+              <Feather name="more-vertical" color="#f4f4f5" size={22} />
+            </Pressable>
+          ) : null}
           <View className="absolute right-0 bottom-0 left-0 px-5 pb-5">
             <Text
               numberOfLines={3}
@@ -1076,6 +1124,19 @@ export default function BookDetailScreen() {
         ) : null}
       </ScrollView>
 
+      <CoverPicker
+        visible={coverPickerOpen}
+        title={title}
+        sources={libraryActionBook?.coverSources}
+        preference={libraryActionBook?.coverPreference ?? 'auto'}
+        busy={coverBusy}
+        onClose={() => {
+          if (!coverBusy) setCoverPickerOpen(false);
+        }}
+        onChoose={(preference) => void chooseCover(preference)}
+        onRefresh={() => void refreshCoverMetadata()}
+      />
+
       <Modal
         visible={descriptionOpen}
         transparent
@@ -1109,6 +1170,152 @@ export default function BookDetailScreen() {
         </Pressable>
       </Modal>
     </>
+  );
+}
+
+function CoverPicker({
+  visible,
+  title,
+  sources,
+  preference,
+  busy,
+  onClose,
+  onChoose,
+  onRefresh,
+}: {
+  visible: boolean;
+  title: string;
+  sources?: BookCoverSources;
+  preference: BookCoverPreference;
+  busy: boolean;
+  onClose: () => void;
+  onChoose: (preference: BookCoverPreference) => void;
+  onRefresh: () => void;
+}) {
+  const choices: {
+    preference: BookCoverPreference;
+    label: string;
+    detail: string;
+    uri?: string;
+  }[] = [
+    {
+      preference: 'auto',
+      label: 'Automatic',
+      detail: 'Prefer a usable local cover, then Open Library.',
+      uri: sources?.local || sources?.catalog,
+    },
+    ...(sources?.local
+      ? [{
+          preference: 'local' as const,
+          label: 'Local file',
+          detail: 'Use the cover embedded in this book file.',
+          uri: sources.local,
+        }]
+      : []),
+    ...(sources?.catalog
+      ? [{
+          preference: 'catalog' as const,
+          label: 'Open Library',
+          detail: 'Use the matched catalog cover.',
+          uri: sources.catalog,
+        }]
+      : []),
+  ];
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      navigationBarTranslucent
+      onRequestClose={onClose}
+    >
+      <View className="flex-1 justify-end" style={{ backgroundColor: 'rgba(0,0,0,0.64)' }}>
+        <Pressable className="absolute inset-0" onPress={onClose} accessibilityLabel="Close cover settings" />
+        <SafeAreaView
+          edges={['bottom']}
+          className="rounded-t-3xl border-t border-[#2a2a32] bg-[#141419] px-5 pb-5 pt-5"
+        >
+          <View className="mb-5 flex-row items-center justify-between gap-4">
+            <View className="min-w-0 flex-1">
+              <Text className="text-base font-semibold text-neutral-100">Choose cover</Text>
+              <Text numberOfLines={1} className="mt-1 text-xs text-neutral-500">{title}</Text>
+            </View>
+            <Pressable
+              onPress={onClose}
+              disabled={busy}
+              accessibilityRole="button"
+              accessibilityLabel="Close cover settings"
+              className="h-9 w-9 items-center justify-center rounded-full bg-[#202027] disabled:opacity-40"
+            >
+              <Feather name="x" size={18} color="#d4d4d8" />
+            </Pressable>
+          </View>
+
+          <View className="gap-2">
+            {choices.map((choice) => {
+              const selected = preference === choice.preference;
+              return (
+                <Pressable
+                  key={choice.preference}
+                  onPress={() => onChoose(choice.preference)}
+                  disabled={busy || !choice.uri}
+                  className="min-h-20 flex-row items-center gap-4 rounded-2xl border px-3 py-3 disabled:opacity-40"
+                  style={{
+                    borderColor: selected ? colors.accent : colors.border,
+                    backgroundColor: selected ? colors.accentMuted : colors.surface,
+                  }}
+                >
+                  <View className="h-16 w-11 overflow-hidden rounded-md bg-[#232329]">
+                    {choice.uri ? (
+                      <Image
+                        source={{ uri: choice.uri }}
+                        style={{ width: '100%', height: '100%' }}
+                        contentFit="cover"
+                      />
+                    ) : null}
+                  </View>
+                  <View className="min-w-0 flex-1">
+                    <Text className="text-sm font-semibold text-neutral-100">{choice.label}</Text>
+                    <Text className="mt-1 text-xs leading-4 text-neutral-500">{choice.detail}</Text>
+                  </View>
+                  {busy && selected ? (
+                    <ActivityIndicator size="small" color={colors.accent} />
+                  ) : (
+                    <Feather
+                      name={selected ? 'check-circle' : 'circle'}
+                      size={19}
+                      color={selected ? colors.accent : colors.textMuted}
+                    />
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+
+          {!sources?.local ? (
+            <Text className="mt-3 text-xs leading-4 text-neutral-500">
+              No usable embedded cover was found. Automatic mode will use Open Library when available.
+            </Text>
+          ) : null}
+          <Pressable
+            onPress={onRefresh}
+            disabled={busy}
+            className="mt-4 h-11 flex-row items-center justify-center gap-2 rounded-xl border border-[#2a2a32] disabled:opacity-40"
+          >
+            {busy ? (
+              <ActivityIndicator size="small" color={colors.accent} />
+            ) : (
+              <Feather name="refresh-cw" size={16} color={colors.accent} />
+            )}
+            <Text className="text-xs font-semibold" style={{ color: colors.accent }}>
+              Refresh cover sources
+            </Text>
+          </Pressable>
+        </SafeAreaView>
+      </View>
+    </Modal>
   );
 }
 

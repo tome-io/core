@@ -1,6 +1,12 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import { Image } from 'expo-image';
 import JSZip from 'jszip';
 
+import {
+  isUsableBookCoverSize,
+  resolveBookCover,
+  type BookCoverSources,
+} from './book-cover';
 import { metadataFromFilename } from './book-metadata';
 import type { LibraryBook } from './library';
 import { findBookMetadata, getWorkDetails, type DiscoveryBook } from './openlibrary';
@@ -14,7 +20,7 @@ const MAX_PARSE_SIZE = 32 * 1024 * 1024;
 const ENRICH_BATCH_SIZE = 3;
 const METADATA_REFRESH_MS = 7 * 24 * 60 * 60 * 1000;
 const METADATA_FAILURE_RETRY_MS = 15 * 60 * 1000;
-const LOCAL_METADATA_VERSION = 4;
+const LOCAL_METADATA_VERSION = 5;
 
 export interface EmbeddedMetadata {
   title?: string;
@@ -109,7 +115,7 @@ async function saveCover(
   path: string,
   mimeType: string,
   base64: string
-): Promise<string> {
+): Promise<string | null> {
   if (!COVER_DIRECTORY) throw new Error('The app documents directory is unavailable.');
   await FileSystem.makeDirectoryAsync(COVER_DIRECTORY, { intermediates: true });
   const extension = mimeType.split('/')[1]?.replace('jpeg', 'jpg') || path.split('.').pop() || 'jpg';
@@ -118,6 +124,21 @@ async function saveCover(
   const storedCover = await FileSystem.getInfoAsync(uri);
   if (!storedCover.exists) {
     throw new Error(`The extracted cover was not written to ${uri}.`);
+  }
+  let width = 0;
+  let height = 0;
+  try {
+    const image = await Image.loadAsync(uri);
+    width = image.width * image.scale;
+    height = image.height * image.scale;
+    image.release();
+  } catch {
+    await FileSystem.deleteAsync(uri, { idempotent: true });
+    return null;
+  }
+  if (!isUsableBookCoverSize(width, height)) {
+    await FileSystem.deleteAsync(uri, { idempotent: true });
+    return null;
   }
   return uri;
 }
@@ -158,7 +179,8 @@ async function readEpubMetadata(book: LibraryBook, base64: string): Promise<Embe
     const image = zip.file(path);
     if (image) {
       const mimeType = coverMime(path, attribute(coverItem, 'media-type'));
-      metadata.cover = await saveCover(book, path, mimeType, await image.async('base64'));
+      const cover = await saveCover(book, path, mimeType, await image.async('base64'));
+      if (cover) metadata.cover = cover;
     }
   }
 
@@ -180,16 +202,6 @@ function applyMetadata(book: LibraryBook, metadata: EmbeddedMetadata): LibraryBo
     metadataUpdatedAt: Date.now(),
     metadataVersion: LOCAL_METADATA_VERSION,
   };
-}
-
-function catalogNeedsFallback(catalog: DiscoveryBook | null, book: LibraryBook): boolean {
-  if (!catalog) return true;
-  return (
-    (!catalog.cover && !book.cover) ||
-    (!catalog.description && !book.description) ||
-    ((!catalog.genre || catalog.genre === 'Other') && (!book.genre || book.genre === 'Local')) ||
-    (!catalog.year && !book.year)
-  );
 }
 
 async function enrichLocalBook(
@@ -247,7 +259,7 @@ async function enrichLocalBook(
 
   const canReadEmbedded =
     book.local.size <= MAX_PARSE_SIZE && ['epub', 'pdf'].includes(book.local.format);
-  if (canReadEmbedded && catalogNeedsFallback(catalogMetadata, book)) {
+  if (canReadEmbedded) {
     try {
       const readableUri = await materializeNativeFolderFile(
         book.local.uri,
@@ -297,23 +309,42 @@ async function enrichLocalBook(
     }
   }
 
+  const coverSources: BookCoverSources = {
+    ...(canReadEmbedded
+      ? embedded.cover
+        ? { local: embedded.cover }
+        : {}
+      : book.coverSources?.local
+        ? { local: book.coverSources.local }
+        : {}),
+    ...(catalogMetadata?.cover || book.coverSources?.catalog
+      ? { catalog: catalogMetadata?.cover || book.coverSources?.catalog }
+      : {}),
+  };
+  const legacyCover =
+    book.cover?.startsWith('file:') && book.cover.includes('/library-covers/')
+      ? undefined
+      : book.cover;
+  const resolvedCover = resolveBookCover(coverSources, book.coverPreference, [
+    moonReaderMetadata?.detailCoverUri,
+    moonReaderMetadata?.coverUri,
+    legacyCover,
+    book.fallbackCover,
+  ]);
   const metadata: EmbeddedMetadata = {
     title:
       catalogMetadata?.title || moonReaderMetadata?.title || embedded.title || book.title,
     author:
       catalogMetadata?.author || moonReaderMetadata?.author || embedded.author || book.author,
-    cover:
-      catalogMetadata?.cover ||
-      moonReaderMetadata?.detailCoverUri ||
-      moonReaderMetadata?.coverUri ||
-      embedded.cover ||
-      book.cover,
+    cover: resolvedCover.cover,
     description:
       catalogMetadata?.description ||
       moonReaderMetadata?.description ||
       embedded.description ||
       book.description,
-    year: catalogMetadata?.year || embedded.year || book.year,
+    year: catalogMetadata?.year
+      ? String(catalogMetadata.year)
+      : embedded.year || (book.year ? String(book.year) : undefined),
     genre:
       catalogMetadata?.genre && catalogMetadata.genre !== 'Other'
         ? catalogMetadata.genre
@@ -323,15 +354,11 @@ async function enrichLocalBook(
     rating: catalogMetadata?.rating,
     ratingsCount: catalogMetadata?.ratingsCount,
   };
-  const fallbackCover =
-    moonReaderMetadata?.detailCoverUri ||
-    moonReaderMetadata?.coverUri ||
-    embedded.cover ||
-    book.fallbackCover ||
-    (book.cover && !book.cover.startsWith('http') ? book.cover : '');
   const enriched = {
     ...applyMetadata(book, metadata),
-    fallbackCover: fallbackCover || undefined,
+    coverSources,
+    coverPreference: book.coverPreference ?? 'auto',
+    fallbackCover: resolvedCover.fallbackCover,
   };
   return {
     book: catalogLookupFailed ? { ...enriched, metadataPending: true } : enriched,

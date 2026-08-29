@@ -7,6 +7,8 @@ local merge, secure session storage, and KOReader-compatible book hashing.
 ## App behavior
 
 - Users can use Tomeio without creating an account.
+- New sync accounts confirm their email with a six-digit code before a session is
+  created. The same dialog can resend confirmation codes and reset a forgotten password.
 - Android and iOS store only access and refresh tokens in Expo SecureStore.
 - Web does not offer account sync because this client does not downgrade secrets to
   unencrypted browser storage.
@@ -39,7 +41,7 @@ XPointer-to-EPUB-locator conversion remains a later interoperability stage.
 
 After the Worker is deployed and registration is enabled:
 
-1. Create a Tomeio Sync account in the app.
+1. Create and verify a Tomeio Sync account in the app.
 2. In KOReader, open **Progress sync** and set the custom server to
    `https://sync.tomeio.app`.
 3. Sign in with the same email and password.
