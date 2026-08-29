@@ -25,6 +25,12 @@ that digest as the primary document identifier. It also sends a hash of Tomeio's
 book identity as an alias. A device without the local file can therefore resolve the
 same account-scoped book after another Tomeio device registers the file digest.
 
+The service stores no book file bytes. It deduplicates shared title, author, and format
+metadata in a global row keyed by the fingerprint, while account membership and reading
+progress remain private. When metadata arrives for a synced fingerprint, Tomeio can add
+an unavailable-local library entry. The user must still obtain the file before opening
+the book on that device.
+
 The current client maps an incoming KOReader update by percentage. Exact CREngine
 XPointer-to-EPUB-locator conversion remains a later interoperability stage.
 
@@ -37,5 +43,7 @@ After the Worker is deployed and registration is enabled:
    `https://sync.tomeio.app`.
 3. Sign in with the same email and password.
 4. Keep KOReader's binary checksum mode enabled.
+5. Enable **Send document metadata** so books first seen in KOReader can appear in
+   Tomeio's library.
 
 No Tomeio KOReader plugin is required for progress sync.

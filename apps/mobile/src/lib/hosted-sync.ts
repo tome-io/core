@@ -10,11 +10,15 @@ import {
 } from './library-db';
 import { koreaderPartialMd5 } from './koreader-document';
 import {
-  isProgressSyncRecord,
   mergeProgressRecords,
   type ProgressSyncRecord,
 } from './progress-sync-model';
 import { getProgressSyncDeviceId } from './progress-sync';
+import {
+  hostedAccountMetadata,
+  progressRecordFromHosted,
+  type HostedProgressRecord,
+} from './hosted-sync-record';
 
 const SESSION_KEY = 'tomeio.hosted-sync.session.v1';
 const SERVICE_ORIGIN = (
@@ -34,14 +38,10 @@ interface HostedSyncSession {
   refreshTokenExpiresAt: number;
 }
 
-interface HostedProgressRecord {
-  document: string;
-  percentage: number;
-  metadata: Record<string, unknown> | null;
-  source: 'tomeio' | 'koreader';
-  updatedAt: number;
-  serverUpdatedAt: number;
-  removedAt: number | null;
+interface HostedDocumentIds {
+  primary: string;
+  aliases: string[];
+  fingerprintKind: 'koreader-partial-md5-v1' | 'tomeio-logical-md5-v1';
 }
 
 export interface HostedSyncResult {
@@ -205,14 +205,15 @@ async function md5(value: string): Promise<string> {
 
 async function documentIds(records: ProgressSyncRecord[]) {
   const localDocuments = await loadProgressSyncLocalDocuments();
-  const identifiersByAlias = new Map<
-    string,
-    { primary: string; aliases: string[] } | null
-  >();
+  const identifiersByAlias = new Map<string, HostedDocumentIds | null>();
   for (const local of localDocuments) {
     const logical = await md5(local.identity);
     const partial = await koreaderPartialMd5(local.uri);
-    const identifiers = { primary: partial, aliases: [logical] };
+    const identifiers = {
+      primary: partial,
+      aliases: [logical],
+      fingerprintKind: 'koreader-partial-md5-v1' as const,
+    };
     for (const alias of [...local.aliases, local.identity]) {
       const existing = identifiersByAlias.get(alias);
       if (existing != null && existing.primary !== partial) {
@@ -222,30 +223,38 @@ async function documentIds(records: ProgressSyncRecord[]) {
       if (existing === undefined) identifiersByAlias.set(alias, identifiers);
     }
   }
-  const byRecord = new Map<ProgressSyncRecord, { primary: string; aliases: string[] }>();
+  const byRecord = new Map<ProgressSyncRecord, HostedDocumentIds>();
   const recordsByDocument = new Map<string, ProgressSyncRecord>();
   for (const record of records) {
     const logical = await md5(record.identity);
     const matches = [...record.aliases, record.identity]
       .map((alias) => identifiersByAlias.get(alias))
-      .filter((value): value is { primary: string; aliases: string[] } => value != null);
+      .filter((value): value is HostedDocumentIds => value != null);
     const localIds = new Set(matches.map((match) => match.primary));
     if (localIds.size > 1) {
       throw new Error(`Multiple local files match the sync record ${record.identity}.`);
     }
     const local = matches[0];
-    const identifiers = local ?? { primary: logical, aliases: [] };
+    const remoteFingerprint = record.identity.match(
+      /^fingerprint:koreader-partial-md5-v1:([a-f0-9]{32})$/u,
+    )?.[1];
+    const identifiers = local ?? (remoteFingerprint == null
+      ? {
+          primary: logical,
+          aliases: [],
+          fingerprintKind: 'tomeio-logical-md5-v1' as const,
+        }
+      : {
+          primary: remoteFingerprint,
+          aliases: [logical],
+          fingerprintKind: 'koreader-partial-md5-v1' as const,
+        });
     byRecord.set(record, identifiers);
     for (const identifier of [identifiers.primary, ...identifiers.aliases, logical]) {
       recordsByDocument.set(identifier, record);
     }
   }
   return { byRecord, recordsByDocument };
-}
-
-function embeddedProgressRecord(record: HostedProgressRecord): ProgressSyncRecord | null {
-  const embedded = record.metadata?.progressRecord;
-  return isProgressSyncRecord(embedded) ? embedded : null;
 }
 
 export async function synchronizeHostedProgress(): Promise<HostedSyncResult> {
@@ -257,9 +266,9 @@ export async function synchronizeHostedProgress(): Promise<HostedSyncResult> {
   }>('/v1/progress');
   const unmatched: HostedProgressRecord[] = [];
   const remoteRecords = remote.records.flatMap((record) => {
-    const embedded = embeddedProgressRecord(record);
+    const embedded = progressRecordFromHosted(record);
     const local = identifiersBeforePull.recordsByDocument.get(record.document);
-    const base = embedded ?? local;
+    const base = local ?? embedded;
     if (base == null) {
       unmatched.push(record);
       return [];
@@ -285,7 +294,13 @@ export async function synchronizeHostedProgress(): Promise<HostedSyncResult> {
       body: JSON.stringify({
         percentage: record.isRead ? 1 : Math.max(0, Math.min(1, record.progress / 100)),
         aliases: document.aliases,
-        metadata: { progressRecord: record },
+        fingerprintKind: document.fingerprintKind,
+        documentMetadata: {
+          title: record.title,
+          authors: record.author && record.author !== 'Unknown' ? [record.author] : [],
+          format: record.format,
+        },
+        metadata: hostedAccountMetadata(record),
         deviceId,
         deviceName: deviceName(),
         updatedAt: record.updatedAt,

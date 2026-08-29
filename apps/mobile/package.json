@@ -68,7 +68,7 @@
     "build:ios:production": "./scripts/build-eas-ios.sh production",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test": "tsx --test scripts/enrichment-test.mjs scripts/acquisition-options-test.ts scripts/declarative-workflow-test.ts scripts/extension-updates-test.ts scripts/koreader-document-test.ts scripts/library-state-test.ts",
+    "test": "tsx --test scripts/enrichment-test.mjs scripts/acquisition-options-test.ts scripts/declarative-workflow-test.ts scripts/extension-updates-test.ts scripts/hosted-sync-record-test.ts scripts/koreader-document-test.ts scripts/library-state-test.ts",
     "test:acquisition": "tsx --test scripts/acquisition-options-test.ts",
     "test:enrichment": "tsx --test scripts/enrichment-test.mjs",
     "test:enrichment:live": "LIVE_OPENLIBRARY=1 tsx --test scripts/enrichment-test.mjs",

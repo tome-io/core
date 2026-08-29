@@ -903,6 +903,7 @@ function progressSyncBook(record: ProgressSyncRecord): LibraryBook {
     genre: 'Other',
     format: record.format || undefined,
     addedAt: record.updatedAt,
+    availableLocally: false,
     metadataPending: true,
   };
 }
@@ -916,9 +917,13 @@ function rowProgressRecord(row: ProgressSnapshotRow): ProgressSyncRecord | null 
     row.last_read_at ?? 0,
     row.override_updated_at ?? 0
   );
+  const semanticIdentity = bookIdentity(book.title, book.author);
   return {
-    identity: bookIdentity(book.title, book.author),
-    aliases: syncAliases(book),
+    identity: row.sync_identity ?? semanticIdentity,
+    aliases: [...new Set([
+      ...(row.sync_identity && row.sync_identity !== semanticIdentity ? [semanticIdentity] : []),
+      ...syncAliases(book),
+    ])],
     title: book.title,
     author: book.author,
     format: book.format || book.local?.format || '',
