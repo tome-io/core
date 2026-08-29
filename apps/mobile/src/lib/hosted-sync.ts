@@ -42,6 +42,8 @@ interface HostedDocumentIds {
   primary: string;
   aliases: string[];
   fingerprintKind: 'koreader-partial-md5-v1' | 'tomeio-logical-md5-v1';
+  filename: string | null;
+  identifiers: Record<string, string>;
 }
 
 export interface HostedSyncResult {
@@ -213,6 +215,8 @@ async function documentIds(records: ProgressSyncRecord[]) {
       primary: partial,
       aliases: [logical],
       fingerprintKind: 'koreader-partial-md5-v1' as const,
+      filename: local.filename || null,
+      identifiers: local.identifiers,
     };
     for (const alias of [...local.aliases, local.identity]) {
       const existing = identifiersByAlias.get(alias);
@@ -243,11 +247,15 @@ async function documentIds(records: ProgressSyncRecord[]) {
           primary: logical,
           aliases: [],
           fingerprintKind: 'tomeio-logical-md5-v1' as const,
+          filename: null,
+          identifiers: {},
         }
       : {
           primary: remoteFingerprint,
           aliases: [logical],
           fingerprintKind: 'koreader-partial-md5-v1' as const,
+          filename: null,
+          identifiers: {},
         });
     byRecord.set(record, identifiers);
     for (const identifier of [identifiers.primary, ...identifiers.aliases, logical]) {
@@ -299,7 +307,15 @@ async function performHostedProgressSync(): Promise<HostedSyncResult> {
           title: record.title,
           authors: record.author && record.author !== 'Unknown' ? [record.author] : [],
           format: record.format,
+          identifiers: document.identifiers,
         },
+        filename: document.filename,
+        readerAliases: [...new Set([
+          ...(document.filename ? [document.filename] : []),
+          ...record.aliases.flatMap((alias) =>
+            alias.startsWith('filename:') ? [alias.slice('filename:'.length)] : []
+          ),
+        ])].map((externalKey) => ({ reader: 'moonreader', externalKey })),
         metadata: hostedAccountMetadata(record),
         deviceId,
         deviceName: deviceName(),
