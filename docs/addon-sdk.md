@@ -73,7 +73,7 @@ reviewed manifest URL, repository, minimum client version, review timestamp, and
 device capabilities. The client fetches and validates its manifests for community
 discovery; Moon+ Reader is not statically registered in the app.
 
-The Moon+ integration itself lives in `tome-io/extensions/community/moon-reader` as a
-manifest and device workflow. Core contains only the generic interpreter and Expo-backed
-capability host. Existing `moonreader_*` SQLite names are retained solely for compatible
-on-device schema evolution and are used as the shared reader-integration catalog.
+The Moon+ add-on lives in `tome-io/extensions/community/moon-reader` and contributes only
+the local-file **Open in Moon+ Reader** action. Live Moon+ progress is exchanged by the
+first-party hosted sync service through its WebDAV compatibility endpoint; the add-on
+does not import Moon+ backup databases.

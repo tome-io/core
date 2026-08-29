@@ -64,9 +64,9 @@ Gutenberg. They implement the same handlers as external add-ons.
 
 Community add-ons are reviewed entries shown under the Community filter. Installing an
 entry creates a normal local installation and may require configuration before it can be
-enabled. Moon+ Reader is the first community entry. Its manifest and full parsing/action
-workflow live in `tome-io/extensions`; core provides only the generic reviewed operations.
-Those operations are inactive until the user installs and configures the add-on.
+enabled. Moon+ Reader is the first community entry. Its manifest and local-file action
+workflow live in `tome-io/extensions`; live progress synchronization is provided by
+Tomeio Sync rather than by an extension or Moon+ backup importer.
 
 Third-party add-ons are installed from a trusted HTTPS GitHub repository or direct
 manifest URL and are not listed in community discovery. A repository resolves to

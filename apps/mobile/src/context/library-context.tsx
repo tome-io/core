@@ -215,23 +215,12 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     const installedReaders = extensions.thirdParty.filter(
       (candidate) =>
         candidate.enabled &&
+        candidate.manifest.id !== 'community.tomeio.moon-reader' &&
         candidate.manifest.resources.some((resource) => resource.name === 'reader')
     );
     Promise.all(
       installedReaders.map(async (installed) => {
-        let values = await extensions.configuration(installed.manifest);
-        if (
-          installed.manifest.id === 'community.tomeio.moon-reader' &&
-          (!values.backup_directory ||
-            (typeof values.backup_directory === 'string' && !values.backup_directory.trim())) &&
-          settings.moonReaderBackupLocation
-        ) {
-          values = {
-            ...values,
-            backup_directory: settings.moonReaderBackupLocation,
-          };
-          await extensions.configure(installed.manifest, values);
-        }
+        const values = await extensions.configuration(installed.manifest);
         const missing = (installed.manifest.config ?? [])
           .filter((field) => field.required)
           .filter((field) => {
@@ -262,7 +251,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     return () => {
       active = false;
     };
-  }, [extensions, settings.moonReaderBackupLocation]);
+  }, [extensions]);
 
   const commit = useCallback(
     (update: (current: LibraryState) => LibraryState): Promise<void> => {
