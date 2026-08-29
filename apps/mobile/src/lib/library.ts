@@ -169,7 +169,10 @@ export function detailParams(book: LibraryBook) {
       },
     };
   }
-  throw new Error(`Library item ${book.key} has no source metadata.`);
+  return {
+    pathname: '/book/[id]' as const,
+    params: { id: book.key, moon: JSON.stringify(book) },
+  };
 }
 
 export function toExtensionLibraryBook(book: LibraryBook): ExtensionLibraryBook {

@@ -4,16 +4,24 @@ import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
 import {
+  applyCollectionSyncRecords,
   applyProgressSyncRecords,
-  loadProgressSyncLocalDocuments,
+  loadCollectionSyncRecords,
+  loadHostedSyncLocalDocuments,
   loadProgressSyncRecords,
 } from "./library-db";
 import { koreaderPartialMd5 } from "./koreader-document";
+import { bookIdentity } from "./book-metadata";
 import {
   mergeProgressRecords,
   type ProgressSyncRecord,
 } from "./progress-sync-model";
 import { getSyncDeviceId } from "./sync-device";
+import {
+  mergeCollectionSyncRecords,
+  type CollectionSyncRecord,
+  type SyncedCollection,
+} from "./library-sync-model";
 import {
   hostedAccountMetadata,
   progressRecordFromHosted,
@@ -58,6 +66,25 @@ interface HostedDocumentIds {
   fingerprintKind: "koreader-partial-md5-v1" | "tomeio-logical-md5-v1";
   filename: string | null;
   identifiers: Record<string, string>;
+}
+
+interface SyncIdentityRecord {
+  identity: string;
+  aliases: string[];
+}
+
+interface HostedCollectionRecord {
+  document: string;
+  fingerprintKind:
+    | "koreader-partial-md5-v1"
+    | "koreader-filename-md5-v1"
+    | "tomeio-logical-md5-v1";
+  documentMetadata: HostedProgressRecord["documentMetadata"];
+  addedAt: number;
+  sortAt: number;
+  updatedAt: number;
+  serverUpdatedAt: number;
+  removedAt: number | null;
 }
 
 export interface HostedSyncResult {
@@ -376,8 +403,10 @@ async function md5(value: string): Promise<string> {
   return Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.MD5, value);
 }
 
-async function documentIds(records: ProgressSyncRecord[]) {
-  const localDocuments = await loadProgressSyncLocalDocuments();
+async function localDocumentIdentifiers(): Promise<
+  Map<string, HostedDocumentIds | null>
+> {
+  const localDocuments = await loadHostedSyncLocalDocuments();
   const identifiersByAlias = new Map<string, HostedDocumentIds | null>();
   for (const local of localDocuments) {
     const logical = await md5(local.identity);
@@ -398,8 +427,15 @@ async function documentIds(records: ProgressSyncRecord[]) {
       if (existing === undefined) identifiersByAlias.set(alias, identifiers);
     }
   }
-  const byRecord = new Map<ProgressSyncRecord, HostedDocumentIds>();
-  const recordsByDocument = new Map<string, ProgressSyncRecord>();
+  return identifiersByAlias;
+}
+
+async function documentIds<T extends SyncIdentityRecord>(
+  records: T[],
+  identifiersByAlias: Map<string, HostedDocumentIds | null>,
+) {
+  const byRecord = new Map<T, HostedDocumentIds>();
+  const recordsByDocument = new Map<string, T>();
   for (const record of records) {
     const logical = await md5(record.identity);
     const matches = [...record.aliases, record.identity]
@@ -444,9 +480,113 @@ async function documentIds(records: ProgressSyncRecord[]) {
   return { byRecord, recordsByDocument };
 }
 
+function collectionRecordFromHosted(
+  record: HostedCollectionRecord,
+  local: CollectionSyncRecord | undefined,
+): CollectionSyncRecord {
+  const metadata = record.documentMetadata;
+  if (metadata == null || !metadata.title) {
+    throw new Error(
+      `Synced library item ${record.document} has no title metadata.`,
+    );
+  }
+  const author = metadata.authors[0] ?? "Unknown";
+  const semanticIdentity = bookIdentity(metadata.title, author);
+  const identity =
+    local?.identity ??
+    (record.fingerprintKind === "koreader-partial-md5-v1"
+      ? `fingerprint:koreader-partial-md5-v1:${record.document}`
+      : semanticIdentity);
+  return {
+    identity,
+    aliases: [
+      ...new Set([
+        ...(local?.aliases ?? []),
+        semanticIdentity,
+      ]),
+    ],
+    title: metadata.title,
+    author,
+    format: metadata.format ?? "",
+    addedAt: record.addedAt,
+    sortAt: record.sortAt,
+    updatedAt: record.updatedAt,
+    ...(record.removedAt == null ? {} : { removedAt: record.removedAt }),
+  };
+}
+
+async function performHostedCollectionSync(
+  collection: SyncedCollection,
+  localIdentifiers: Map<string, HostedDocumentIds | null>,
+): Promise<{ imported: number; pushed: number; serverTime: number }> {
+  const localBeforePull = await loadCollectionSyncRecords(collection);
+  const identifiersBeforePull = await documentIds(
+    localBeforePull,
+    localIdentifiers,
+  );
+  const remote = await authenticatedRequest<{
+    records: HostedCollectionRecord[];
+    serverTime: number;
+  }>(`/v1/collections/${collection}`);
+  const remoteRecords = remote.records.map((record) =>
+    collectionRecordFromHosted(
+      record,
+      identifiersBeforePull.recordsByDocument.get(record.document),
+    ),
+  );
+  const mergedBeforeImport = mergeCollectionSyncRecords(
+    localBeforePull,
+    remoteRecords,
+  );
+  const imported = await applyCollectionSyncRecords(
+    collection,
+    mergedBeforeImport,
+  );
+  const merged = mergeCollectionSyncRecords(
+    remoteRecords,
+    await loadCollectionSyncRecords(collection),
+  );
+  const identifiers = await documentIds(merged, localIdentifiers);
+  for (const record of merged) {
+    const document = identifiers.byRecord.get(record);
+    if (document == null) {
+      throw new Error(`No hosted sync identifier for ${record.identity}.`);
+    }
+    await authenticatedRequest(
+      `/v1/collections/${collection}/${encodeURIComponent(document.primary)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          aliases: document.aliases,
+          fingerprintKind: document.fingerprintKind,
+          documentMetadata: {
+            title: record.title,
+            authors:
+              record.author && record.author !== "Unknown"
+                ? [record.author]
+                : [],
+            format: record.format,
+            identifiers: document.identifiers,
+          },
+          filename: document.filename,
+          addedAt: record.addedAt,
+          sortAt: record.sortAt,
+          updatedAt: record.updatedAt,
+          removedAt: record.removedAt,
+        }),
+      },
+    );
+  }
+  return { imported, pushed: merged.length, serverTime: remote.serverTime };
+}
+
 async function performHostedProgressSync(): Promise<HostedSyncResult> {
+  const localIdentifiers = await localDocumentIdentifiers();
   const localBeforePull = await loadProgressSyncRecords();
-  const identifiersBeforePull = await documentIds(localBeforePull);
+  const identifiersBeforePull = await documentIds(
+    localBeforePull,
+    localIdentifiers,
+  );
   const remote = await authenticatedRequest<{
     records: HostedProgressRecord[];
     serverTime: number;
@@ -479,7 +619,7 @@ async function performHostedProgressSync(): Promise<HostedSyncResult> {
     remoteRecords,
     await loadProgressSyncRecords(),
   );
-  const identifiers = await documentIds(merged);
+  const identifiers = await documentIds(merged, localIdentifiers);
   const deviceId = await getSyncDeviceId();
   for (const record of merged) {
     const document = identifiers.byRecord.get(record);
@@ -524,11 +664,22 @@ async function performHostedProgressSync(): Promise<HostedSyncResult> {
       },
     );
   }
+  // Progress from legacy KOReader/Moon+ accounts can be the first observation of
+  // a book. Reconcile collections afterwards so that observation becomes a logical
+  // library item during the same sync pass.
+  const library = await performHostedCollectionSync(
+    "library",
+    localIdentifiers,
+  );
+  const readingList = await performHostedCollectionSync(
+    "reading-list",
+    localIdentifiers,
+  );
   return {
-    importedRecords,
-    pushedRecords: merged.length,
+    importedRecords: importedRecords + library.imported + readingList.imported,
+    pushedRecords: merged.length + library.pushed + readingList.pushed,
     unmatchedRecords: unmatched.length,
-    syncedAt: remote.serverTime,
+    syncedAt: Math.max(remote.serverTime, library.serverTime, readingList.serverTime),
   };
 }
 
