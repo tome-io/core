@@ -1,6 +1,6 @@
 # Hosted progress sync
 
-Hosted sync is optional and additive to the existing progress-folder workflow. The
+Hosted sync is optional and replaces the existing progress-folder workflow. The
 service implementation lives in `tome-io/sync`; this repository owns the app client,
 local merge, secure session storage, and KOReader-compatible book hashing.
 
@@ -10,8 +10,8 @@ local merge, secure session storage, and KOReader-compatible book hashing.
 - Android and iOS store only access and refresh tokens in Expo SecureStore.
 - Web does not offer account sync because this client does not downgrade secrets to
   unencrypted browser storage.
-- The existing Drive/iCloud/shared-folder setting remains available as **Legacy sync
-  folder** during migration.
+- Drive, iCloud, and user-selected folders remain book-file storage locations. They are
+  not parallel progress-sync transports.
 - Hosted sync is manual in this foundation branch. Automatic lifecycle triggers should
   be added only after the staging service has been exercised across multiple devices.
 
@@ -47,3 +47,18 @@ After the Worker is deployed and registration is enabled:
    Tomeio's library.
 
 No Tomeio KOReader plugin is required for progress sync.
+
+## Moon+ Reader setup
+
+Moon+ Reader uses the same Tomeio Sync account through its built-in WebDAV support:
+
+1. In Moon+ Reader, enable WebDAV reading-position sync.
+2. Enter `https://sync.tomeio.app` as the WebDAV server.
+3. Enter the same Tomeio email and password.
+4. Keep Moon+'s book-file/shelf upload disabled; Tomeio's endpoint accepts position
+   `.po` files only and never stores EPUB or PDF bytes.
+
+Moon+ filenames are private, account-scoped aliases. Tomeio sends the local filename
+alongside its content fingerprint so identical filenames link automatically. Exact
+title/author matches may link renamed files; ambiguous matches remain unlinked rather
+than creating a false merge. ISBNs are supporting publication metadata, not file keys.

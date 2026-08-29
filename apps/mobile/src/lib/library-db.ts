@@ -969,7 +969,9 @@ export interface ProgressSyncLocalDocument {
   identity: string;
   aliases: string[];
   uri: string;
+  filename: string;
   format: string;
+  identifiers: Record<string, string>;
 }
 
 export async function loadProgressSyncLocalDocuments(): Promise<ProgressSyncLocalDocument[]> {
@@ -985,7 +987,9 @@ export async function loadProgressSyncLocalDocuments(): Promise<ProgressSyncLoca
       identity: record.identity,
       aliases: record.aliases,
       uri,
+      filename: book.local?.filename ?? uri.split('/').at(-1) ?? '',
       format: book.local?.format ?? book.format ?? '',
+      identifiers: book.extension?.book.identifiers ?? {},
     }];
   });
 }

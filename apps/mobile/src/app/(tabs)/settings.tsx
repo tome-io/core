@@ -722,7 +722,7 @@ export default function SettingsScreen() {
             detail={
               Platform.OS === 'web'
                 ? 'Secure account sync is available in the Android and iOS apps.'
-                : hostedSyncError ?? hostedSyncAccount?.email ?? 'Optional sync for Tomeio and KOReader devices.'
+                : hostedSyncError ?? hostedSyncAccount?.email ?? 'Optional sync for Tomeio, KOReader, and Moon+ Reader.'
             }
           >
             {hostedSyncAccount ? (
@@ -750,7 +750,7 @@ export default function SettingsScreen() {
               detail={
                 hostedSyncLastSyncedAt
                   ? `Last synced ${new Date(hostedSyncLastSyncedAt).toLocaleString()}`
-                  : 'Sync progress with your other Tomeio and KOReader devices.'
+                  : 'Sync progress with your Tomeio, KOReader, and Moon+ Reader devices.'
               }
             >
               <PillButton
