@@ -22,7 +22,8 @@ export interface ReaderCatalogResult {
 
 async function enrichReaderBook(
   book: LibraryBook,
-  coverLookup?: ExtensionCoverLookup
+  coverLookup?: ExtensionCoverLookup,
+  coverLookupKey?: string,
 ): Promise<{
   book: LibraryBook;
   warning?: string;
@@ -101,6 +102,7 @@ async function enrichReaderBook(
         metadataPending: warnings.length > 0 && !metadata && !extensionCover,
         metadataUpdatedAt: Date.now(),
         metadataVersion: READER_METADATA_VERSION,
+        ...(coverLookupKey ? { coverLookupKey } : {}),
       },
       ...(warnings.length ? { warning: `${book.title}: ${warnings.join(' ')}` } : {}),
     };
@@ -124,21 +126,33 @@ export async function enrichIndexedReaderCatalog(
     force?: boolean;
     onProgress?: (completed: number, total: number) => void;
     coverLookup?: ExtensionCoverLookup;
+    coverLookupKey?: string;
   } = {},
 ): Promise<ReaderCatalogResult> {
   let books = initialBooks;
   const warnings: string[] = [];
   const now = Date.now();
-  const candidates = books.filter(
-    (book) => shouldEnrichReaderMetadata(book, now, options.force)
-  );
+  const candidates = books.filter((book) => {
+    const coverMissing =
+      !book.coverSources?.local &&
+      !book.coverSources?.catalog &&
+      Object.keys(book.coverSources?.providers ?? {}).length === 0;
+    return (
+      shouldEnrichReaderMetadata(book, now, options.force) ||
+      (!!options.coverLookupKey &&
+        coverMissing &&
+        book.coverLookupKey !== options.coverLookupKey)
+    );
+  });
   let completed = 0;
   options.onProgress?.(completed, candidates.length);
 
   for (let offset = 0; offset < candidates.length; offset += METADATA_BATCH_SIZE) {
     const batch = candidates.slice(offset, offset + METADATA_BATCH_SIZE);
     const results = await Promise.all(
-      batch.map((book) => enrichReaderBook(book, options.coverLookup))
+      batch.map((book) =>
+        enrichReaderBook(book, options.coverLookup, options.coverLookupKey)
+      )
     );
     for (const result of results) {
       await persistCatalogBook(result.book);

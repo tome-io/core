@@ -21,6 +21,7 @@ import {
   LibraryBookActions,
   type LibraryAction,
 } from '@/components/library-book-actions';
+import { AppErrorDialog } from '@/components/app-error-dialog';
 import {
   DescriptionText,
   descriptionPlainText,
@@ -161,6 +162,7 @@ export default function BookDetailScreen() {
     markAsRead,
     removeLibraryBook,
     removeLocalFile,
+    refreshBookCoverSources,
     refreshBookMetadata,
     setBookCoverPreference,
     toggleReadingList,
@@ -362,6 +364,7 @@ export default function BookDetailScreen() {
 
   const [options, setOptions] = useState<AcquisitionEntry[] | null>(null);
   const [optionsError, setOptionsError] = useState<string | null>(null);
+  const [optionsErrorVisible, setOptionsErrorVisible] = useState(false);
   const [nextOptionsPage, setNextOptionsPage] = useState<number | null>(null);
   const [loadingMoreOptions, setLoadingMoreOptions] = useState(false);
   const optionsGeneration = useRef(0);
@@ -495,6 +498,7 @@ export default function BookDetailScreen() {
     const generation = ++optionsGeneration.current;
     setOptions(null);
     setOptionsError(null);
+    setOptionsErrorVisible(false);
     setNextOptionsPage(null);
     setLoadingMoreOptions(false);
 
@@ -507,7 +511,9 @@ export default function BookDetailScreen() {
       })
       .catch((cause) => {
         if (!cancelled && optionsGeneration.current === generation) {
+          setOptions([]);
           setOptionsError(cause instanceof Error ? cause.message : String(cause));
+          setOptionsErrorVisible(true);
         }
       });
     return () => {
@@ -520,6 +526,7 @@ export default function BookDetailScreen() {
     const generation = optionsGeneration.current;
     setLoadingMoreOptions(true);
     setOptionsError(null);
+    setOptionsErrorVisible(false);
     try {
       const loaded = await loadOptionsPage(nextOptionsPage);
       if (optionsGeneration.current !== generation) return;
@@ -532,6 +539,7 @@ export default function BookDetailScreen() {
     } catch (cause) {
       if (optionsGeneration.current === generation) {
         setOptionsError(cause instanceof Error ? cause.message : String(cause));
+        setOptionsErrorVisible(true);
       }
     } finally {
       if (optionsGeneration.current === generation) setLoadingMoreOptions(false);
@@ -743,19 +751,23 @@ export default function BookDetailScreen() {
     },
     [coverBusy, libraryActionBook, setBookCoverPreference]
   );
-  const refreshCoverMetadata = useCallback(async () => {
+  const loadCoverSources = useCallback(async (force = false) => {
     if (!libraryActionBook || coverBusy) return;
     setCoverBusy(true);
     setLibraryError(null);
     try {
-      await refreshBookMetadata(libraryActionBook);
+      await refreshBookCoverSources(libraryActionBook, force);
       setFailedCovers([]);
     } catch (cause) {
       setLibraryError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setCoverBusy(false);
     }
-  }, [coverBusy, libraryActionBook, refreshBookMetadata]);
+  }, [coverBusy, libraryActionBook, refreshBookCoverSources]);
+  const openCoverPicker = useCallback(() => {
+    setCoverPickerOpen(true);
+    void loadCoverSources();
+  }, [loadCoverSources]);
   const addonActions = useMemo(() => {
     if (!libraryActionBook) return [];
     const book = toExtensionLibraryBook(libraryActionBook);
@@ -903,7 +915,10 @@ export default function BookDetailScreen() {
               }
             />
           ) : (
-            <View className="absolute inset-0 items-center justify-center bg-[#232329]">
+            <View
+              className="absolute inset-0 items-center justify-center"
+              style={{ backgroundColor: colors.surfaceRaised }}
+            >
               <Text className="text-5xl">📚</Text>
             </View>
           )}
@@ -930,7 +945,7 @@ export default function BookDetailScreen() {
           </Pressable>
           {libraryActionBook ? (
             <Pressable
-              onPress={() => setCoverPickerOpen(true)}
+              onPress={openCoverPicker}
               accessibilityRole="button"
               accessibilityLabel="Cover settings"
               className="absolute right-4 top-4 h-11 w-11 items-center justify-center rounded-full"
@@ -998,8 +1013,21 @@ export default function BookDetailScreen() {
                 <Text className="text-sm text-neutral-400">Loading provider options…</Text>
               </View>
             ) : null}
-            {optionsError ? <Text className="text-sm text-red-400">{optionsError}</Text> : null}
-            {options?.length === 0 ? (
+            {optionsError ? (
+              <Pressable
+                onPress={() => setOptionsErrorVisible(true)}
+                className="rounded-xl border px-4 py-3 active:opacity-75"
+                style={{
+                  borderColor: colors.danger,
+                  backgroundColor: colors.surface,
+                }}
+              >
+                <Text className="text-sm font-semibold" style={{ color: colors.danger }}>
+                  Provider unavailable · Show details
+                </Text>
+              </Pressable>
+            ) : null}
+            {options?.length === 0 && !optionsError ? (
               <Text className="text-sm text-neutral-500">
                 No acquisitions were returned by the selected provider.
               </Text>
@@ -1035,7 +1063,8 @@ export default function BookDetailScreen() {
                 disabled={loadingMoreOptions}
                 accessibilityRole="button"
                 accessibilityLabel="Find more download options"
-                className="h-11 items-center justify-center rounded-xl border border-[#292932] disabled:opacity-50"
+                className="h-11 items-center justify-center rounded-xl border disabled:opacity-50"
+                style={{ borderColor: colors.border }}
               >
                 {loadingMoreOptions ? (
                   <ActivityIndicator color={colors.accent} size="small" />
@@ -1142,7 +1171,13 @@ export default function BookDetailScreen() {
           if (!coverBusy) setCoverPickerOpen(false);
         }}
         onChoose={(preference) => void chooseCover(preference)}
-        onRefresh={() => void refreshCoverMetadata()}
+        onRefresh={() => void loadCoverSources(true)}
+      />
+
+      <AppErrorDialog
+        title="Download options unavailable"
+        message={optionsErrorVisible ? optionsError : null}
+        onClose={() => setOptionsErrorVisible(false)}
       />
 
       <Modal
@@ -1157,10 +1192,18 @@ export default function BookDetailScreen() {
         >
           <Pressable
             onPress={(event) => event.stopPropagation()}
-            className="w-full rounded-2xl overflow-hidden border border-[#2a2a32] bg-[#141419]"
-            style={{ maxWidth: 720, maxHeight: '80%' }}
+            className="w-full rounded-2xl overflow-hidden border"
+            style={{
+              maxWidth: 720,
+              maxHeight: '80%',
+              borderColor: colors.border,
+              backgroundColor: colors.surface,
+            }}
           >
-            <View className="h-14 px-5 flex-row items-center justify-between border-b border-[#2a2a32]">
+            <View
+              className="h-14 px-5 flex-row items-center justify-between border-b"
+              style={{ borderBottomColor: colors.border }}
+            >
               <Text numberOfLines={1} className="flex-1 text-base font-semibold text-neutral-100">
                 {title}
               </Text>
@@ -1202,15 +1245,11 @@ function CoverPicker({
   onChoose: (preference: BookCoverPreference) => void;
   onRefresh: () => void;
 }) {
-  const openLibraryAvailable = providers.some(
-    (provider) => provider.id === 'org.tomeio.open-library'
-  );
   const choices: {
     preference: BookCoverPreference;
     label: string;
     detail: string;
     uri?: string;
-    resolvable?: boolean;
   }[] = [
     {
       preference: 'auto',
@@ -1229,27 +1268,22 @@ function CoverPicker({
           uri: sources.local,
         }]
       : []),
-    ...(sources?.catalog || openLibraryAvailable
+    ...(sources?.catalog
       ? [{
           preference: 'catalog' as const,
           label: 'Open Library',
-          detail: sources?.catalog
-            ? 'Use the matched catalog cover.'
-            : 'Ask Open Library to find a cover.',
-          uri: sources?.catalog,
-          resolvable: openLibraryAvailable,
+          detail: 'Use the matched catalog cover.',
+          uri: sources.catalog,
         }]
       : []),
     ...providers
       .filter((provider) => provider.id !== 'org.tomeio.open-library')
+      .filter((provider) => !!sources?.providers?.[provider.id])
       .map((provider) => ({
         preference: `provider:${provider.id}` as BookCoverPreference,
         label: provider.name,
-        detail: sources?.providers?.[provider.id]
-          ? 'Use the cover found by this add-on.'
-          : 'Ask this add-on to find a cover.',
+        detail: 'Use the cover found by this add-on.',
         uri: sources?.providers?.[provider.id],
-        resolvable: true,
       })),
   ];
 
@@ -1266,7 +1300,11 @@ function CoverPicker({
         <Pressable className="absolute inset-0" onPress={onClose} accessibilityLabel="Close cover settings" />
         <SafeAreaView
           edges={['bottom']}
-          className="rounded-t-3xl border-t border-[#2a2a32] bg-[#141419] px-5 pb-5 pt-5"
+          className="rounded-t-3xl border-t px-5 pb-5 pt-5"
+          style={{
+            borderTopColor: colors.border,
+            backgroundColor: colors.surface,
+          }}
         >
           <View className="mb-5 flex-row items-center justify-between gap-4">
             <View className="min-w-0 flex-1">
@@ -1278,7 +1316,8 @@ function CoverPicker({
               disabled={busy}
               accessibilityRole="button"
               accessibilityLabel="Close cover settings"
-              className="h-9 w-9 items-center justify-center rounded-full bg-[#202027] disabled:opacity-40"
+              className="h-9 w-9 items-center justify-center rounded-full disabled:opacity-40"
+              style={{ backgroundColor: colors.surfaceRaised }}
             >
               <Feather name="x" size={18} color="#d4d4d8" />
             </Pressable>
@@ -1291,14 +1330,17 @@ function CoverPicker({
                 <Pressable
                   key={choice.preference}
                   onPress={() => onChoose(choice.preference)}
-                  disabled={busy || (!choice.uri && !choice.resolvable)}
+                  disabled={busy || !choice.uri}
                   className="min-h-20 flex-row items-center gap-4 rounded-2xl border px-3 py-3 disabled:opacity-40"
                   style={{
                     borderColor: selected ? colors.accent : colors.border,
                     backgroundColor: selected ? colors.accentMuted : colors.surface,
                   }}
                 >
-                  <View className="h-16 w-11 overflow-hidden rounded-md bg-[#232329]">
+                  <View
+                    className="h-16 w-11 overflow-hidden rounded-md"
+                    style={{ backgroundColor: colors.surfaceRaised }}
+                  >
                     {choice.uri ? (
                       <Image
                         source={{ uri: choice.uri }}
@@ -1325,6 +1367,15 @@ function CoverPicker({
             })}
           </View>
 
+          {busy ? (
+            <View className="mt-3 flex-row items-center gap-2">
+              <ActivityIndicator size="small" color={colors.accent} />
+              <Text className="text-xs text-neutral-400">
+                Checking installed cover providers…
+              </Text>
+            </View>
+          ) : null}
+
           {!sources?.local ? (
             <Text className="mt-3 text-xs leading-4 text-neutral-500">
               No usable embedded cover was found. Automatic mode will try Open Library,
@@ -1334,7 +1385,8 @@ function CoverPicker({
           <Pressable
             onPress={onRefresh}
             disabled={busy}
-            className="mt-4 h-11 flex-row items-center justify-center gap-2 rounded-xl border border-[#2a2a32] disabled:opacity-40"
+            className="mt-4 h-11 flex-row items-center justify-center gap-2 rounded-xl border disabled:opacity-40"
+            style={{ borderColor: colors.border }}
           >
             {busy ? (
               <ActivityIndicator size="small" color={colors.accent} />
@@ -1374,8 +1426,14 @@ function CurrentBookAcquisitionRow({
       : null;
 
   return (
-    <View className="rounded-2xl border border-[#292932] bg-[#111116] p-4 flex-row items-center gap-3">
-      <View className="h-10 w-10 rounded-xl bg-[#202029] items-center justify-center">
+    <View
+      className="rounded-2xl border p-4 flex-row items-center gap-3"
+      style={{ borderColor: colors.border, backgroundColor: colors.surface }}
+    >
+      <View
+        className="h-10 w-10 rounded-xl items-center justify-center"
+        style={{ backgroundColor: colors.surfaceRaised }}
+      >
         <Feather
           name={acquisition ? 'file-text' : 'download'}
           size={18}
@@ -1449,8 +1507,14 @@ function AcquisitionRow({
       ? Math.min(100, Math.round((phase.progress.bytesWritten / phase.progress.totalBytes) * 100))
       : null;
   return (
-    <View className="rounded-2xl border border-[#292932] p-3 flex-row items-center gap-3 bg-[#111116]">
-      <View className="h-[78px] w-[54px] overflow-hidden rounded-lg bg-[#202029] items-center justify-center">
+    <View
+      className="rounded-2xl border p-3 flex-row items-center gap-3"
+      style={{ borderColor: colors.border, backgroundColor: colors.surface }}
+    >
+      <View
+        className="h-[78px] w-[54px] overflow-hidden rounded-lg items-center justify-center"
+        style={{ backgroundColor: colors.surfaceRaised }}
+      >
         {book.coverUrl && !coverFailed ? (
           <Image
             source={{ uri: book.coverUrl }}

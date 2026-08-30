@@ -42,6 +42,7 @@ import {
   setCatalogBookCoverPreference,
   setCatalogBookCoverCatalogSource,
   setCatalogBookCoverProviderSource,
+  setCatalogBookCoverSources,
   setCollectionSyncMembership,
 } from "@/lib/library-db";
 import {
@@ -97,6 +98,10 @@ interface LibraryActionsValue {
   synchronizeLibrary: () => Promise<void>;
   refreshProgressSyncBooks: () => Promise<void>;
   refreshBookMetadata: (book: LibraryBook) => Promise<void>;
+  refreshBookCoverSources: (
+    book: LibraryBook,
+    force?: boolean,
+  ) => Promise<void>;
   setBookCoverPreference: (
     book: LibraryBook,
     preference: BookCoverPreference,
@@ -149,6 +154,7 @@ const LibraryActionsContext = createContext<LibraryActionsValue>({
   synchronizeLibrary: async () => {},
   refreshProgressSyncBooks: async () => {},
   refreshBookMetadata: async () => {},
+  refreshBookCoverSources: async () => {},
   setBookCoverPreference: async () => {},
   markAsRead: async () => {},
   removeLocalFile: async () => {},
@@ -351,6 +357,14 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       return null;
     },
     [extensions.cover, extensions.coverProviders],
+  );
+  const coverProviderKey = useMemo(
+    () =>
+      extensions
+        .coverProviders()
+        .map((provider) => `${provider.id}@${provider.version}`)
+        .join("|"),
+    [extensions.coverProviders],
   );
 
   const refreshLocalBooks = useCallback((): Promise<void> => {
@@ -560,6 +574,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
           enrichIndexedReaderCatalog(enrichmentMoonReaderBooks, undefined, {
             onProgress: trackEnrichment("reader"),
             coverLookup: extensionCoverLookup,
+            coverLookupKey: coverProviderKey,
           }).catch(
             (err: any) => ({
               books: enrichmentMoonReaderBooks,
@@ -571,6 +586,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
           enrichIndexedReaderCatalog(enrichmentProgressBooks, undefined, {
             onProgress: trackEnrichment("progress"),
             coverLookup: extensionCoverLookup,
+            coverLookupKey: coverProviderKey,
           }).catch(
             (err: any) => ({
               books: enrichmentProgressBooks,
@@ -582,6 +598,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
           enrichIndexedReaderCatalog(collectionOnlyBooks, undefined, {
             onProgress: trackEnrichment("collection"),
             coverLookup: extensionCoverLookup,
+            coverLookupKey: coverProviderKey,
           }).catch((err: any) => ({
               books: collectionOnlyBooks,
               warnings: [
@@ -658,6 +675,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     extensions.readerSync,
     reportHostedSyncProgress,
     extensionCoverLookup,
+    coverProviderKey,
   ]);
 
   const refreshProgressSyncBooks = useCallback(async (): Promise<void> => {
@@ -668,10 +686,11 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     const enriched = await enrichIndexedReaderCatalog(books, undefined, {
       force: true,
       coverLookup: extensionCoverLookup,
+      coverLookupKey: coverProviderKey,
     });
     setProgressSyncBooks(enriched.books);
     if (enriched.warnings.length) setWarning(enriched.warnings.join(" "));
-  }, [extensionCoverLookup]);
+  }, [coverProviderKey, extensionCoverLookup]);
 
   useEffect(() => {
     void refreshLocalBooks();
@@ -722,6 +741,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
               });
             },
             coverLookup: extensionCoverLookup,
+            coverLookupKey: coverProviderKey,
           },
         );
         const [refreshedProgress, refreshedState] = await Promise.all([
@@ -753,7 +773,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         });
       });
     },
-    [extensionCoverLookup],
+    [coverProviderKey, extensionCoverLookup],
   );
 
   const synchronizePendingChanges = useCallback(async (): Promise<void> => {
@@ -1011,7 +1031,10 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       const result = await enrichIndexedReaderCatalog(
         [invalidated],
         undefined,
-        { coverLookup: extensionCoverLookup },
+        {
+          coverLookup: extensionCoverLookup,
+          coverLookupKey: coverProviderKey,
+        },
       );
       const refreshed = result.books[0];
       setMoonReaderBooks((current) =>
@@ -1025,7 +1048,64 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       setState(refreshedState);
       setWarning(result.warnings.length ? result.warnings.join(" ") : null);
     },
-    [extensionCoverLookup, settings.localLibraryLocation],
+    [coverProviderKey, extensionCoverLookup, settings.localLibraryLocation],
+  );
+
+  const refreshBookCoverSources = useCallback(
+    async (book: LibraryBook, force = false) => {
+      const providers = extensions.coverProviders();
+      const fresh =
+        book.coverSourcesLookupKey === coverProviderKey &&
+        !!book.coverSourcesUpdatedAt &&
+        book.coverSourcesUpdatedAt > Date.now() - 7 * 24 * 60 * 60 * 1000;
+      if (!force && fresh) return;
+
+      const results = await Promise.allSettled(
+        providers.map(async (provider) => ({
+          provider,
+          uri: await extensions.cover(
+            provider.id,
+            toExtensionLibraryBook(book),
+          ),
+        })),
+      );
+      let catalog: string | undefined;
+      const providerSources: Record<string, string> = {};
+      const failures: string[] = [];
+      for (const result of results) {
+        if (result.status === "rejected") {
+          failures.push(
+            result.reason instanceof Error
+              ? result.reason.message
+              : String(result.reason),
+          );
+          continue;
+        }
+        const { provider, uri } = result.value;
+        if (!uri || !(await hasUsableRemoteCover(uri))) continue;
+        if (provider.id === "org.tomeio.open-library") catalog = uri;
+        else providerSources[provider.id] = uri;
+      }
+
+      const persisted = await setCatalogBookCoverSources(book.key, {
+        catalog,
+        providers: providerSources,
+        lookupKey: coverProviderKey,
+      });
+      const applyCover = (item: LibraryBook): LibraryBook =>
+        item.key === book.key ? { ...item, ...persisted } : item;
+      setLocalBooks((current) => current.map(applyCover));
+      setMoonReaderBooks((current) => current.map(applyCover));
+      setProgressSyncBooks((current) => current.map(applyCover));
+      await commit((current) => ({
+        downloaded: current.downloaded.map(applyCover),
+        readingList: current.readingList.map(applyCover),
+      }));
+      if (failures.length) {
+        setWarning(`Some cover providers were unavailable. ${failures.join(" ")}`);
+      }
+    },
+    [commit, coverProviderKey, extensions.cover, extensions.coverProviders],
   );
 
   const setBookCoverPreference = useCallback(
@@ -1282,6 +1362,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       synchronizeLibrary: synchronizePendingChanges,
       refreshProgressSyncBooks,
       refreshBookMetadata,
+      refreshBookCoverSources,
       setBookCoverPreference,
       markAsRead,
       removeLocalFile,
@@ -1296,6 +1377,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       markAsRead,
       recordDownload,
       refreshBookMetadata,
+      refreshBookCoverSources,
       setBookCoverPreference,
       refreshLocalBooks,
       synchronizePendingChanges,

@@ -61,6 +61,7 @@ export interface AvailableLibraryImport extends ExtensionLibraryImport {
 export interface AvailableCoverProvider {
   id: string;
   name: string;
+  version: string;
 }
 
 interface ExtensionsContextValue extends ExtensionRegistrySnapshot {
@@ -447,7 +448,11 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
             ? 2
             : 3;
     return manifests
-      .map((manifest) => ({ id: manifest.id, name: manifest.name }))
+      .map((manifest) => ({
+        id: manifest.id,
+        name: manifest.name,
+        version: manifest.version,
+      }))
       .sort(
         (left, right) =>
           priority(left.id) - priority(right.id) ||

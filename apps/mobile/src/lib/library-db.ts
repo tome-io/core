@@ -997,6 +997,9 @@ function preserveCatalogMetadata(
     metadataPending: existing.metadataPending,
     metadataUpdatedAt: existing.metadataUpdatedAt,
     metadataVersion: existing.metadataVersion,
+    coverLookupKey: existing.coverLookupKey,
+    coverSourcesLookupKey: existing.coverSourcesLookupKey,
+    coverSourcesUpdatedAt: existing.coverSourcesUpdatedAt,
   };
 }
 
@@ -1241,6 +1244,49 @@ export async function setCatalogBookCoverCatalogSource(
     const updated = {
       ...book,
       coverSources: { ...book.coverSources, catalog: uri },
+    };
+    await upsertBook(database, updated);
+    return updated;
+  });
+}
+
+export async function setCatalogBookCoverSources(
+  bookKey: string,
+  sources: {
+    catalog?: string;
+    providers: Record<string, string>;
+    lookupKey: string;
+  },
+): Promise<LibraryBook> {
+  return withDatabaseWrite(async (database) => {
+    const row = await database.getFirstAsync<CatalogRow>(
+      "SELECT book_json FROM catalog_books WHERE book_key = ?",
+      bookKey,
+    );
+    if (!row)
+      throw new Error("This book is not present in the library catalog.");
+    const book = parseBook(row.book_json);
+    const coverSources = {
+      ...book.coverSources,
+      ...(sources.catalog ? { catalog: sources.catalog } : {}),
+      providers: {
+        ...book.coverSources?.providers,
+        ...sources.providers,
+      },
+    };
+    const resolved = resolveBookCover(coverSources, book.coverPreference, [
+      book.moonReader?.detailCoverUri,
+      book.moonReader?.coverUri,
+      book.cover,
+      book.fallbackCover,
+    ]);
+    const updated: LibraryBook = {
+      ...book,
+      coverSources,
+      cover: resolved.cover,
+      fallbackCover: resolved.fallbackCover,
+      coverSourcesLookupKey: sources.lookupKey,
+      coverSourcesUpdatedAt: Date.now(),
     };
     await upsertBook(database, updated);
     return updated;
