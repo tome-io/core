@@ -571,6 +571,9 @@ export default function BookDetailScreen() {
   const [descriptionOpen, setDescriptionOpen] = useState(false);
   const [coverPickerOpen, setCoverPickerOpen] = useState(false);
   const [coverBusy, setCoverBusy] = useState(false);
+  const [unavailableCoverProviders, setUnavailableCoverProviders] = useState<
+    string[]
+  >([]);
   const [failedCovers, setFailedCovers] = useState<string[]>([]);
   const [phases, setPhases] = useState<Record<string, Phase>>({});
   const onReadingList = readingListBook
@@ -756,7 +759,9 @@ export default function BookDetailScreen() {
     setCoverBusy(true);
     setLibraryError(null);
     try {
-      await refreshBookCoverSources(libraryActionBook, force);
+      setUnavailableCoverProviders(
+        await refreshBookCoverSources(libraryActionBook, force)
+      );
       setFailedCovers([]);
     } catch (cause) {
       setLibraryError(cause instanceof Error ? cause.message : String(cause));
@@ -1165,6 +1170,7 @@ export default function BookDetailScreen() {
         title={title}
         sources={libraryActionBook?.coverSources}
         providers={coverProviders}
+        unavailableProviders={unavailableCoverProviders}
         preference={libraryActionBook?.coverPreference ?? 'auto'}
         busy={coverBusy}
         onClose={() => {
@@ -1229,6 +1235,7 @@ function CoverPicker({
   title,
   sources,
   providers,
+  unavailableProviders,
   preference,
   busy,
   onClose,
@@ -1239,6 +1246,7 @@ function CoverPicker({
   title: string;
   sources?: BookCoverSources;
   providers: AvailableCoverProvider[];
+  unavailableProviders: string[];
   preference: BookCoverPreference;
   busy: boolean;
   onClose: () => void;
@@ -1353,15 +1361,11 @@ function CoverPicker({
                     <Text className="text-sm font-semibold text-neutral-100">{choice.label}</Text>
                     <Text className="mt-1 text-xs leading-4 text-neutral-500">{choice.detail}</Text>
                   </View>
-                  {busy && selected ? (
-                    <ActivityIndicator size="small" color={colors.accent} />
-                  ) : (
-                    <Feather
-                      name={selected ? 'check-circle' : 'circle'}
-                      size={19}
-                      color={selected ? colors.accent : colors.textMuted}
-                    />
-                  )}
+                  <Feather
+                    name={selected ? 'check-circle' : 'circle'}
+                    size={19}
+                    color={selected ? colors.accent : colors.textMuted}
+                  />
                 </Pressable>
               );
             })}
@@ -1376,6 +1380,12 @@ function CoverPicker({
             </View>
           ) : null}
 
+          {!busy && unavailableProviders.length ? (
+            <Text className="mt-3 text-xs leading-4" style={{ color: colors.textMuted }}>
+              Unavailable right now: {unavailableProviders.join(', ')}.
+            </Text>
+          ) : null}
+
           {!sources?.local ? (
             <Text className="mt-3 text-xs leading-4 text-neutral-500">
               No usable embedded cover was found. Automatic mode will try Open Library,
@@ -1388,11 +1398,7 @@ function CoverPicker({
             className="mt-4 h-11 flex-row items-center justify-center gap-2 rounded-xl border disabled:opacity-40"
             style={{ borderColor: colors.border }}
           >
-            {busy ? (
-              <ActivityIndicator size="small" color={colors.accent} />
-            ) : (
-              <Feather name="refresh-cw" size={16} color={colors.accent} />
-            )}
+            <Feather name="refresh-cw" size={16} color={colors.accent} />
             <Text className="text-xs font-semibold" style={{ color: colors.accent }}>
               Refresh cover sources
             </Text>

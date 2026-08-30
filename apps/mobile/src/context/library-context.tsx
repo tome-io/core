@@ -101,7 +101,7 @@ interface LibraryActionsValue {
   refreshBookCoverSources: (
     book: LibraryBook,
     force?: boolean,
-  ) => Promise<void>;
+  ) => Promise<string[]>;
   setBookCoverPreference: (
     book: LibraryBook,
     preference: BookCoverPreference,
@@ -154,7 +154,7 @@ const LibraryActionsContext = createContext<LibraryActionsValue>({
   synchronizeLibrary: async () => {},
   refreshProgressSyncBooks: async () => {},
   refreshBookMetadata: async () => {},
-  refreshBookCoverSources: async () => {},
+  refreshBookCoverSources: async () => [],
   setBookCoverPreference: async () => {},
   markAsRead: async () => {},
   removeLocalFile: async () => {},
@@ -353,7 +353,9 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
           );
         }
       }
-      if (warnings.length) throw new Error(warnings.join(" "));
+      if (warnings.length) {
+        console.info("Cover provider lookup failed:", warnings.join(" "));
+      }
       return null;
     },
     [extensions.cover, extensions.coverProviders],
@@ -1058,30 +1060,41 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         book.coverSourcesLookupKey === coverProviderKey &&
         !!book.coverSourcesUpdatedAt &&
         book.coverSourcesUpdatedAt > Date.now() - 7 * 24 * 60 * 60 * 1000;
-      if (!force && fresh) return;
+      if (!force && fresh) return [];
 
-      const results = await Promise.allSettled(
-        providers.map(async (provider) => ({
-          provider,
-          uri: await extensions.cover(
-            provider.id,
-            toExtensionLibraryBook(book),
-          ),
-        })),
+      const results = await Promise.all(
+        providers.map(async (provider) => {
+          try {
+            return {
+              provider,
+              uri: await extensions.cover(
+                provider.id,
+                toExtensionLibraryBook(book),
+              ),
+              error: null,
+            };
+          } catch (cause) {
+            return {
+              provider,
+              uri: null,
+              error: cause instanceof Error ? cause.message : String(cause),
+            };
+          }
+        }),
       );
       let catalog: string | undefined;
       const providerSources: Record<string, string> = {};
-      const failures: string[] = [];
+      const unavailableProviders: string[] = [];
       for (const result of results) {
-        if (result.status === "rejected") {
-          failures.push(
-            result.reason instanceof Error
-              ? result.reason.message
-              : String(result.reason),
+        if (result.error) {
+          unavailableProviders.push(result.provider.name);
+          console.info(
+            `Cover provider ${result.provider.name} failed:`,
+            result.error,
           );
           continue;
         }
-        const { provider, uri } = result.value;
+        const { provider, uri } = result;
         if (!uri || !(await hasUsableRemoteCover(uri))) continue;
         if (provider.id === "org.tomeio.open-library") catalog = uri;
         else providerSources[provider.id] = uri;
@@ -1101,9 +1114,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         downloaded: current.downloaded.map(applyCover),
         readingList: current.readingList.map(applyCover),
       }));
-      if (failures.length) {
-        setWarning(`Some cover providers were unavailable. ${failures.join(" ")}`);
-      }
+      return unavailableProviders;
     },
     [commit, coverProviderKey, extensions.cover, extensions.coverProviders],
   );
