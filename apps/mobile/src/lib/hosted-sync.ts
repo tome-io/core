@@ -11,7 +11,9 @@ import {
   loadHostedSyncLocalDocuments,
   loadProgressSyncRecords,
   setSyncFingerprint,
+  syncAliases,
 } from "./library-db";
+import type { LibraryBook } from "./library";
 import { koreaderPartialMd5 } from "./koreader-document";
 import { bookIdentity } from "./book-metadata";
 import { materializeNativeFolderFile } from "./native-folder-file";
@@ -58,6 +60,18 @@ export interface HostedSyncProgress {
 
 export interface HostedSyncOptions {
   onProgress?: (progress: HostedSyncProgress) => void;
+  queueAfterCurrent?: boolean;
+}
+
+export type HostedSyncBookStream =
+  | "progress"
+  | "library"
+  | "reading-list";
+
+export interface HostedSyncBookChange {
+  book: LibraryBook;
+  streams: HostedSyncBookStream[];
+  documentAlias?: string;
 }
 
 export interface HostedSyncAccount {
@@ -117,7 +131,13 @@ interface HostedCollectionRecord {
 interface SyncCheckpoint {
   cursor: number | null;
   acknowledgements: Record<string, string>;
+  localRevision?: string;
+  remoteWindowRevision?: string;
 }
+
+const HOSTED_DOCUMENT_ALIAS_PREFIX =
+  "hosted-document:koreader-partial-md5-v1:";
+const SOURCE_URL_IDENTIFIER = "tomeio:source-url";
 
 export interface HostedSyncResult {
   importedRecords: number;
@@ -477,9 +497,25 @@ async function loadCheckpoint(
       throw new Error(`The stored ${stream} sync acknowledgements are invalid.`);
     }
   }
+  if (
+    value.localRevision != null &&
+    typeof value.localRevision !== "string"
+  ) {
+    throw new Error(`The stored ${stream} local revision is invalid.`);
+  }
+  if (
+    value.remoteWindowRevision != null &&
+    typeof value.remoteWindowRevision !== "string"
+  ) {
+    throw new Error(`The stored ${stream} remote revision is invalid.`);
+  }
   return {
     cursor: value.cursor ?? null,
     acknowledgements: value.acknowledgements,
+    ...(value.localRevision ? { localRevision: value.localRevision } : {}),
+    ...(value.remoteWindowRevision
+      ? { remoteWindowRevision: value.remoteWindowRevision }
+      : {}),
   };
 }
 
@@ -512,6 +548,36 @@ async function payloadFingerprint(
   );
 }
 
+async function syncRecordsRevision(records: SyncIdentityRecord[]): Promise<string> {
+  return md5(
+    JSON.stringify(
+      [...records]
+        .map((record) => {
+          const value = record as SyncIdentityRecord &
+            Partial<ProgressSyncRecord & CollectionSyncRecord>;
+          return {
+            identity: record.identity,
+            updatedAt: value.updatedAt,
+            removedAt: value.removedAt,
+            progress: value.progress,
+            isRead: value.isRead,
+            readingTimeMs: value.readingTimeMs,
+            wordsRead: value.wordsRead,
+            lastReadAt: value.lastReadAt,
+            addedAt: value.addedAt,
+            sortAt: value.sortAt,
+            sourceUrl: value.sourceUrl,
+          };
+        })
+        .sort((left, right) => left.identity.localeCompare(right.identity)),
+    ),
+  );
+}
+
+async function remoteWindowRevision(records: unknown[]): Promise<string> {
+  return md5(JSON.stringify(records));
+}
+
 function collectionPayload(
   record: CollectionSyncRecord,
   document: HostedDocumentIds,
@@ -524,7 +590,12 @@ function collectionPayload(
       authors:
         record.author && record.author !== "Unknown" ? [record.author] : [],
       format: record.format,
-      identifiers: document.identifiers,
+      identifiers: {
+        ...document.identifiers,
+        ...(record.sourceUrl
+          ? { [SOURCE_URL_IDENTIFIER]: record.sourceUrl }
+          : {}),
+      },
     },
     filename: document.filename,
     addedAt: record.addedAt,
@@ -615,6 +686,61 @@ async function localDocumentIdentifiers(): Promise<
   return identifiersByAlias;
 }
 
+async function localDocumentIdentifiersForChanges(
+  changes: HostedSyncBookChange[],
+): Promise<Map<string, HostedDocumentIds | null>> {
+  const identifiersByAlias = new Map<string, HostedDocumentIds | null>();
+  for (const change of changes) {
+    const { book } = change;
+    const uri = book.local?.uri ?? book.fileUri;
+    const filename =
+      book.local?.filename ?? uri?.split("/").at(-1) ?? "";
+    const storedFingerprint = change.documentAlias?.startsWith(
+      HOSTED_DOCUMENT_ALIAS_PREFIX,
+    )
+      ? change.documentAlias.slice(HOSTED_DOCUMENT_ALIAS_PREFIX.length)
+      : null;
+    if (
+      storedFingerprint == null &&
+      (!uri || book.availableLocally === false)
+    ) {
+      continue;
+    }
+    const partial =
+      storedFingerprint ??
+      (await koreaderPartialMd5(
+        await materializeNativeFolderFile(uri!, filename),
+      ));
+    const identity = bookIdentity(book.title, book.author);
+    const identifiers: HostedDocumentIds = {
+      primary: partial,
+      aliases: [await md5(identity)],
+      fingerprintKind: "koreader-partial-md5-v1",
+      filename: filename || null,
+      identifiers: book.extension?.book.identifiers ?? {},
+    };
+    for (const alias of [identity, ...syncAliases(book)]) {
+      const existing = identifiersByAlias.get(alias);
+      if (existing != null && existing.primary !== partial) {
+        identifiersByAlias.set(alias, null);
+        continue;
+      }
+      if (existing === undefined) identifiersByAlias.set(alias, identifiers);
+    }
+  }
+  return identifiersByAlias;
+}
+
+export async function hostedDocumentAliasForBook(
+  book: LibraryBook,
+): Promise<string | null> {
+  const uri = book.local?.uri ?? book.fileUri;
+  if (!uri || book.availableLocally === false) return null;
+  const filename = book.local?.filename ?? uri.split("/").at(-1) ?? "";
+  const readableUri = await materializeNativeFolderFile(uri, filename);
+  return `${HOSTED_DOCUMENT_ALIAS_PREFIX}${await koreaderPartialMd5(readableUri)}`;
+}
+
 async function documentIds<T extends SyncIdentityRecord>(
   records: T[],
   identifiersByAlias: Map<string, HostedDocumentIds | null>,
@@ -633,12 +759,35 @@ async function documentIds<T extends SyncIdentityRecord>(
       );
     }
     const local = matches[0];
+    const storedFingerprints = [...record.aliases, record.identity].flatMap(
+      (alias) => {
+        const match = alias.match(
+          /^hosted-document:koreader-partial-md5-v1:([a-f0-9]{32})$/u,
+        );
+        return match ? [match[1]] : [];
+      },
+    );
+    const uniqueStoredFingerprints = [...new Set(storedFingerprints)];
+    if (uniqueStoredFingerprints.length > 1) {
+      throw new Error(
+        `Multiple hosted documents match the sync record ${record.identity}.`,
+      );
+    }
+    const storedFingerprint = uniqueStoredFingerprints[0];
     const remoteFingerprint = record.identity.match(
       /^fingerprint:koreader-partial-md5-v1:([a-f0-9]{32})$/u,
     )?.[1];
     const identifiers =
       local ??
-      (remoteFingerprint == null
+      (storedFingerprint != null
+        ? {
+            primary: storedFingerprint,
+            aliases: [logical],
+            fingerprintKind: "koreader-partial-md5-v1" as const,
+            filename: null,
+            identifiers: {},
+          }
+        : remoteFingerprint == null
         ? {
             primary: logical,
             aliases: [],
@@ -693,6 +842,8 @@ function collectionRecordFromHosted(
     title: metadata.title,
     author,
     format: metadata.format ?? "",
+    sourceUrl:
+      metadata.identifiers?.[SOURCE_URL_IDENTIFIER] ?? local?.sourceUrl,
     addedAt: record.addedAt,
     sortAt: record.sortAt,
     updatedAt: record.updatedAt,
@@ -703,7 +854,7 @@ function collectionRecordFromHosted(
 async function performHostedCollectionSync(
   accountId: string,
   collection: SyncedCollection,
-  localIdentifiers: Map<string, HostedDocumentIds | null>,
+  getLocalIdentifiers: () => Promise<Map<string, HostedDocumentIds | null>>,
   notify: (progress: HostedSyncProgress) => void,
 ): Promise<{ imported: number; pushed: number; serverTime: number }> {
   const stream = `collection:${collection}`;
@@ -716,15 +867,32 @@ async function performHostedCollectionSync(
         ? "Checking library changes…"
         : "Checking reading-list changes…",
   });
-  const localBeforePull = await loadCollectionSyncRecords(collection);
-  const identifiersBeforePull = await documentIds(
-    localBeforePull,
-    localIdentifiers,
-  );
   const remote = await authenticatedRequest<{
     records: HostedCollectionRecord[];
     serverTime: number;
   }>(incrementalPath(`/v1/collections/${collection}`, checkpoint.cursor));
+  const localBeforePull = await loadCollectionSyncRecords(collection);
+  const localRevision = await syncRecordsRevision(localBeforePull);
+  const windowRevision = await remoteWindowRevision(remote.records);
+  const remoteIsUnchanged =
+    remote.records.length === 0 ||
+    checkpoint.remoteWindowRevision === windowRevision;
+  if (checkpoint.localRevision === localRevision && remoteIsUnchanged) {
+    console.info("[hosted-sync] collection unchanged", {
+      collection,
+      remote: remote.records.length,
+      local: localBeforePull.length,
+    });
+    checkpoint.cursor = Math.max(0, remote.serverTime - 1);
+    if (remote.records.length) checkpoint.remoteWindowRevision = windowRevision;
+    await saveCheckpoint(accountId, stream, checkpoint);
+    return { imported: 0, pushed: 0, serverTime: remote.serverTime };
+  }
+  const localIdentifiers = await getLocalIdentifiers();
+  const identifiersBeforePull = await documentIds(
+    localBeforePull,
+    localIdentifiers,
+  );
   const remoteRecords = remote.records.map((record) =>
     collectionRecordFromHosted(
       record,
@@ -779,6 +947,12 @@ async function performHostedCollectionSync(
       checkpoint.acknowledgements[document.primary] !== fingerprints.get(record)
     );
   });
+  console.info("[hosted-sync] collection diff", {
+    collection,
+    remote: remote.records.length,
+    local: merged.length,
+    pushing: recordsToPush.length,
+  });
   const phase =
     collection === "library" ? "uploading-library" : "uploading-reading-list";
   notify({
@@ -822,6 +996,10 @@ async function performHostedCollectionSync(
   // Keep a one-millisecond overlap so a concurrent write that shares the
   // response timestamp cannot fall between incremental windows.
   checkpoint.cursor = Math.max(0, remote.serverTime - 1);
+  checkpoint.localRevision = await syncRecordsRevision(
+    await loadCollectionSyncRecords(collection),
+  );
+  if (remote.records.length) checkpoint.remoteWindowRevision = windowRevision;
   await saveCheckpoint(accountId, stream, checkpoint);
   return {
     imported,
@@ -836,16 +1014,53 @@ async function performHostedProgressSync(
 ): Promise<HostedSyncResult> {
   const checkpoint = await loadCheckpoint(accountId, "progress");
   notify({ phase: "pulling-progress", message: "Checking reading progress…" });
-  const localIdentifiers = await localDocumentIdentifiers();
-  const localBeforePull = await loadProgressSyncRecords();
-  const identifiersBeforePull = await documentIds(
-    localBeforePull,
-    localIdentifiers,
-  );
   const remote = await authenticatedRequest<{
     records: HostedProgressRecord[];
     serverTime: number;
   }>(incrementalPath("/v1/progress", checkpoint.cursor));
+  const localBeforePull = await loadProgressSyncRecords();
+  const localRevision = await syncRecordsRevision(localBeforePull);
+  const windowRevision = await remoteWindowRevision(remote.records);
+  const remoteIsUnchanged =
+    remote.records.length === 0 ||
+    checkpoint.remoteWindowRevision === windowRevision;
+  let localIdentifiersPromise:
+    | Promise<Map<string, HostedDocumentIds | null>>
+    | undefined;
+  const getLocalIdentifiers = () =>
+    (localIdentifiersPromise ??= localDocumentIdentifiers());
+  if (checkpoint.localRevision === localRevision && remoteIsUnchanged) {
+    console.info("[hosted-sync] progress unchanged", {
+      remote: remote.records.length,
+      local: localBeforePull.length,
+    });
+    checkpoint.cursor = Math.max(0, remote.serverTime - 1);
+    if (remote.records.length) checkpoint.remoteWindowRevision = windowRevision;
+    await saveCheckpoint(accountId, "progress", checkpoint);
+    const library = await performHostedCollectionSync(
+      accountId,
+      "library",
+      getLocalIdentifiers,
+      notify,
+    );
+    const readingList = await performHostedCollectionSync(
+      accountId,
+      "reading-list",
+      getLocalIdentifiers,
+      notify,
+    );
+    return {
+      importedRecords: library.imported + readingList.imported,
+      pushedRecords: library.pushed + readingList.pushed,
+      unmatchedRecords: 0,
+      syncedAt: Math.max(remote.serverTime, library.serverTime, readingList.serverTime),
+    };
+  }
+  const localIdentifiers = await getLocalIdentifiers();
+  const identifiersBeforePull = await documentIds(
+    localBeforePull,
+    localIdentifiers,
+  );
   const unmatched: HostedProgressRecord[] = [];
   const remoteComparableByDocument = new Map<string, ProgressSyncRecord>();
   const remoteRecords = remote.records.flatMap((record) => {
@@ -873,7 +1088,7 @@ async function performHostedProgressSync(
         readingTimeMs: remoteComparable.readingTimeMs ?? local?.readingTimeMs,
         wordsRead: remoteComparable.wordsRead ?? local?.wordsRead,
         lastReadAt: remoteComparable.lastReadAt ?? local?.lastReadAt,
-        updatedAt: record.serverUpdatedAt,
+        updatedAt: record.updatedAt,
       },
     ];
   });
@@ -933,6 +1148,11 @@ async function performHostedProgressSync(
       checkpoint.acknowledgements[document.primary] !== fingerprints.get(record)
     );
   });
+  console.info("[hosted-sync] progress diff", {
+    remote: remote.records.length,
+    local: merged.length,
+    pushing: recordsToPush.length,
+  });
   notify({
     phase: "uploading-progress",
     message:
@@ -964,6 +1184,10 @@ async function performHostedProgressSync(
     });
   });
   checkpoint.cursor = Math.max(0, remote.serverTime - 1);
+  checkpoint.localRevision = await syncRecordsRevision(
+    await loadProgressSyncRecords(),
+  );
+  if (remote.records.length) checkpoint.remoteWindowRevision = windowRevision;
   await saveCheckpoint(accountId, "progress", checkpoint);
   // Progress from legacy KOReader/Moon+ accounts can be the first observation of
   // a book. Reconcile collections afterwards so that observation becomes a logical
@@ -971,13 +1195,13 @@ async function performHostedProgressSync(
   const library = await performHostedCollectionSync(
     accountId,
     "library",
-    localIdentifiers,
+    getLocalIdentifiers,
     notify,
   );
   const readingList = await performHostedCollectionSync(
     accountId,
     "reading-list",
-    localIdentifiers,
+    getLocalIdentifiers,
     notify,
   );
   return {
@@ -988,7 +1212,220 @@ async function performHostedProgressSync(
   };
 }
 
+function recordMatchesBook(
+  record: SyncIdentityRecord,
+  book: LibraryBook,
+): boolean {
+  const identity = bookIdentity(book.title, book.author);
+  return (
+    matchingSyncRecord(
+      {
+        identity,
+        aliases: [...new Set([identity, ...syncAliases(book)])],
+      },
+      [record],
+    ) != null
+  );
+}
+
+async function pushHostedCollectionChanges(
+  accountId: string,
+  collection: SyncedCollection,
+  changes: HostedSyncBookChange[],
+  localIdentifiers: Map<string, HostedDocumentIds | null>,
+  notify: (progress: HostedSyncProgress) => void,
+): Promise<number> {
+  const stream = `collection:${collection}`;
+  const checkpoint = await loadCheckpoint(accountId, stream);
+  const localRecords = await loadCollectionSyncRecords(collection);
+  const records = localRecords.filter(
+    (record) =>
+      changes.some(
+        (change) =>
+          change.streams.includes(collection) &&
+          recordMatchesBook(record, change.book),
+      ),
+  );
+  if (records.length === 0) {
+    throw new Error(`The changed book has no ${collection} sync record.`);
+  }
+  const identifiers = await documentIds(records, localIdentifiers);
+  const prepared = await Promise.all(
+    records.map(async (record) => {
+      const document = identifiers.byRecord.get(record);
+      if (document == null)
+        throw new Error(`No hosted sync identifier for ${record.identity}.`);
+      const payload = collectionPayload(record, document);
+      return {
+        document,
+        payload,
+        fingerprint: await payloadFingerprint(document, payload),
+      };
+    }),
+  );
+  const recordsToPush = prepared.filter(
+    ({ document, fingerprint }) =>
+      checkpoint.acknowledgements[document.primary] !== fingerprint,
+  );
+  const phase =
+    collection === "library" ? "uploading-library" : "uploading-reading-list";
+  const label = collection === "library" ? "library" : "reading list";
+  notify({
+    phase,
+    message:
+      recordsToPush.length === 0
+        ? `${label[0].toUpperCase()}${label.slice(1)} is up to date`
+        : `Uploading ${label} change${recordsToPush.length === 1 ? "" : "s"}…`,
+    completed: 0,
+    total: recordsToPush.length,
+  });
+  let completed = 0;
+  await uploadConcurrently(
+    recordsToPush,
+    async ({ document, payload, fingerprint }) => {
+      await authenticatedRequest(
+        `/v1/collections/${collection}/${encodeURIComponent(document.primary)}`,
+        { method: "PUT", body: JSON.stringify(payload) },
+      );
+      checkpoint.acknowledgements[document.primary] = fingerprint;
+      completed += 1;
+      notify({
+        phase,
+        message: `Uploading ${label} change${recordsToPush.length === 1 ? "" : "s"}…`,
+        completed,
+        total: recordsToPush.length,
+      });
+    },
+  );
+  if (checkpoint.localRevision != null) {
+    checkpoint.localRevision = await syncRecordsRevision(localRecords);
+  }
+  await saveCheckpoint(accountId, stream, checkpoint);
+  console.info("[hosted-sync] targeted collection push", {
+    collection,
+    pushing: recordsToPush.length,
+  });
+  return recordsToPush.length;
+}
+
+async function pushHostedProgressChanges(
+  accountId: string,
+  changes: HostedSyncBookChange[],
+  localIdentifiers: Map<string, HostedDocumentIds | null>,
+  notify: (progress: HostedSyncProgress) => void,
+): Promise<number> {
+  const checkpoint = await loadCheckpoint(accountId, "progress");
+  const localRecords = await loadProgressSyncRecords();
+  const records = localRecords.filter((record) =>
+    changes.some(
+      (change) =>
+        change.streams.includes("progress") &&
+        recordMatchesBook(record, change.book),
+    ),
+  );
+  if (records.length === 0) {
+    throw new Error("The changed book has no progress sync record.");
+  }
+  const identifiers = await documentIds(records, localIdentifiers);
+  const deviceId = await getSyncDeviceId();
+  const prepared = await Promise.all(
+    records.map(async (record) => {
+      const document = identifiers.byRecord.get(record);
+      if (document == null)
+        throw new Error(`No hosted sync identifier for ${record.identity}.`);
+      const payload = progressPayload(record, document, deviceId);
+      return {
+        document,
+        payload,
+        fingerprint: await payloadFingerprint(document, payload),
+      };
+    }),
+  );
+  const recordsToPush = prepared.filter(
+    ({ document, fingerprint }) =>
+      checkpoint.acknowledgements[document.primary] !== fingerprint,
+  );
+  notify({
+    phase: "uploading-progress",
+    message:
+      recordsToPush.length === 0
+        ? "Reading progress is up to date"
+        : `Uploading reading change${recordsToPush.length === 1 ? "" : "s"}…`,
+    completed: 0,
+    total: recordsToPush.length,
+  });
+  let completed = 0;
+  await uploadConcurrently(
+    recordsToPush,
+    async ({ document, payload, fingerprint }) => {
+      await authenticatedRequest(
+        `/v1/progress/${encodeURIComponent(document.primary)}`,
+        { method: "PUT", body: JSON.stringify(payload) },
+      );
+      checkpoint.acknowledgements[document.primary] = fingerprint;
+      completed += 1;
+      notify({
+        phase: "uploading-progress",
+        message: `Uploading reading change${recordsToPush.length === 1 ? "" : "s"}…`,
+        completed,
+        total: recordsToPush.length,
+      });
+    },
+  );
+  if (checkpoint.localRevision != null) {
+    checkpoint.localRevision = await syncRecordsRevision(localRecords);
+  }
+  await saveCheckpoint(accountId, "progress", checkpoint);
+  console.info("[hosted-sync] targeted progress push", {
+    pushing: recordsToPush.length,
+  });
+  return recordsToPush.length;
+}
+
+async function performHostedBookChanges(
+  accountId: string,
+  changes: HostedSyncBookChange[],
+  notify: (progress: HostedSyncProgress) => void,
+): Promise<HostedSyncResult> {
+  const localIdentifiers = await localDocumentIdentifiersForChanges(changes);
+  let pushedRecords = 0;
+  if (changes.some((change) => change.streams.includes("progress"))) {
+    pushedRecords += await pushHostedProgressChanges(
+      accountId,
+      changes,
+      localIdentifiers,
+      notify,
+    );
+  }
+  if (changes.some((change) => change.streams.includes("library"))) {
+    pushedRecords += await pushHostedCollectionChanges(
+      accountId,
+      "library",
+      changes,
+      localIdentifiers,
+      notify,
+    );
+  }
+  if (changes.some((change) => change.streams.includes("reading-list"))) {
+    pushedRecords += await pushHostedCollectionChanges(
+      accountId,
+      "reading-list",
+      changes,
+      localIdentifiers,
+      notify,
+    );
+  }
+  return {
+    importedRecords: 0,
+    pushedRecords,
+    unmatchedRecords: 0,
+    syncedAt: Date.now(),
+  };
+}
+
 let pendingHostedSync: Promise<HostedSyncResult> | null = null;
+let queuedHostedSync = false;
+let hostedSyncSerial: Promise<void> = Promise.resolve();
 const hostedSyncObservers = new Set<
   NonNullable<HostedSyncOptions["onProgress"]>
 >();
@@ -997,27 +1434,67 @@ function notifyHostedSync(progress: HostedSyncProgress): void {
   for (const observer of hostedSyncObservers) observer(progress);
 }
 
+function serializeHostedSync<T>(operation: () => Promise<T>): Promise<T> {
+  const result = hostedSyncSerial.catch(() => {}).then(operation);
+  hostedSyncSerial = result.then(
+    () => {},
+    () => {},
+  );
+  return result;
+}
+
 export function synchronizeHostedProgress(
   options: HostedSyncOptions = {},
 ): Promise<HostedSyncResult> {
   const observer = options.onProgress;
   if (observer) hostedSyncObservers.add(observer);
   if (pendingHostedSync != null) {
+    if (options.queueAfterCurrent) queuedHostedSync = true;
     return pendingHostedSync.finally(() => {
       if (observer) hostedSyncObservers.delete(observer);
     });
   }
-  const operation = (async () => {
+  const operation = serializeHostedSync(async () => {
     const account = await getHostedSyncAccount();
     if (account == null)
       throw new Error("Sign in to Tomeio Sync before synchronizing.");
-    return performHostedProgressSync(account.id, notifyHostedSync);
-  })().finally(() => {
+    let result: HostedSyncResult = {
+      importedRecords: 0,
+      pushedRecords: 0,
+      unmatchedRecords: 0,
+      syncedAt: 0,
+    };
+    do {
+      queuedHostedSync = false;
+      const next = await performHostedProgressSync(account.id, notifyHostedSync);
+      result = {
+        importedRecords: result.importedRecords + next.importedRecords,
+        pushedRecords: result.pushedRecords + next.pushedRecords,
+        unmatchedRecords: result.unmatchedRecords + next.unmatchedRecords,
+        syncedAt: Math.max(result.syncedAt, next.syncedAt),
+      };
+    } while (queuedHostedSync);
+    return result;
+  }).finally(() => {
     if (pendingHostedSync === operation) pendingHostedSync = null;
   });
   pendingHostedSync = operation;
   return operation.finally(() => {
     if (observer) hostedSyncObservers.delete(observer);
+  });
+}
+
+export async function synchronizeHostedBookChangesIfEnabled(
+  changes: HostedSyncBookChange[],
+  options: HostedSyncOptions = {},
+): Promise<HostedSyncResult | null> {
+  if (changes.length === 0 || (await getHostedSyncAccount()) == null) return null;
+  const notify = options.onProgress ?? (() => {});
+  return serializeHostedSync(async () => {
+    const account = await getHostedSyncAccount();
+    if (account == null)
+      throw new Error("Sign in to Tomeio Sync before synchronizing.");
+    return performHostedBookChanges(account.id, changes, notify);
   });
 }
 

@@ -2,8 +2,13 @@ package expo.modules.progressfolder
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.Matrix
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
@@ -121,9 +126,24 @@ class ProgressFolderModule : Module() {
       }
     }
 
+    AsyncFunction("ensureDirectory") Coroutine { directoryUri: String, name: String ->
+      runInterruptible(Dispatchers.IO) {
+        ensureDirectory(Uri.parse(directoryUri), name).toString()
+      }
+    }
+
     AsyncFunction("copyFileToLocal") Coroutine { sourceUri: String, destinationUri: String ->
       runInterruptible(Dispatchers.IO) {
         copyFileToLocal(sourceUri, Uri.parse(destinationUri))
+      }
+    }
+
+    AsyncFunction("renderPdfCover") Coroutine {
+        sourceUri: String,
+        destinationUri: String,
+        maxWidth: Int ->
+      runInterruptible(Dispatchers.IO) {
+        renderPdfCover(sourceUri, Uri.parse(destinationUri), maxWidth)
       }
     }
 
@@ -336,6 +356,26 @@ class ProgressFolderModule : Module() {
     return null
   }
 
+  private fun ensureDirectory(treeUri: Uri, name: String): Uri {
+    if (name.isBlank() || name == "." || name == ".." || name.contains('/')) {
+      throw IllegalArgumentException("The destination folder name is invalid.")
+    }
+    val existing = findChild(treeUri, name)
+    if (existing != null) {
+      val mimeType = context().contentResolver.getType(existing)
+      if (mimeType != DocumentsContract.Document.MIME_TYPE_DIR) {
+        throw IllegalStateException("A file named $name prevents Tomeio from creating the mirrored folder.")
+      }
+      return existing
+    }
+    return DocumentsContract.createDocument(
+      context().contentResolver,
+      directoryDocumentUri(treeUri),
+      DocumentsContract.Document.MIME_TYPE_DIR,
+      name
+    ) ?: throw IllegalStateException("The file provider did not create the mirrored folder.")
+  }
+
   private fun copyFileToDirectory(
     sourceUri: String,
     treeUri: Uri,
@@ -387,6 +427,82 @@ class ProgressFolderModule : Module() {
       }
       if (!temporary.renameTo(destination)) {
         throw IllegalStateException("The selected file could not be moved into the app cache.")
+      }
+    } catch (error: Throwable) {
+      temporary.delete()
+      throw error
+    }
+  }
+
+  private fun readOnlyFileDescriptor(sourceUri: String): ParcelFileDescriptor {
+    val uri = Uri.parse(sourceUri)
+    return when (uri.scheme) {
+      "content" -> context().contentResolver.openFileDescriptor(uri, "r")
+      "file" -> uri.path?.let {
+        ParcelFileDescriptor.open(File(it), ParcelFileDescriptor.MODE_READ_ONLY)
+      }
+      null -> ParcelFileDescriptor.open(File(sourceUri), ParcelFileDescriptor.MODE_READ_ONLY)
+      else -> null
+    } ?: throw IllegalStateException("The PDF could not be opened for cover extraction.")
+  }
+
+  private fun renderPdfCover(
+    sourceUri: String,
+    destinationUri: Uri,
+    maxWidth: Int
+  ): Map<String, Any> {
+    if (destinationUri.scheme != "file" || destinationUri.path == null) {
+      throw IllegalArgumentException("The PDF cover destination is invalid.")
+    }
+    if (maxWidth !in 240..2048) {
+      throw IllegalArgumentException("The PDF cover width is invalid.")
+    }
+    val destination = File(destinationUri.path!!)
+    val parent = destination.parentFile
+      ?: throw IllegalArgumentException("The PDF cover destination has no parent directory.")
+    if (!parent.exists() && !parent.mkdirs()) {
+      throw IllegalStateException("The PDF cover directory could not be created.")
+    }
+    val temporary = File(parent, ".tomeio-pdf-cover-${System.nanoTime()}")
+    try {
+      readOnlyFileDescriptor(sourceUri).use { descriptor ->
+        PdfRenderer(descriptor).use { renderer ->
+          if (renderer.pageCount < 1) {
+            throw IllegalStateException("The PDF has no pages to use as a cover.")
+          }
+          renderer.openPage(0).use { page ->
+            val scale = minOf(
+              maxWidth.toFloat() / page.width.toFloat(),
+              1600f / page.height.toFloat()
+            )
+            val width = (page.width * scale).toInt().coerceAtLeast(1)
+            val height = (page.height * scale).toInt().coerceAtLeast(1)
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            try {
+              bitmap.eraseColor(Color.WHITE)
+              val matrix = Matrix().apply { setScale(scale, scale) }
+              page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+              temporary.outputStream().use { output ->
+                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)) {
+                  throw IllegalStateException("The PDF cover could not be encoded.")
+                }
+              }
+            } finally {
+              bitmap.recycle()
+            }
+            if (destination.exists() && !destination.delete()) {
+              throw IllegalStateException("The previous PDF cover could not be replaced.")
+            }
+            if (!temporary.renameTo(destination)) {
+              throw IllegalStateException("The PDF cover could not be saved.")
+            }
+            return mapOf(
+              "uri" to destinationUri.toString(),
+              "width" to width,
+              "height" to height
+            )
+          }
+        }
       }
     } catch (error: Throwable) {
       temporary.delete()
@@ -449,8 +565,27 @@ class ProgressFolderModule : Module() {
     val persistedPermission = resolver.persistedUriPermissions.firstOrNull {
       it.uri.toString().trimEnd('/') == normalizedUri
     }
+    val authority = treeUri.authority
+    val displayName = resolver.query(
+      directoryDocumentUri(treeUri),
+      arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+      null,
+      null,
+      null
+    )?.use { cursor ->
+      if (cursor.moveToFirst()) cursor.getString(0) else null
+    }
+    val storageKind = when (authority) {
+      "com.google.android.apps.docs.storage" -> "cloud"
+      "com.android.externalstorage.documents",
+      "com.android.providers.downloads.documents",
+      "com.android.providers.media.documents" -> "device"
+      else -> "unknown"
+    }
     return mapOf(
-      "authority" to treeUri.authority,
+      "authority" to authority,
+      "displayName" to displayName,
+      "storageKind" to storageKind,
       "isTreeUri" to (
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
           DocumentsContract.isTreeUri(treeUri)

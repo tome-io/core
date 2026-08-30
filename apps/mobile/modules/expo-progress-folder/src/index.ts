@@ -14,12 +14,20 @@ export interface FolderDirectoryEntry extends ProgressFolderFile {
 
 export interface ProgressFolderDiagnostics {
   authority: string | null;
+  displayName?: string | null;
+  storageKind?: 'cloud' | 'device' | 'unknown';
   isTreeUri: boolean;
   persistedReadPermission: boolean;
   persistedWritePermission: boolean;
   directChildCount: number;
   providerLoading: boolean;
   providerError: string | null;
+}
+
+export interface RenderedPdfCover {
+  uri: string;
+  width: number;
+  height: number;
 }
 
 interface ProgressFolderNativeModule {
@@ -40,7 +48,13 @@ interface ProgressFolderNativeModule {
     filename: string,
     mimeType: string
   ): Promise<string>;
+  ensureDirectory?(directoryUri: string, name: string): Promise<string>;
   copyFileToLocal?(sourceUri: string, destinationUri: string): Promise<void>;
+  renderPdfCover?(
+    sourceUri: string,
+    destinationUri: string,
+    maxWidth: number
+  ): Promise<RenderedPdfCover>;
   deleteFile(fileUri: string): Promise<void>;
   forgetDirectory?(directoryUri: string): Promise<void>;
   openDirectory?(directoryUri: string): Promise<void>;
@@ -146,6 +160,19 @@ export function copyNativeFileToDirectory(
   );
 }
 
+export function ensureNativeDirectory(
+  directoryUri: string,
+  name: string
+): Promise<string> {
+  const module = requireProgressFolderModule();
+  if (!module.ensureDirectory) {
+    throw new Error(
+      'Mirroring nested book folders requires a rebuilt Tomeio app. Rebuild the native app for this device.'
+    );
+  }
+  return module.ensureDirectory(directoryUri, name);
+}
+
 export function copyNativeFileToLocal(
   sourceUri: string,
   destinationUri: string
@@ -157,6 +184,20 @@ export function copyNativeFileToLocal(
     );
   }
   return module.copyFileToLocal(sourceUri, destinationUri);
+}
+
+export function renderNativePdfCover(
+  sourceUri: string,
+  destinationUri: string,
+  maxWidth = 900
+): Promise<RenderedPdfCover> {
+  const module = requireProgressFolderModule();
+  if (!module.renderPdfCover) {
+    throw new Error(
+      'PDF cover extraction requires a rebuilt Tomeio app. Rebuild the native app for this device.'
+    );
+  }
+  return module.renderPdfCover(sourceUri, destinationUri, maxWidth);
 }
 
 export function deleteNativeProgressFolderFile(fileUri: string): Promise<void> {

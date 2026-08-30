@@ -57,13 +57,17 @@ describe('library file reconciliation', () => {
     assert.equal(reconciled.downloaded[1]?.availableLocally, false);
     assert.equal(reconciled.readingList[0]?.availableLocally, false);
     assert.equal(reconciled.readingList[1]?.availableLocally, true);
-    assert.equal(reconciled.readingList[2], remote);
+    assert.equal(reconciled.downloaded[2]?.availableLocally, false);
+    assert.equal(reconciled.readingList[2]?.availableLocally, false);
   });
 
-  it('returns the existing state when catalog availability has not changed', () => {
+  it('removes persisted library copies represented by the scanned catalog', () => {
     const local = book('local', 'file:///books/local.epub');
     const state: LibraryState = { downloaded: [local], readingList: [local] };
+    const reconciled = reconcileLibraryStateWithLocalCatalog(state, [local]);
 
-    assert.equal(reconcileLibraryStateWithLocalCatalog(state, [local]), state);
+    assert.deepEqual(reconciled.downloaded, []);
+    assert.equal(reconciled.readingList[0]?.availableLocally, true);
+    assert.equal(reconciled.readingList[0]?.fileUri, local.fileUri);
   });
 });

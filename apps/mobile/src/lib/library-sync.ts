@@ -1,6 +1,7 @@
 import type { LibraryBook } from './library';
 import {
   loadLocalCatalog,
+  getSyncFingerprint,
   persistLocalBook,
   persistMetadataSource,
   reconcileLocalCatalog,
@@ -19,6 +20,7 @@ export interface LocalLibrarySyncOptions {
 export interface LocalLibrarySyncResult {
   books: LibraryBook[];
   warnings: string[];
+  changed: boolean;
 }
 
 function hashSyncInput(value: string): string {
@@ -36,12 +38,8 @@ export async function indexLocalLibrary({
   onScanComplete,
 }: LocalLibrarySyncOptions): Promise<LocalLibrarySyncResult> {
   const scan = await scanLocalLibrary(directoryUri);
-  await reconcileLocalCatalog(directoryKey, scan.books);
-  const books = await loadLocalCatalog(directoryKey);
-  onScanComplete?.(books);
-
   const folderFingerprint = hashSyncInput(
-    books
+    scan.books
       .map((book) =>
         book.local
           ? `${book.local.uri}:${book.local.size}:${book.local.modificationTime}`
@@ -50,8 +48,19 @@ export async function indexLocalLibrary({
       .sort()
       .join('\n')
   );
+  const previousFingerprint = await getSyncFingerprint(`folder:${directoryKey}`);
+  if (previousFingerprint === folderFingerprint) {
+    const books = await loadLocalCatalog(directoryKey);
+    console.info('[library-sync] folder unchanged', { books: books.length });
+    onScanComplete?.(books);
+    return { books, warnings: scan.warnings, changed: false };
+  }
+  await reconcileLocalCatalog(directoryKey, scan.books);
+  const books = await loadLocalCatalog(directoryKey);
+  onScanComplete?.(books);
   await setSyncFingerprint(`folder:${directoryKey}`, folderFingerprint);
-  return { books, warnings: scan.warnings };
+  console.info('[library-sync] folder changed', { books: books.length });
+  return { books, warnings: scan.warnings, changed: true };
 }
 
 export async function enrichIndexedLocalLibrary({
@@ -59,11 +68,13 @@ export async function enrichIndexedLocalLibrary({
   books: initialBooks,
   onBookUpdated,
   onProgress,
+  forceCatalogRefresh,
 }: {
   directoryKey: string;
   books: LibraryBook[];
   onBookUpdated?: (book: LibraryBook) => void;
   onProgress?: (completed: number, total: number) => void;
+  forceCatalogRefresh?: boolean;
 }): Promise<LocalLibrarySyncResult> {
   let books = initialBooks;
   const warnings: string[] = [];
@@ -71,15 +82,16 @@ export async function enrichIndexedLocalLibrary({
   const metadataWarnings = await enrichLocalLibrary(
     books,
     async (enriched, sources) => {
-      await persistLocalBook(directoryKey, enriched);
-      await persistMetadataSource(enriched, 'embedded', sources.embedded);
+      const persisted = await persistLocalBook(directoryKey, enriched);
+      await persistMetadataSource(persisted, 'embedded', sources.embedded);
       if (sources.catalog) {
-        await persistMetadataSource(enriched, 'catalog', sources.catalog);
+        await persistMetadataSource(persisted, 'catalog', sources.catalog);
       }
-      books = books.map((book) => (book.key === enriched.key ? enriched : book));
-      onBookUpdated?.(enriched);
+      books = books.map((book) => (book.key === persisted.key ? persisted : book));
+      onBookUpdated?.(persisted);
     },
     onProgress,
+    { forceCatalogRefresh },
   );
   if (metadataWarnings.length) {
     warnings.push(
@@ -89,16 +101,17 @@ export async function enrichIndexedLocalLibrary({
     );
   }
 
-  return { books, warnings };
+  return { books, warnings, changed: books !== initialBooks };
 }
 
 export async function syncLocalLibrary(
   options: LocalLibrarySyncOptions
 ): Promise<LocalLibrarySyncResult> {
   const indexed = await indexLocalLibrary(options);
-  return enrichIndexedLocalLibrary({
+  const enriched = await enrichIndexedLocalLibrary({
     directoryKey: options.directoryKey,
     books: indexed.books,
     onBookUpdated: options.onBookUpdated,
   });
+  return { ...enriched, changed: indexed.changed || enriched.changed };
 }

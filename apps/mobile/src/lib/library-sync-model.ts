@@ -6,6 +6,7 @@ export interface CollectionSyncRecord {
   title: string;
   author: string;
   format: string;
+  sourceUrl?: string;
   addedAt: number;
   sortAt: number;
   updatedAt: number;
@@ -64,4 +65,3 @@ export function mergeCollectionSyncRecords(
 
   return merged.sort((left, right) => left.identity.localeCompare(right.identity));
 }
-

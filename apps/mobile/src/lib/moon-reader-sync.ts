@@ -24,21 +24,29 @@ async function enrichReaderBook(
   book: LibraryBook,
   coverLookup?: ExtensionCoverLookup,
   coverLookupKey?: string,
+  forceCatalogRefresh = false,
 ): Promise<{
   book: LibraryBook;
   warning?: string;
 }> {
   if (book.local) return { book };
   const warnings: string[] = [];
+  const catalogFetchOptions = forceCatalogRefresh
+    ? { fetchFn: fetch }
+    : undefined;
   let metadata: Awaited<ReturnType<typeof findBookMetadata>> = null;
   try {
-    metadata = await findBookMetadata(book.title, book.author);
+    metadata = await findBookMetadata(
+      book.title,
+      book.author,
+      catalogFetchOptions,
+    );
     if (
       metadata &&
       (!metadata.cover || !metadata.description || metadata.genre === 'Other') &&
       metadata.id.startsWith('/works/')
     ) {
-      const details = await getWorkDetails(metadata.id);
+      const details = await getWorkDetails(metadata.id, catalogFetchOptions);
       metadata = {
         ...metadata,
         cover: metadata.cover || details.cover,
@@ -124,6 +132,7 @@ export async function enrichIndexedReaderCatalog(
   onBookUpdated?: (book: LibraryBook) => void,
   options: {
     force?: boolean;
+    forceCatalogRefresh?: boolean;
     onProgress?: (completed: number, total: number) => void;
     coverLookup?: ExtensionCoverLookup;
     coverLookupKey?: string;
@@ -133,6 +142,9 @@ export async function enrichIndexedReaderCatalog(
   const warnings: string[] = [];
   const now = Date.now();
   const candidates = books.filter((book) => {
+    // Local-file enrichment owns these records. Persisting a reader-catalog
+    // snapshot here can overwrite a newly extracted embedded cover.
+    if (book.local) return false;
     const coverMissing =
       !book.coverSources?.local &&
       !book.coverSources?.catalog &&
@@ -151,16 +163,21 @@ export async function enrichIndexedReaderCatalog(
     const batch = candidates.slice(offset, offset + METADATA_BATCH_SIZE);
     const results = await Promise.all(
       batch.map((book) =>
-        enrichReaderBook(book, options.coverLookup, options.coverLookupKey)
+        enrichReaderBook(
+          book,
+          options.coverLookup,
+          options.coverLookupKey,
+          options.forceCatalogRefresh,
+        )
       )
     );
     for (const result of results) {
-      await persistCatalogBook(result.book);
-      if (result.book.discovery) {
-        await persistMetadataSource(result.book, 'catalog', result.book.discovery);
+      const persisted = await persistCatalogBook(result.book);
+      if (persisted.discovery) {
+        await persistMetadataSource(persisted, 'catalog', persisted.discovery);
       }
-      books = books.map((book) => (book.key === result.book.key ? result.book : book));
-      onBookUpdated?.(result.book);
+      books = books.map((book) => (book.key === persisted.key ? persisted : book));
+      onBookUpdated?.(persisted);
       if (result.warning) warnings.push(result.warning);
       completed += 1;
       options.onProgress?.(completed, candidates.length);

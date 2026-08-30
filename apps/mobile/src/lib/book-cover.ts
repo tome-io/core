@@ -40,11 +40,9 @@ export function resolveBookCover(
   additionalFallbacks: (string | undefined)[] = []
 ): ResolvedBookCover {
   const providerPriority = (providerId: string) =>
-    providerId === 'org.tomeio.internet-archive'
+    providerId === 'community.tomeio.zlibrary'
       ? 0
-      : providerId === 'community.tomeio.zlibrary'
-        ? 1
-        : 2;
+      : 1;
   const providerEntries = Object.entries(sources?.providers ?? {}).sort(
     ([left], [right]) =>
       providerPriority(left) - providerPriority(right) ||

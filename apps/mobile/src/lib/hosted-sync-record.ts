@@ -36,6 +36,7 @@ export function sameCollectionSyncContent(
     left.title === right.title &&
     left.author === right.author &&
     left.format === right.format &&
+    left.sourceUrl === right.sourceUrl &&
     left.addedAt === right.addedAt &&
     left.sortAt === right.sortAt &&
     (left.removedAt ?? undefined) === (right.removedAt ?? undefined)
@@ -65,6 +66,7 @@ export interface HostedProgressRecord {
     title: string | null;
     authors: string[];
     format: string | null;
+    identifiers?: Record<string, string>;
   } | null;
   percentage: number;
   metadata: Record<string, unknown> | null;

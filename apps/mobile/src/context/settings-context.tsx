@@ -12,8 +12,7 @@ export interface SettingsContextValue {
 export const SettingsContext = createContext<SettingsContextValue>({
   settings: DEFAULT_SETTINGS,
   ready: false,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  update: async (_patch) => {},
+  update: async () => {},
 });
 
 export function useSettings(): SettingsContextValue {

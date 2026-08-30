@@ -1,5 +1,6 @@
 import ExpoModulesCore
 import Foundation
+import PDFKit
 import UIKit
 import UniformTypeIdentifiers
 
@@ -207,6 +208,57 @@ public final class ProgressFolderModule: Module {
       }
     }
 
+    AsyncFunction("renderPdfCover") {
+      (sourceUri: String, destinationUri: String, maxWidth: Int) throws -> [String: Any] in
+      guard maxWidth >= 240 && maxWidth <= 2048 else {
+        throw folderError("The PDF cover width is invalid.")
+      }
+      guard let destination = URL(string: destinationUri), destination.isFileURL else {
+        throw folderError("The PDF cover destination is invalid.")
+      }
+      return try self.withReadableFileURL(sourceUri) { source in
+        guard let document = PDFDocument(url: source),
+              let page = document.page(at: 0) else {
+          throw folderError("The PDF has no readable first page.")
+        }
+        let bounds = page.bounds(for: .mediaBox)
+        guard bounds.width > 0 && bounds.height > 0 else {
+          throw folderError("The PDF first page has an invalid size.")
+        }
+        let scale = min(
+          CGFloat(maxWidth) / bounds.width,
+          1600 / bounds.height
+        )
+        let size = CGSize(
+          width: max(1, floor(bounds.width * scale)),
+          height: max(1, floor(bounds.height * scale))
+        )
+        let format = UIGraphicsImageRendererFormat.default()
+        format.opaque = true
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: size, format: format).image { renderer in
+          UIColor.white.setFill()
+          renderer.fill(CGRect(origin: .zero, size: size))
+          renderer.cgContext.translateBy(x: 0, y: size.height)
+          renderer.cgContext.scaleBy(x: scale, y: -scale)
+          page.draw(with: .mediaBox, to: renderer.cgContext)
+        }
+        guard let data = image.jpegData(compressionQuality: 0.9) else {
+          throw folderError("The PDF cover could not be encoded.")
+        }
+        try FileManager.default.createDirectory(
+          at: destination.deletingLastPathComponent(),
+          withIntermediateDirectories: true
+        )
+        try data.write(to: destination, options: .atomic)
+        return [
+          "uri": destination.absoluteString,
+          "width": Int(size.width),
+          "height": Int(size.height)
+        ]
+      }
+    }
+
     AsyncFunction("deleteFile") { (fileUri: String) throws in
       try self.withResolvedURL(fileUri) { url, reference in
         guard !reference.relativeComponents.isEmpty else {
@@ -357,6 +409,16 @@ public final class ProgressFolderModule: Module {
     if let url = URL(string: value), url.isFileURL { return url }
     if value.hasPrefix("/") { return URL(fileURLWithPath: value) }
     throw folderError("The downloaded file could not be opened.")
+  }
+
+  private func withReadableFileURL<T>(
+    _ value: String,
+    operation: (URL) throws -> T
+  ) throws -> T {
+    if value.hasPrefix("\(tokenScheme):") {
+      return try withResolvedURL(value) { url, _ in try operation(url) }
+    }
+    return try operation(localFileURL(value))
   }
 
   private func replaceFile(from source: URL, to destination: URL) throws {

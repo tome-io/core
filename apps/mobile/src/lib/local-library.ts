@@ -9,7 +9,7 @@ import {
 import { filenameFromUri } from './book-metadata';
 import { fromLocalFile, type LibraryBook, type LocalFileBook } from './library';
 
-const BOOK_FORMATS = new Set([
+export const BOOK_FORMATS = new Set([
   'azw3',
   'cbr',
   'cbz',
@@ -20,6 +20,12 @@ const BOOK_FORMATS = new Set([
   'pdf',
 ]);
 const METADATA_BATCH_SIZE = 24;
+
+export function isSupportedBookFilename(filename: string): boolean {
+  if (filename.startsWith('.') || filename.toLowerCase().startsWith('.trashed-')) return false;
+  const dot = filename.lastIndexOf('.');
+  return dot > 0 && BOOK_FORMATS.has(filename.slice(dot + 1).toLowerCase());
+}
 
 export interface LocalLibraryScan {
   books: LibraryBook[];
@@ -51,10 +57,9 @@ async function inspectUris(uris: string[]) {
 
 function toLocalFile(uri: string, size: number, modificationTime: number): LocalFileBook | null {
   const filename = filenameFromUri(uri);
+  if (!isSupportedBookFilename(filename)) return null;
   const dot = filename.lastIndexOf('.');
-  if (dot <= 0) return null;
   const format = filename.slice(dot + 1).toLowerCase();
-  if (!BOOK_FORMATS.has(format)) return null;
   return {
     uri,
     filename,
@@ -65,10 +70,9 @@ function toLocalFile(uri: string, size: number, modificationTime: number): Local
 }
 
 function toNativeLocalFile(entry: FolderDirectoryEntry): LocalFileBook | null {
+  if (!isSupportedBookFilename(entry.name)) return null;
   const dot = entry.name.lastIndexOf('.');
-  if (dot <= 0) return null;
   const format = entry.name.slice(dot + 1).toLowerCase();
-  if (!BOOK_FORMATS.has(format)) return null;
   return {
     uri: entry.uri,
     filename: entry.name,

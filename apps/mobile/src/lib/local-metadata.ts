@@ -9,18 +9,27 @@ import {
 } from './book-cover';
 import { metadataFromFilename } from './book-metadata';
 import type { LibraryBook } from './library';
-import { findBookMetadata, getWorkDetails, type DiscoveryBook } from './openlibrary';
+import {
+  findBookMetadata,
+  getWorkDetails,
+  type DiscoveryBook,
+  type FetchOpts,
+} from './openlibrary';
 import { readPdfMetadata } from './pdf-metadata';
 import { materializeNativeFolderFile } from './native-folder-file';
+import { renderNativePdfCover } from '../../modules/expo-progress-folder/src';
 
 const COVER_DIRECTORY = FileSystem.documentDirectory
   ? `${FileSystem.documentDirectory}library-covers`
   : null;
-const MAX_PARSE_SIZE = 32 * 1024 * 1024;
+const MAX_EPUB_PARSE_SIZE = 64 * 1024 * 1024;
+const MAX_PDF_PARSE_SIZE = 32 * 1024 * 1024;
+const SERIAL_EPUB_PARSE_THRESHOLD = 32 * 1024 * 1024;
 const ENRICH_BATCH_SIZE = 3;
 const METADATA_REFRESH_MS = 7 * 24 * 60 * 60 * 1000;
 const METADATA_FAILURE_RETRY_MS = 15 * 60 * 1000;
-const LOCAL_METADATA_VERSION = 5;
+const LOCAL_METADATA_VERSION = 6;
+const LARGE_EPUB_METADATA_VERSION = 7;
 
 export interface EmbeddedMetadata {
   title?: string;
@@ -41,6 +50,14 @@ export interface LocalMetadataSources {
 export interface MetadataWarning {
   filename: string;
   message: string;
+}
+
+function metadataVersionFor(book: LibraryBook): number {
+  return book.local?.format === 'epub' &&
+    book.local.size > SERIAL_EPUB_PARSE_THRESHOLD &&
+    book.local.size <= MAX_EPUB_PARSE_SIZE
+    ? LARGE_EPUB_METADATA_VERSION
+    : LOCAL_METADATA_VERSION;
 }
 
 function stableHash(value: string): string {
@@ -143,6 +160,34 @@ async function saveCover(
   return uri;
 }
 
+async function savePdfCover(
+  book: LibraryBook,
+  readableUri: string
+): Promise<string | null> {
+  if (!COVER_DIRECTORY) throw new Error('The app documents directory is unavailable.');
+  if (!book.local) return null;
+  await FileSystem.makeDirectoryAsync(COVER_DIRECTORY, { intermediates: true });
+  const uri = `${COVER_DIRECTORY}/${stableHash(
+    `${book.local.uri}:${book.local.modificationTime}:pdf-page-1`
+  )}.jpg`;
+  const rendered = await renderNativePdfCover(readableUri, uri);
+  const aspectRatio = rendered.height > 0 ? rendered.width / rendered.height : 0;
+  const usable =
+    rendered.width >= 240 &&
+    rendered.height >= 240 &&
+    aspectRatio >= 0.35 &&
+    aspectRatio <= 1.8;
+  if (!usable) {
+    await FileSystem.deleteAsync(uri, { idempotent: true });
+    return null;
+  }
+  const storedCover = await FileSystem.getInfoAsync(uri);
+  if (!storedCover.exists) {
+    throw new Error(`The rendered PDF cover was not written to ${uri}.`);
+  }
+  return uri;
+}
+
 async function readEpubMetadata(book: LibraryBook, base64: string): Promise<EmbeddedMetadata> {
   const zip = await JSZip.loadAsync(base64, { base64: true });
   const container = await zip.file('META-INF/container.xml')?.async('string');
@@ -200,12 +245,13 @@ function applyMetadata(book: LibraryBook, metadata: EmbeddedMetadata): LibraryBo
     ratingsCount: metadata.ratingsCount ?? book.ratingsCount,
     metadataPending: false,
     metadataUpdatedAt: Date.now(),
-    metadataVersion: LOCAL_METADATA_VERSION,
+    metadataVersion: metadataVersionFor(book),
   };
 }
 
 async function enrichLocalBook(
-  book: LibraryBook
+  book: LibraryBook,
+  catalogFetchOptions?: FetchOpts,
 ): Promise<{ book: LibraryBook; sources: LocalMetadataSources; warning?: MetadataWarning }> {
   if (!book.local) return { book, sources: { embedded: {}, catalog: null } };
 
@@ -228,7 +274,11 @@ async function enrichLocalBook(
     filenameMetadata.author;
 
   try {
-    catalogMetadata = await findBookMetadata(lookupTitle, lookupAuthor);
+    catalogMetadata = await findBookMetadata(
+      lookupTitle,
+      lookupAuthor,
+      catalogFetchOptions,
+    );
   } catch (err: any) {
     catalogLookupFailed = true;
     warningMessages.push(`Catalog metadata lookup failed: ${err.message || String(err)}`);
@@ -242,7 +292,10 @@ async function enrichLocalBook(
     catalogMetadata.id.startsWith('/works/')
   ) {
     try {
-      const details = await getWorkDetails(catalogMetadata.id);
+      const details = await getWorkDetails(
+        catalogMetadata.id,
+        catalogFetchOptions,
+      );
       catalogMetadata = {
         ...catalogMetadata,
         cover: catalogMetadata.cover || details.cover,
@@ -258,20 +311,35 @@ async function enrichLocalBook(
   }
 
   const canReadEmbedded =
-    book.local.size <= MAX_PARSE_SIZE && ['epub', 'pdf'].includes(book.local.format);
+    (book.local.format === 'epub' && book.local.size <= MAX_EPUB_PARSE_SIZE) ||
+    (book.local.format === 'pdf' && book.local.size <= MAX_PDF_PARSE_SIZE);
+  let readableEmbeddedUri: string | null = null;
+  const readableLocalFile = async () => {
+    readableEmbeddedUri ??= await materializeNativeFolderFile(
+      book.local!.uri,
+      book.local!.filename
+    );
+    return readableEmbeddedUri;
+  };
+  if (book.local.format === 'pdf') {
+    try {
+      const cover = await savePdfCover(book, await readableLocalFile());
+      if (cover) embedded.cover = cover;
+    } catch (err: any) {
+      warningMessages.push(`PDF cover could not be read: ${err.message || String(err)}`);
+    }
+  }
   if (canReadEmbedded) {
     try {
-      const readableUri = await materializeNativeFolderFile(
-        book.local.uri,
-        book.local.filename
-      );
+      const readableUri = await readableLocalFile();
       const base64 = await FileSystem.readAsStringAsync(readableUri, {
         encoding: FileSystem.EncodingType.Base64,
       });
-      embedded =
+      const parsed =
         book.local.format === 'epub'
           ? await readEpubMetadata(book, base64)
           : await readPdfMetadata(base64);
+      embedded = { ...parsed, ...(embedded.cover ? { cover: embedded.cover } : {}) };
     } catch (err: any) {
       warningMessages.push(`Embedded metadata could not be read: ${err.message || String(err)}`);
     }
@@ -284,7 +352,8 @@ async function enrichLocalBook(
     try {
       catalogMetadata = await findBookMetadata(
         embedded.title || book.title,
-        embedded.author || book.author
+        embedded.author || book.author,
+        catalogFetchOptions,
       );
       if (
         catalogMetadata &&
@@ -293,7 +362,10 @@ async function enrichLocalBook(
           catalogMetadata.genre === 'Other') &&
         catalogMetadata.id.startsWith('/works/')
       ) {
-        const details = await getWorkDetails(catalogMetadata.id);
+        const details = await getWorkDetails(
+          catalogMetadata.id,
+          catalogFetchOptions,
+        );
         catalogMetadata = {
           ...catalogMetadata,
           cover: catalogMetadata.cover || details.cover,
@@ -376,6 +448,7 @@ export async function enrichLocalLibrary(
   books: LibraryBook[],
   onBook: (book: LibraryBook, sources: LocalMetadataSources) => void | Promise<void>,
   onProgress?: (completed: number, total: number) => void,
+  options: { forceCatalogRefresh?: boolean } = {},
 ): Promise<MetadataWarning[]> {
   const warnings: MetadataWarning[] = [];
   const retryFailuresBefore = Date.now() - METADATA_FAILURE_RETRY_MS;
@@ -383,15 +456,31 @@ export async function enrichLocalLibrary(
   const candidates = books.filter(
     (book) =>
       !book.metadataUpdatedAt ||
-      book.metadataVersion !== LOCAL_METADATA_VERSION ||
+      book.metadataVersion !== metadataVersionFor(book) ||
       book.metadataUpdatedAt < staleBefore ||
       (book.metadataPending && book.metadataUpdatedAt < retryFailuresBefore)
   );
   let completed = 0;
   onProgress?.(completed, candidates.length);
-  for (let offset = 0; offset < candidates.length; offset += ENRICH_BATCH_SIZE) {
-    const batch = candidates.slice(offset, offset + ENRICH_BATCH_SIZE);
-    const results = await Promise.allSettled(batch.map(enrichLocalBook));
+  for (let offset = 0; offset < candidates.length; ) {
+    const nextCandidates = candidates.slice(offset, offset + ENRICH_BATCH_SIZE);
+    const largeEpubIndex = nextCandidates.findIndex(
+      (book) =>
+        book.local?.format === 'epub' &&
+        book.local.size > SERIAL_EPUB_PARSE_THRESHOLD
+    );
+    const batch =
+      largeEpubIndex === 0
+        ? nextCandidates.slice(0, 1)
+        : largeEpubIndex > 0
+          ? nextCandidates.slice(0, largeEpubIndex)
+          : nextCandidates;
+    const catalogFetchOptions = options.forceCatalogRefresh
+      ? { fetchFn: fetch }
+      : undefined;
+    const results = await Promise.allSettled(
+      batch.map((book) => enrichLocalBook(book, catalogFetchOptions)),
+    );
     for (let index = 0; index < results.length; index += 1) {
       const result = results[index];
       if (result.status === 'fulfilled') {
@@ -403,7 +492,7 @@ export async function enrichLocalLibrary(
             ...batch[index],
             metadataPending: true,
             metadataUpdatedAt: Date.now(),
-            metadataVersion: LOCAL_METADATA_VERSION,
+            metadataVersion: metadataVersionFor(batch[index]),
           },
           { embedded: {}, catalog: null }
         );
@@ -415,6 +504,7 @@ export async function enrichLocalLibrary(
       completed += 1;
       onProgress?.(completed, candidates.length);
     }
+    offset += batch.length;
   }
   return warnings;
 }

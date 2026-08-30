@@ -1,9 +1,11 @@
-import type { DiscoveryBook, FeedBook } from './openlibrary';
-import { loadPersistedLibrary, savePersistedLibrary } from './library-db';
 import type { BookAcquisition, BookMetadata } from '@tomeio/domain';
 import type { ExtensionLibraryBook } from '@tomeio/extension-protocol';
-import { metadataFromFilename } from './book-metadata';
+
 import type { BookCoverPreference, BookCoverSources } from './book-cover';
+import { bookPriceLabel, bookSourceUrl } from './book-offers';
+import { metadataFromFilename } from './book-metadata';
+import { loadPersistedLibrary, savePersistedLibrary } from './library-db';
+import type { DiscoveryBook, FeedBook } from './openlibrary';
 
 export interface LibraryBook extends FeedBook {
   key: string;
@@ -11,6 +13,7 @@ export interface LibraryBook extends FeedBook {
   fallbackCover?: string;
   coverSources?: BookCoverSources;
   coverPreference?: BookCoverPreference;
+  coverPreferenceUpdatedAt?: number;
   format?: string;
   size?: number;
   addedAt: number;
@@ -115,7 +118,11 @@ export function fromDiscoveryBook(
     genre: book.genre || 'Other',
     rating: book.rating,
     ratingsCount: book.ratingsCount,
+    seriesPosition: book.seriesPosition,
+    priceLabel: book.priceLabel,
+    sourceUrl: book.sourceUrl,
     addedAt: Date.now(),
+    availableLocally: false,
     discovery: book,
     ...overrides,
   };
@@ -137,8 +144,12 @@ export function fromExtensionBook(
     year: book.publishedYear || '',
     rating: book.rating,
     ratingsCount: book.ratingsCount,
+    seriesPosition: book.seriesPosition,
+    priceLabel: bookPriceLabel(book),
+    sourceUrl: bookSourceUrl(book),
     genre: 'Other',
     addedAt: Date.now(),
+    availableLocally: false,
     extension: { extensionId, book },
     ...overrides,
   };

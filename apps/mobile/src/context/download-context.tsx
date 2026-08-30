@@ -11,6 +11,7 @@ import {
 import { PermissionsAndroid, Platform } from 'react-native';
 
 import { useLibraryActions, useLibraryCatalog } from '@/context/library-context';
+import { useLibraryFileMirror } from '@/context/library-file-mirror-context';
 import {
   completeBackgroundDownload,
   configureBackgroundDownloads,
@@ -44,6 +45,7 @@ interface StartBookDownloadInput {
 }
 
 interface DownloadMetadata {
+  [key: string]: unknown;
   kind: 'tomeio-book';
   requestKey: string;
   filename: string;
@@ -98,6 +100,10 @@ function errorMessage(cause: unknown): string {
 
 export function DownloadProvider({ children }: { children: React.ReactNode }) {
   const { recordDownload } = useLibraryActions();
+  const {
+    enabled: libraryFileMirrorEnabled,
+    syncNow: syncLibraryFileMirror,
+  } = useLibraryFileMirror();
   const { ready: libraryReady } = useLibraryCatalog();
   const [jobs, setJobs] = useState<Record<string, BookDownloadJob>>({});
   const jobsRef = useRef(jobs);
@@ -175,6 +181,11 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
           )
         );
         await recordDownload(metadata.book, finalUri);
+        if (libraryFileMirrorEnabled) {
+          void syncLibraryFileMirror().catch(() => {
+            // The mirror context publishes the failure for Settings.
+          });
+        }
         tasksRef.current.delete(task.id);
         updateJob(metadata.requestKey, () => ({
           id: task.id,
@@ -197,7 +208,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         finalizingRef.current.delete(task.id);
       }
     },
-    [recordDownload, updateJob]
+    [libraryFileMirrorEnabled, recordDownload, syncLibraryFileMirror, updateJob]
   );
 
   const attachTask = useCallback(

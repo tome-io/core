@@ -1,5 +1,5 @@
 import * as Crypto from 'expo-crypto';
-import { File, FileMode } from 'expo-file-system';
+import { File, FileMode, type FileHandle } from 'expo-file-system';
 
 import { collectKoreaderPartialMd5Samples } from './progress-sync-model';
 
@@ -9,7 +9,11 @@ function hex(bytes: Uint8Array): string {
 
 export async function koreaderPartialMd5(uri: string): Promise<string> {
   const file = new File(uri);
-  const handle = file.open(FileMode.ReadOnly);
+  // Expo's native File exposes random-access handles, but its public File
+  // declaration currently omits the inherited native method.
+  const handle = (
+    file as File & { open(mode: FileMode): FileHandle }
+  ).open(FileMode.ReadOnly);
   let input: Uint8Array;
   try {
     input = collectKoreaderPartialMd5Samples((offset, length) => {

@@ -37,6 +37,8 @@ import {
   loadMoonReaderCatalog,
   loadProgressSyncCatalog,
   markCatalogBookRead,
+  persistCatalogBook,
+  persistLocalBook,
   removeLibrarySyncBook,
   removeProgressSyncBook,
   setCatalogBookCoverPreference,
@@ -50,7 +52,11 @@ import {
   indexLocalLibrary,
 } from "@/lib/library-sync";
 import {
+  hostedDocumentAliasForBook,
+  synchronizeHostedBookChangesIfEnabled,
   synchronizeHostedProgressIfEnabled,
+  type HostedSyncBookChange,
+  type HostedSyncBookStream,
   type HostedSyncProgress,
 } from "@/lib/hosted-sync";
 import {
@@ -183,12 +189,26 @@ async function deleteSourceFile(uri: string): Promise<void> {
 async function hasUsableRemoteCover(uri: string): Promise<boolean> {
   try {
     const image = await Image.loadAsync(uri);
-    const usable = isUsableBookCoverSize(
-      image.width * image.scale,
-      image.height * image.scale,
-    );
+    const scale = Number.isFinite(image.scale) && image.scale > 0 ? image.scale : 1;
+    const width = image.width * scale;
+    const height = image.height * scale;
+    const aspectRatio = height > 0 ? width / height : 0;
+    const usable =
+      isUsableBookCoverSize(width, height) ||
+      (width >= 120 &&
+        height >= 160 &&
+        aspectRatio >= 0.42 &&
+        aspectRatio <= 0.9);
     image.release();
     return usable;
+  } catch {
+    return false;
+  }
+}
+
+function isSafeProviderCover(uri: string): boolean {
+  try {
+    return new URL(uri).protocol === "https:";
   } catch {
     return false;
   }
@@ -235,62 +255,68 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     null,
   );
   const enrichmentQueue = useRef<Promise<void>>(Promise.resolve());
-  const lastRefreshStartedAt = useRef(0);
+  const lastHostedSyncStartedAt = useRef(0);
+  const initialRefreshKey = useRef<string | null>(null);
+  const missingReaderCatalogCleared = useRef(false);
   const pendingChangeSyncTimer = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
-  const pendingChangeSyncRequested = useRef(false);
+  const pendingBookChanges = useRef(new Map<string, HostedSyncBookChange>());
   const pendingChangeSyncRunning = useRef(false);
 
   useEffect(() => {
     if (!extensions.ready) {
-      setReaderConfigurationReady(false);
-      return;
+      const timeout = setTimeout(() => setReaderConfigurationReady(false), 0);
+      return () => clearTimeout(timeout);
     }
     let active = true;
-    const installedReaders = extensions.thirdParty.filter(
-      (candidate) =>
-        candidate.enabled &&
-        candidate.manifest.id !== "community.tomeio.moon-reader" &&
-        candidate.manifest.resources.some(
-          (resource) => resource.name === "reader",
-        ),
-    );
-    Promise.all(
-      installedReaders.map(async (installed) => {
-        const values = await extensions.configuration(installed.manifest);
-        const missing = (installed.manifest.config ?? [])
-          .filter((field) => field.required)
-          .filter((field) => {
-            const value = values[field.key];
-            return value == null || value === "";
-          });
-        if (missing.length) return null;
-        return {
-          id: installed.manifest.id,
-          name: installed.manifest.name,
-          configurationKey: JSON.stringify(values),
-        };
-      }),
-    )
-      .then((integrations) => {
-        if (active)
+    void (async () => {
+      await Promise.resolve();
+      if (!active) return;
+      setReaderConfigurationReady(false);
+      const installedReaders = extensions.thirdParty.filter(
+        (candidate) =>
+          candidate.enabled &&
+          candidate.manifest.id !== "community.tomeio.moon-reader" &&
+          candidate.manifest.resources.some(
+            (resource) => resource.name === "reader",
+          ),
+      );
+      try {
+        const integrations = await Promise.all(
+          installedReaders.map(async (installed) => {
+            const values = await extensions.configuration(installed.manifest);
+            const missing = (installed.manifest.config ?? [])
+              .filter((field) => field.required)
+              .filter((field) => {
+                const value = values[field.key];
+                return value == null || value === "";
+              });
+            if (missing.length) return null;
+            return {
+              id: installed.manifest.id,
+              name: installed.manifest.name,
+              configurationKey: JSON.stringify(values),
+            };
+          }),
+        );
+        if (active) {
           setReaderIntegrations(integrations.filter((value) => value != null));
-      })
-      .catch((cause) => {
+        }
+      } catch (cause) {
         if (active) {
           setSyncError(
             `Reader add-on configuration failed: ${cause instanceof Error ? cause.message : String(cause)}`,
           );
         }
-      })
-      .finally(() => {
+      } finally {
         if (active) setReaderConfigurationReady(true);
-      });
+      }
+    })();
     return () => {
       active = false;
     };
-  }, [extensions.configuration, extensions.ready, extensions.thirdParty]);
+  }, [extensions]);
 
   const commit = useCallback(
     (update: (current: LibraryState) => LibraryState): Promise<void> => {
@@ -364,15 +390,15 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       }
       return null;
     },
-    [extensions.cover, extensions.coverProviders],
+    [extensions],
   );
   const coverProviderKey = useMemo(
     () =>
-      extensions
+      `${extensions
         .coverProviders()
         .map((provider) => `${provider.id}@${provider.version}`)
-        .join("|"),
-    [extensions.coverProviders],
+        .join("|")}|cover-validation:2`,
+    [extensions],
   );
 
   const refreshLocalBooks = useCallback((): Promise<void> => {
@@ -385,7 +411,6 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     if (pendingScan.current?.key === key) return pendingScan.current.promise;
 
     const generation = ++scanGeneration.current;
-    lastRefreshStartedAt.current = Date.now();
     const directoryChanged = lastScanKey.current !== key;
     lastScanKey.current = key;
     setScanning(true);
@@ -399,7 +424,12 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
 
     let promise: Promise<void>;
     promise = (async () => {
-      if (!readerSourceKey) await clearMoonReaderCatalog();
+      if (!readerSourceKey && !missingReaderCatalogCleared.current) {
+        await clearMoonReaderCatalog();
+        missingReaderCatalogCleared.current = true;
+      } else if (readerSourceKey) {
+        missingReaderCatalogCleared.current = false;
+      }
       const [cachedLocal, cachedMoonReader, cachedProgressBooks] =
         await Promise.all([
           loadLocalCatalog(localKey),
@@ -416,7 +446,11 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       }
 
       const warnings: string[] = [];
-      let local = { books: cachedLocal, warnings: [] as string[] };
+      let local = {
+        books: cachedLocal,
+        warnings: [] as string[],
+        changed: false,
+      };
       let localIndexSucceeded = false;
       try {
         local = await indexLocalLibrary({
@@ -476,26 +510,29 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       let enrichmentCollectionBooks = stateRef.current.downloaded;
 
       try {
+        lastHostedSyncStartedAt.current = Date.now();
         const hosted = await synchronizeHostedProgressIfEnabled({
           onProgress: reportHostedSyncProgress,
         });
         if (hosted != null) {
           setLastSyncedAt(hosted.syncedAt);
-          const syncedState = await loadLibrary();
-          stateRef.current = syncedState;
-          setState(syncedState);
-          enrichmentCollectionBooks = syncedState.downloaded;
-          [
-            enrichmentLocalBooks,
-            enrichmentMoonReaderBooks,
-            enrichmentProgressBooks,
-          ] = await Promise.all([
-            loadLocalCatalog(localKey),
-            readerSourceKey
-              ? loadMoonReaderCatalog(readerKey)
-              : Promise.resolve([]),
-            loadProgressSyncCatalog(),
-          ]);
+          if (hosted.importedRecords > 0) {
+            const syncedState = await loadLibrary();
+            stateRef.current = syncedState;
+            setState(syncedState);
+            enrichmentCollectionBooks = syncedState.downloaded;
+            [
+              enrichmentLocalBooks,
+              enrichmentMoonReaderBooks,
+              enrichmentProgressBooks,
+            ] = await Promise.all([
+              loadLocalCatalog(localKey),
+              readerSourceKey
+                ? loadMoonReaderCatalog(readerKey)
+                : Promise.resolve([]),
+              loadProgressSyncCatalog(),
+            ]);
+          }
         }
       } catch (err: any) {
         warnings.push(`Tomeio Sync failed: ${err.message || String(err)}`);
@@ -517,11 +554,6 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
 
       const enrichmentOperation = enrichmentQueue.current.then(async () => {
         if (scanGeneration.current !== generation) return;
-        setActivity({
-          state: "running",
-          title: "Updating book details",
-          detail: "Finding covers and metadata in the background…",
-        });
         const enrichmentProgress = new Map<
           string,
           { completed: number; total: number }
@@ -529,6 +561,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         const trackEnrichment = (source: string) =>
           (completed: number, total: number) => {
             if (scanGeneration.current !== generation) return;
+            if (total === 0) return;
             enrichmentProgress.set(source, { completed, total });
             const values = [...enrichmentProgress.values()];
             setActivity({
@@ -578,6 +611,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
             warnings: [
               `Local metadata enrichment failed: ${err.message || String(err)}`,
             ],
+            changed: false,
           })),
           enrichIndexedReaderCatalog(enrichmentMoonReaderBooks, undefined, {
             onProgress: trackEnrichment("reader"),
@@ -680,7 +714,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     readerConfigurationReady,
     settingsReady,
     ready,
-    extensions.readerSync,
+    extensions,
     reportHostedSyncProgress,
     extensionCoverLookup,
     coverProviderKey,
@@ -701,23 +735,21 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
   }, [coverProviderKey, extensionCoverLookup]);
 
   useEffect(() => {
+    if (!settingsReady || !readerConfigurationReady || !ready) return;
+    const key = `${settings.localLibraryLocation ?? "__app_downloads__"}|${
+      readerSourceKey ?? "__no_reader_addons__"
+    }`;
+    if (initialRefreshKey.current === key) return;
+    initialRefreshKey.current = key;
     void refreshLocalBooks();
-  }, [refreshLocalBooks]);
-
-  useEffect(() => {
-    let previousState = AppState.currentState;
-    const subscription = AppState.addEventListener("change", (nextState) => {
-      const returningToApp =
-        /inactive|background/.test(previousState) && nextState === "active";
-      previousState = nextState;
-      const refreshIsStale =
-        Date.now() - lastRefreshStartedAt.current >= 60_000;
-      if (returningToApp && refreshIsStale && !isFolderPickerActive()) {
-        void refreshLocalBooks();
-      }
-    });
-    return () => subscription.remove();
-  }, [refreshLocalBooks]);
+  }, [
+    readerConfigurationReady,
+    readerSourceKey,
+    ready,
+    refreshLocalBooks,
+    settings.localLibraryLocation,
+    settingsReady,
+  ]);
 
   useEffect(
     () => () => {
@@ -786,8 +818,10 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
 
   const synchronizePendingChanges = useCallback(async (): Promise<void> => {
     try {
+      lastHostedSyncStartedAt.current = Date.now();
       const hosted = await synchronizeHostedProgressIfEnabled({
         onProgress: reportHostedSyncProgress,
+        queueAfterCurrent: true,
       });
       if (hosted == null) return;
       setLastSyncedAt(hosted.syncedAt);
@@ -801,9 +835,14 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       setActivity({
         state: "success",
         title: "Changes synchronized",
-        detail: "Your library and reading progress are up to date.",
+        detail:
+          hosted.importedRecords || hosted.pushedRecords
+            ? "Your library and reading progress are up to date."
+            : "No changes needed to be synchronized.",
       });
-      enrichSyncedBooksInBackground(syncedProgress, syncedState.downloaded);
+      if (hosted.importedRecords) {
+        enrichSyncedBooksInBackground(syncedProgress, syncedState.downloaded);
+      }
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       setSyncError(message);
@@ -816,28 +855,120 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     }
   }, [enrichSyncedBooksInBackground, reportHostedSyncProgress]);
 
-  const schedulePendingChanges = useCallback(() => {
-    pendingChangeSyncRequested.current = true;
-    if (pendingChangeSyncTimer.current || pendingChangeSyncRunning.current)
-      return;
-    pendingChangeSyncTimer.current = setTimeout(() => {
-      pendingChangeSyncTimer.current = null;
-      pendingChangeSyncRunning.current = true;
-      void (async () => {
-        try {
-          while (pendingChangeSyncRequested.current) {
-            pendingChangeSyncRequested.current = false;
-            await synchronizePendingChanges();
+  const synchronizeForegroundChanges = useCallback(async (): Promise<void> => {
+    try {
+      lastHostedSyncStartedAt.current = Date.now();
+      const hosted = await synchronizeHostedProgressIfEnabled();
+      if (hosted == null) return;
+      setLastSyncedAt(hosted.syncedAt);
+      if (!hosted.importedRecords && !hosted.pushedRecords) return;
+      const [syncedState, syncedProgress] = await Promise.all([
+        loadLibrary(),
+        loadProgressSyncCatalog(),
+      ]);
+      stateRef.current = syncedState;
+      setState(syncedState);
+      setProgressSyncBooks(syncedProgress);
+      setActivity({
+        state: "success",
+        title: "Tomeio synchronized",
+        detail: `${hosted.importedRecords} remote and ${hosted.pushedRecords} local changes applied.`,
+      });
+      if (hosted.importedRecords) {
+        enrichSyncedBooksInBackground(syncedProgress, syncedState.downloaded);
+      }
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setSyncError(message);
+      setActivity({
+        state: "error",
+        title: "Tomeio Sync failed",
+        detail: message,
+      });
+    }
+  }, [enrichSyncedBooksInBackground]);
+
+  const synchronizeBookChanges = useCallback(
+    async (changes: HostedSyncBookChange[]): Promise<void> => {
+      try {
+        lastHostedSyncStartedAt.current = Date.now();
+        const hosted = await synchronizeHostedBookChangesIfEnabled(changes, {
+          onProgress: reportHostedSyncProgress,
+        });
+        if (hosted == null) return;
+        setLastSyncedAt(hosted.syncedAt);
+        setActivity({
+          state: "success",
+          title: "Change synchronized",
+          detail:
+            hosted.pushedRecords === 1
+              ? "The book change is up to date on Tomeio."
+              : `${hosted.pushedRecords} related book changes are up to date on Tomeio.`,
+        });
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        setSyncError(message);
+        setActivity({
+          state: "error",
+          title: "Tomeio Sync failed",
+          detail: message,
+        });
+        throw cause;
+      }
+    },
+    [reportHostedSyncProgress],
+  );
+
+  useEffect(() => {
+    let previousState = AppState.currentState;
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      const returningToApp =
+        /inactive|background/.test(previousState) && nextState === "active";
+      previousState = nextState;
+      const hostedSyncIsStale =
+        Date.now() - lastHostedSyncStartedAt.current >= 5 * 60_000;
+      if (returningToApp && hostedSyncIsStale && !isFolderPickerActive()) {
+        void synchronizeForegroundChanges();
+      }
+    });
+    return () => subscription.remove();
+  }, [synchronizeForegroundChanges]);
+
+  const schedulePendingChanges = useCallback(
+    (
+      book: LibraryBook,
+      streams: HostedSyncBookStream[],
+      documentAlias?: string,
+    ) => {
+      const key = bookIdentity(book.title, book.author);
+      const existing = pendingBookChanges.current.get(key);
+      pendingBookChanges.current.set(key, {
+        book,
+        streams: [...new Set([...(existing?.streams ?? []), ...streams])],
+        documentAlias: documentAlias ?? existing?.documentAlias,
+      });
+      if (pendingChangeSyncTimer.current || pendingChangeSyncRunning.current)
+        return;
+      pendingChangeSyncTimer.current = setTimeout(() => {
+        pendingChangeSyncTimer.current = null;
+        pendingChangeSyncRunning.current = true;
+        void (async () => {
+          try {
+            while (pendingBookChanges.current.size) {
+              const changes = [...pendingBookChanges.current.values()];
+              pendingBookChanges.current.clear();
+              await synchronizeBookChanges(changes);
+            }
+          } catch {
+            // synchronizeBookChanges publishes the failure for the global UI.
+          } finally {
+            pendingChangeSyncRunning.current = false;
           }
-        } catch {
-          // synchronizePendingChanges publishes the failure for the global UI.
-        } finally {
-          pendingChangeSyncRunning.current = false;
-          if (pendingChangeSyncRequested.current) schedulePendingChanges();
-        }
-      })();
-    }, 500);
-  }, [synchronizePendingChanges]);
+        })();
+      }, 500);
+    },
+    [synchronizeBookChanges],
+  );
 
   useEffect(
     () => () => {
@@ -850,17 +981,18 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
 
   const toggleReadingList = useCallback(
     async (book: LibraryBook) => {
-      const exists = stateRef.current.readingList.some(
-        (item) => item.key === book.key,
-      );
+      const identity = bookIdentity(book.title, book.author);
+      const matchesBook = (item: LibraryBook) =>
+        bookIdentity(item.title, item.author) === identity;
+      const exists = stateRef.current.readingList.some(matchesBook);
       await commit((current) => ({
         ...current,
         readingList: exists
-          ? current.readingList.filter((item) => item.key !== book.key)
-          : [book, ...current.readingList],
+          ? current.readingList.filter((item) => !matchesBook(item))
+          : [book, ...current.readingList.filter((item) => !matchesBook(item))],
       }));
       await setCollectionSyncMembership(book, "reading-list", !exists);
-      schedulePendingChanges();
+      schedulePendingChanges(book, ["reading-list"]);
       return !exists;
     },
     [commit, schedulePendingChanges],
@@ -872,6 +1004,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         const downloaded = {
           ...book,
           fileUri,
+          availableLocally: true,
           downloadedAt: Date.now(),
         };
         return {
@@ -912,7 +1045,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         downloaded: current.downloaded.map(applyRead),
         readingList: current.readingList.map(applyRead),
       }));
-      schedulePendingChanges();
+      schedulePendingChanges(book, ["progress"]);
     },
     [commit, schedulePendingChanges],
   );
@@ -957,106 +1090,243 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
 
   const removeLibraryBook = useCallback(
     async (book: LibraryBook) => {
-      const uri = book.local?.uri ?? book.fileUri;
-      await removeLibrarySyncBook(book);
-      if (book.availableLocally !== false && book.local?.uri) {
-        await deleteSourceFile(book.local.uri);
+      setActivity({
+        state: "running",
+        title: "Removing book",
+        detail: `Removing “${book.title}” from Tomeio…`,
+      });
+      try {
+        const uri = book.local?.uri ?? book.fileUri;
+        const documentAlias = await hostedDocumentAliasForBook(book);
+        await removeLibrarySyncBook(book, documentAlias ?? undefined);
+        if (book.availableLocally !== false && book.local?.uri) {
+          await deleteSourceFile(book.local.uri);
+        }
+        if (book.local?.uri) await deleteLocalCatalogBook(book.local.uri);
+        await removeProgressSyncBook(book, documentAlias ?? undefined);
+        const identity = bookIdentity(book.title, book.author);
+        setLocalBooks((current) =>
+          current.filter(
+            (item) => item.key !== book.key && (!uri || item.local?.uri !== uri),
+          ),
+        );
+        setProgressSyncBooks((current) =>
+          current.filter(
+            (item) =>
+              item.key !== book.key &&
+              bookIdentity(item.title, item.author) !== identity,
+          ),
+        );
+        setMoonReaderBooks((current) =>
+          current.filter(
+            (item) => bookIdentity(item.title, item.author) !== identity,
+          ),
+        );
+        await commit((current) => ({
+          downloaded: current.downloaded.filter(
+            (item) =>
+              item.key !== book.key &&
+              (!uri || (item.local?.uri ?? item.fileUri) !== uri) &&
+              bookIdentity(item.title, item.author) !== identity,
+          ),
+          readingList: current.readingList.filter(
+            (item) =>
+              item.key !== book.key &&
+              (!uri || (item.local?.uri ?? item.fileUri) !== uri) &&
+              bookIdentity(item.title, item.author) !== identity,
+          ),
+        }));
+        schedulePendingChanges(
+          book,
+          ["progress", "library", "reading-list"],
+          documentAlias ?? undefined,
+        );
+        setActivity({
+          state: "success",
+          title: "Book removed",
+          detail: `“${book.title}” was removed from Tomeio.`,
+        });
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        setActivity({
+          state: "error",
+          title: "Could not remove book",
+          detail: message,
+        });
+        throw cause;
       }
-      if (book.local?.uri) await deleteLocalCatalogBook(book.local.uri);
-      await removeProgressSyncBook(book);
-      const identity = bookIdentity(book.title, book.author);
-      setLocalBooks((current) =>
-        current.filter(
-          (item) => item.key !== book.key && (!uri || item.local?.uri !== uri),
-        ),
-      );
-      setProgressSyncBooks((current) =>
-        current.filter(
-          (item) =>
-            item.key !== book.key &&
-            bookIdentity(item.title, item.author) !== identity,
-        ),
-      );
-      setMoonReaderBooks((current) =>
-        current.filter(
-          (item) => bookIdentity(item.title, item.author) !== identity,
-        ),
-      );
-      await commit((current) => ({
-        downloaded: current.downloaded.filter(
-          (item) =>
-            item.key !== book.key &&
-            (!uri || (item.local?.uri ?? item.fileUri) !== uri) &&
-            bookIdentity(item.title, item.author) !== identity,
-        ),
-        readingList: current.readingList.filter(
-          (item) =>
-            item.key !== book.key &&
-            (!uri || (item.local?.uri ?? item.fileUri) !== uri) &&
-            bookIdentity(item.title, item.author) !== identity,
-        ),
-      }));
-      schedulePendingChanges();
     },
     [commit, schedulePendingChanges],
   );
 
   const refreshBookMetadata = useCallback(
     async (book: LibraryBook) => {
-      if (pendingScan.current) await pendingScan.current.promise;
-      await invalidateCatalogMetadata(book.key);
-      const invalidRemoteCover =
-        !book.local || book.cover?.includes("covers.openlibrary.org/b/isbn/");
-      const invalidated: LibraryBook = {
-        ...book,
-        cover: invalidRemoteCover ? "" : book.cover,
-        discovery: undefined,
-        rating: undefined,
-        ratingsCount: undefined,
-        metadataPending: true,
-        metadataUpdatedAt: undefined,
-        metadataVersion: undefined,
-      };
+      setActivity({
+        state: "running",
+        title: "Refreshing metadata",
+        detail: `Checking the file and configured metadata providers for “${book.title}”…`,
+      });
       setWarning(null);
+      try {
+        if (pendingScan.current) await pendingScan.current.promise;
+        await invalidateCatalogMetadata(book.key);
+        const invalidRemoteCover =
+          !book.local || book.cover?.includes("covers.openlibrary.org/b/isbn/");
+        const invalidated: LibraryBook = {
+          ...book,
+          cover: invalidRemoteCover ? "" : book.cover,
+          discovery: undefined,
+          rating: undefined,
+          ratingsCount: undefined,
+          metadataPending: true,
+          metadataUpdatedAt: undefined,
+          metadataVersion: undefined,
+        };
+        let refreshed: LibraryBook;
+        let warnings: string[];
 
-      if (invalidated.local) {
-        const directoryKey =
-          settings.localLibraryLocation ?? "__app_downloads__";
-        const result = await enrichIndexedLocalLibrary({
-          directoryKey,
-          books: [invalidated],
+        if (invalidated.local) {
+          const directoryKey =
+            settings.localLibraryLocation ?? "__app_downloads__";
+          const result = await enrichIndexedLocalLibrary({
+            directoryKey,
+            books: [invalidated],
+            forceCatalogRefresh: true,
+          });
+          const refreshedBook = result.books[0];
+          if (!refreshedBook) {
+            throw new Error("Metadata refresh returned no book.");
+          }
+          refreshed = refreshedBook;
+          warnings = result.warnings;
+          setLocalBooks((current) =>
+            current.map((item) =>
+              item.key === refreshed.key ? refreshed : item,
+            ),
+          );
+        } else {
+          const result = await enrichIndexedReaderCatalog(
+            [invalidated],
+            undefined,
+            {
+              coverLookup: extensionCoverLookup,
+              coverLookupKey: coverProviderKey,
+              forceCatalogRefresh: true,
+            },
+          );
+          const refreshedBook = result.books[0];
+          if (!refreshedBook) {
+            throw new Error("Metadata refresh returned no book.");
+          }
+          refreshed = refreshedBook;
+          warnings = result.warnings;
+          setMoonReaderBooks((current) =>
+            current.map((item) =>
+              item.key === refreshed.key ? refreshed : item,
+            ),
+          );
+          setProgressSyncBooks((current) =>
+            current.map((item) =>
+              item.key === refreshed.key ? refreshed : item,
+            ),
+          );
+          const refreshedState = await loadLibrary();
+          stateRef.current = refreshedState;
+          setState(refreshedState);
+        }
+
+        const hardcover = extensions
+          .coverProviders()
+          .find((provider) => provider.id === "community.tomeio.hardcover");
+        if (hardcover) {
+          try {
+            const matches = await extensions.resolveBooks(
+              hardcover.id,
+              toExtensionLibraryBook(refreshed),
+            );
+            const matchedPosition = matches.find(
+              (candidate) => candidate.seriesPosition != null,
+            )?.seriesPosition;
+            if (matchedPosition != null) {
+              refreshed = { ...refreshed, seriesPosition: matchedPosition };
+              if (refreshed.local) {
+                refreshed = await persistLocalBook(
+                  settings.localLibraryLocation ?? "__app_downloads__",
+                  refreshed,
+                );
+              } else {
+                refreshed = await persistCatalogBook(refreshed);
+              }
+              const applySeriesPosition = (item: LibraryBook): LibraryBook =>
+                item.key === refreshed.key ? refreshed : item;
+              setLocalBooks((current) => current.map(applySeriesPosition));
+              setMoonReaderBooks((current) => current.map(applySeriesPosition));
+              setProgressSyncBooks((current) => current.map(applySeriesPosition));
+              await commit((current) => ({
+                downloaded: current.downloaded.map(applySeriesPosition),
+                readingList: current.readingList.map(applySeriesPosition),
+              }));
+            } else if (refreshed.genre.toUpperCase().includes("SERIES:")) {
+              warnings.push(
+                `Hardcover did not return a series position for “${refreshed.title}”.`,
+              );
+            }
+          } catch (cause) {
+            warnings.push(
+              `Hardcover series lookup failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+            );
+          }
+        }
+
+        if (warnings.length) {
+          setActivity({
+            state: "error",
+            title: "Metadata needs attention",
+            detail: warnings.join(" "),
+          });
+          return;
+        }
+
+        const added = [
+          !book.description?.trim() && refreshed.description?.trim()
+            ? "description"
+            : null,
+          book.rating == null && refreshed.rating != null ? "rating" : null,
+          book.seriesPosition == null && refreshed.seriesPosition != null
+            ? "series position"
+            : null,
+        ].filter((value): value is string => value != null);
+        const stillMissing = [
+          !refreshed.description?.trim() ? "description" : null,
+          refreshed.rating == null ? "rating" : null,
+        ].filter((value): value is string => value != null);
+        const detail = added.length
+          ? `Added ${added.join(" and ")} from the configured metadata providers.`
+          : stillMissing.length
+            ? `The configured metadata providers returned no ${stillMissing.join(" or ")} for this book.`
+            : `Metadata for “${book.title}” is up to date.`;
+        setActivity({
+          state: "success",
+          title: "Metadata refreshed",
+          detail,
         });
-        const refreshed = result.books[0];
-        setLocalBooks((current) =>
-          current.map((item) =>
-            item.key === refreshed.key ? refreshed : item,
-          ),
-        );
-        setWarning(result.warnings.length ? result.warnings.join(" ") : null);
-        return;
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        setActivity({
+          state: "error",
+          title: "Could not refresh metadata",
+          detail: message,
+        });
+        throw cause;
       }
-
-      const result = await enrichIndexedReaderCatalog(
-        [invalidated],
-        undefined,
-        {
-          coverLookup: extensionCoverLookup,
-          coverLookupKey: coverProviderKey,
-        },
-      );
-      const refreshed = result.books[0];
-      setMoonReaderBooks((current) =>
-        current.map((item) => (item.key === refreshed.key ? refreshed : item)),
-      );
-      setProgressSyncBooks((current) =>
-        current.map((item) => (item.key === refreshed.key ? refreshed : item)),
-      );
-      const refreshedState = await loadLibrary();
-      stateRef.current = refreshedState;
-      setState(refreshedState);
-      setWarning(result.warnings.length ? result.warnings.join(" ") : null);
     },
-    [coverProviderKey, extensionCoverLookup, settings.localLibraryLocation],
+    [
+      commit,
+      coverProviderKey,
+      extensionCoverLookup,
+      extensions,
+      settings.localLibraryLocation,
+    ],
   );
 
   const refreshBookCoverSources = useCallback(
@@ -1104,7 +1374,18 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
           continue;
         }
         const { provider, uri } = result;
-        if (!uri || !(await hasUsableRemoteCover(uri))) continue;
+        if (!uri) continue;
+        const usable =
+          provider.id === "org.tomeio.open-library"
+            ? await hasUsableRemoteCover(uri)
+            : isSafeProviderCover(uri);
+        if (!usable) {
+          unavailableProviders.push(result.provider.name);
+          console.info(
+            `Cover provider ${result.provider.name} returned an unusable image.`,
+          );
+          continue;
+        }
         if (provider.id === "org.tomeio.open-library") catalog = uri;
         else providerSources[provider.id] = uri;
       }
@@ -1126,13 +1407,17 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       }));
       return unavailableProviders;
     },
-    [commit, coverProviderKey, extensions.cover, extensions.coverProviders],
+    [commit, coverProviderKey, extensions],
   );
 
   const cacheBookCoverSource = useCallback(
     async (book: LibraryBook, providerId: string, uri: string) => {
       if (book.coverSources?.providers?.[providerId] === uri) return;
-      if (!(await hasUsableRemoteCover(uri))) return;
+      const usable =
+        providerId === "org.tomeio.open-library"
+          ? await hasUsableRemoteCover(uri)
+          : isSafeProviderCover(uri);
+      if (!usable) return;
       const persisted = await setCatalogBookCoverProviderSource(
         book.key,
         providerId,
@@ -1169,7 +1454,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
             providerId,
             toExtensionLibraryBook(book),
           );
-          if (!uri || !(await hasUsableRemoteCover(uri))) {
+          if (!uri || !isSafeProviderCover(uri)) {
             const provider = extensions
               .coverProviders()
               .find((candidate) => candidate.id === providerId);
@@ -1192,6 +1477,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
               fallbackCover: persisted.fallbackCover,
               coverSources: persisted.coverSources,
               coverPreference: persisted.coverPreference,
+              coverPreferenceUpdatedAt: persisted.coverPreferenceUpdatedAt,
             }
           : item;
       setLocalBooks((current) => current.map(applyCover));
@@ -1202,7 +1488,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         readingList: current.readingList.map(applyCover),
       }));
     },
-    [commit, extensions.cover, extensions.coverProviders],
+    [commit, extensions],
   );
 
   const downloaded = useMemo(() => {
@@ -1360,9 +1646,43 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
 
   const readingList = useMemo(() => {
     const libraryByKey = new Map(downloaded.map((book) => [book.key, book]));
-    return state.readingList.map((book) => {
-      const enriched = libraryByKey.get(book.key);
-      return enriched ? { ...enriched, addedAt: book.addedAt } : book;
+    const localByIdentity = new Map<string, LibraryBook>();
+    for (const book of downloaded) {
+      if (
+        book.availableLocally !== false &&
+        (book.local?.uri || book.fileUri || book.moonReader?.availableLocally)
+      ) {
+        localByIdentity.set(bookIdentity(book.title, book.author), book);
+      }
+    }
+    const seen = new Set<string>();
+    return state.readingList.flatMap((book) => {
+      const identity = bookIdentity(book.title, book.author);
+      if (seen.has(identity)) return [];
+      seen.add(identity);
+      const exact = libraryByKey.get(book.key);
+      const linkedLocal = localByIdentity.get(identity);
+      const enriched = exact ? { ...exact, addedAt: book.addedAt } : book;
+      if (!linkedLocal) {
+        return [{
+          ...enriched,
+          availableLocally:
+            enriched.availableLocally ??
+            (enriched.moonReader?.availableLocally === true),
+        }];
+      }
+      return [{
+        ...enriched,
+        fileUri: linkedLocal.local?.uri ?? linkedLocal.fileUri,
+        local: linkedLocal.local,
+        availableLocally: true,
+        progress: linkedLocal.progress ?? enriched.progress,
+        isRead: linkedLocal.isRead ?? enriched.isRead,
+        readingTimeMs:
+          linkedLocal.readingTimeMs ?? enriched.readingTimeMs,
+        wordsRead: linkedLocal.wordsRead ?? enriched.wordsRead,
+        lastReadAt: linkedLocal.lastReadAt ?? enriched.lastReadAt,
+      }];
     });
   }, [downloaded, state.readingList]);
 

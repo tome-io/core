@@ -2,6 +2,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 
 import {
+  getNativeProgressFolderDiagnostics,
   isNativeFolderLocation,
   pickNativeDirectory,
 } from '../../modules/expo-progress-folder/src';
@@ -53,6 +54,49 @@ export function folderLocationLabel(location: string): string {
     return decodeURIComponent(location.split('/').pop() || location);
   }
   return location;
+}
+
+export interface FolderLocationDescription {
+  label: string;
+  detail: string;
+  kind: 'cloud' | 'device' | 'unknown';
+}
+
+function androidProviderLabel(authority: string | null): string {
+  if (authority === 'com.google.android.apps.docs.storage') return 'Google Drive';
+  if (authority === 'com.android.externalstorage.documents') return 'On-device storage';
+  if (authority === 'com.android.providers.downloads.documents') return 'Downloads';
+  if (authority === 'com.android.providers.media.documents') return 'Media storage';
+  return 'Android document provider';
+}
+
+export async function describeFolderLocation(
+  location: string
+): Promise<FolderLocationDescription> {
+  if (isSafLocation(location)) {
+    const diagnostics = await getNativeProgressFolderDiagnostics(location);
+    const provider = androidProviderLabel(diagnostics.authority);
+    const kind = diagnostics.storageKind ?? 'unknown';
+    const kindLabel =
+      kind === 'cloud' ? 'Cloud storage' : kind === 'device' ? 'On-device storage' : 'Storage provider';
+    return {
+      label: diagnostics.displayName || folderLocationLabel(location),
+      detail: provider === kindLabel ? kindLabel : `${provider} · ${kindLabel}`,
+      kind,
+    };
+  }
+  if (isNativeFolderLocation(location)) {
+    return {
+      label: folderLocationLabel(location),
+      detail: 'Files folder',
+      kind: 'unknown',
+    };
+  }
+  return {
+    label: folderLocationLabel(location),
+    detail: 'Tomeio app storage · On-device storage',
+    kind: 'device',
+  };
 }
 
 // Supplying an initial URI prevents Android DocumentsUI from reopening at the

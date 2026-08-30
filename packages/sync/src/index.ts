@@ -77,6 +77,14 @@ export function isProgressSyncRecord(value: unknown): value is ProgressSyncRecor
 }
 
 function newerRecord(left: ProgressSyncRecord, right: ProgressSyncRecord): ProgressSyncRecord {
+  const leftEventAt = Math.max(left.updatedAt, left.removedAt ?? 0);
+  const rightEventAt = Math.max(right.updatedAt, right.removedAt ?? 0);
+  const leftRemoved = isProgressRecordRemoved(left);
+  const rightRemoved = isProgressRecordRemoved(right);
+  if (leftRemoved || rightRemoved) {
+    if (leftEventAt !== rightEventAt) return leftEventAt > rightEventAt ? left : right;
+    if (leftRemoved !== rightRemoved) return leftRemoved ? left : right;
+  }
   if (left.isRead !== right.isRead) return left.isRead ? left : right;
   if (left.progress !== right.progress) return left.progress > right.progress ? left : right;
   return left.updatedAt >= right.updatedAt ? left : right;
@@ -96,22 +104,19 @@ export function mergeProgressRecords(
   ...groups: ProgressSyncRecord[][]
 ): ProgressSyncRecord[] {
   const merged: ProgressSyncRecord[] = [];
-  const identityIndexes = new Map<string, number>();
-  const aliasIndexes = new Map<string, number>();
+  const indexes = new Map<string, number>();
 
   for (const record of groups.flat()) {
-    const matchingIndexes = [
-      identityIndexes.get(record.identity),
-      ...record.aliases.map((alias) => aliasIndexes.get(alias)),
-    ].filter((index): index is number => index != null);
+    const matchingIndexes = [record.identity, ...record.aliases]
+      .map((identifier) => indexes.get(identifier))
+      .filter((index): index is number => index != null);
     const index = matchingIndexes.length ? Math.min(...matchingIndexes) : -1;
     if (index === -1) {
       const nextIndex = merged.length;
       const next = { ...record, aliases: [...new Set(record.aliases)].sort() };
       merged.push(next);
-      identityIndexes.set(next.identity, nextIndex);
-      for (const alias of next.aliases) {
-        if (!aliasIndexes.has(alias)) aliasIndexes.set(alias, nextIndex);
+      for (const identifier of [next.identity, ...next.aliases]) {
+        indexes.set(identifier, nextIndex);
       }
       continue;
     }
@@ -135,12 +140,13 @@ export function mergeProgressRecords(
     if (removedAt != null && removedAt >= next.updatedAt) next.removedAt = removedAt;
     else delete next.removedAt;
     merged[index] = next;
-    if (current.identity !== next.identity && identityIndexes.get(current.identity) === index) {
-      identityIndexes.delete(current.identity);
-    }
-    identityIndexes.set(next.identity, index);
-    for (const alias of next.aliases) {
-      if (!aliasIndexes.has(alias)) aliasIndexes.set(alias, index);
+    for (const identifier of [
+      current.identity,
+      record.identity,
+      next.identity,
+      ...next.aliases,
+    ]) {
+      indexes.set(identifier, index);
     }
   }
   return merged.sort((left, right) => left.identity.localeCompare(right.identity));
