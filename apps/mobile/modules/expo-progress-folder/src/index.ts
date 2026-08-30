@@ -153,7 +153,7 @@ export function copyNativeFileToLocal(
   const module = requireProgressFolderModule();
   if (!module.copyFileToLocal) {
     throw new Error(
-      'Reading an iOS folder requires a rebuilt Tomeio app. Run `bun run mobile:ios` from the repository root.'
+      'Reading a selected cloud file requires a rebuilt Tomeio app. Rebuild the native app for this device.'
     );
   }
   return module.copyFileToLocal(sourceUri, destinationUri);

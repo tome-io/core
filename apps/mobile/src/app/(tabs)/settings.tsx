@@ -84,8 +84,13 @@ import type { FolderLocationSetting } from "@/lib/settings";
 import { forgetNativeDirectory } from "../../../modules/expo-progress-folder/src";
 
 type ProviderRole = "discovery" | "search" | "acquisition";
-type SettingsSectionId = "appearance" | "providers" | "library" | "sync";
-const SECTIONS: { id: SettingsSectionId; label: string }[] = [
+type SettingsSectionId =
+  | "appearance"
+  | "providers"
+  | "library"
+  | "sync"
+  | "import-export";
+const BASE_SECTIONS: { id: SettingsSectionId; label: string }[] = [
   ...(Platform.OS === "android"
     ? [{ id: "appearance" as const, label: "Appearance" }]
     : []),
@@ -124,15 +129,17 @@ function providerRoleLabel(role: ProviderRole | null): string {
 }
 
 function SettingsMenu({
+  sections,
   selected,
   onSelect,
 }: {
+  sections: { id: SettingsSectionId; label: string }[];
   selected: SettingsSectionId;
   onSelect: (section: SettingsSectionId) => void;
 }) {
   return (
     <View className="h-full w-72 px-6 py-12">
-      {SECTIONS.map((section) => {
+      {sections.map((section) => {
         const active = section.id === selected;
         return (
           <Pressable
@@ -816,7 +823,7 @@ export default function SettingsScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const sectionOffsets = useRef<Partial<Record<SettingsSectionId, number>>>({});
   const [selectedSection, setSelectedSection] = useState<SettingsSectionId>(
-    SECTIONS[0].id,
+    BASE_SECTIONS[0].id,
   );
   const [providerPicker, setProviderPicker] = useState<ProviderRole | null>(
     null,
@@ -890,6 +897,16 @@ export default function SettingsScreen() {
     () => extensions.libraryImports(),
     [extensions],
   );
+  const sections = useMemo(
+    () =>
+      libraryImports.length
+        ? [
+            ...BASE_SECTIONS,
+            { id: "import-export" as const, label: "Import / Export" },
+          ]
+        : BASE_SECTIONS,
+    [libraryImports.length],
+  );
   const selectedSearch = searchProviders.find(
     (manifest) => manifest.id === extensions.searchExtensionId,
   );
@@ -934,7 +951,7 @@ export default function SettingsScreen() {
     event: NativeSyntheticEvent<NativeScrollEvent>,
   ) => {
     const marker = event.nativeEvent.contentOffset.y + 60;
-    const active = SECTIONS.reduce<SettingsSectionId>((current, section) => {
+    const active = sections.reduce<SettingsSectionId>((current, section) => {
       const offset = sectionOffsets.current[section.id];
       return typeof offset === "number" && offset <= marker
         ? section.id
@@ -1072,7 +1089,11 @@ export default function SettingsScreen() {
       style={{ backgroundColor: colors.background }}
     >
       {showMenu ? (
-        <SettingsMenu selected={selectedSection} onSelect={scrollToSection} />
+        <SettingsMenu
+          sections={sections}
+          selected={selectedSection}
+          onSelect={scrollToSection}
+        />
       ) : null}
       <ScrollView
         ref={scrollRef}
@@ -1231,27 +1252,41 @@ export default function SettingsScreen() {
               />
             </SettingsOption>
           ) : null}
-          {libraryImports.map((available) => (
-            <SettingsOption
-              key={`${available.extensionId}:${available.id}`}
-              compact={compactOptions}
-              label={available.title}
-              detail={
-                libraryImportSummaries[`${available.extensionId}:${available.id}`] ??
-                available.description ??
-                `Import books and progress using ${available.extensionName}.`
-              }
-            >
-              <PillButton
-                label={libraryImportBusy ? "Reading…" : "Choose backup"}
-                icon={libraryImportBusy ? undefined : "file-plus"}
-                variant="overlay"
-                disabled={libraryImportBusy || Platform.OS === "web"}
-                onPress={() => void chooseLibraryBackup(available)}
-              />
-            </SettingsOption>
-          ))}
         </SettingsSection>
+
+        {libraryImports.length ? (
+          <SettingsSection
+            title="Import / Export"
+            compact={compactOptions}
+            onLayout={(event) => {
+              sectionOffsets.current["import-export"] =
+                event.nativeEvent.layout.y;
+            }}
+          >
+            {libraryImports.map((available) => (
+              <SettingsOption
+                key={`${available.extensionId}:${available.id}`}
+                compact={compactOptions}
+                label={available.title}
+                detail={
+                  libraryImportSummaries[
+                    `${available.extensionId}:${available.id}`
+                  ] ??
+                  available.description ??
+                  `Import books and progress using ${available.extensionName}.`
+                }
+              >
+                <PillButton
+                  label={libraryImportBusy ? "Reading…" : "Choose backup"}
+                  icon={libraryImportBusy ? undefined : "file-plus"}
+                  variant="overlay"
+                  disabled={libraryImportBusy || Platform.OS === "web"}
+                  onPress={() => void chooseLibraryBackup(available)}
+                />
+              </SettingsOption>
+            ))}
+          </SettingsSection>
+        ) : null}
       </ScrollView>
 
       <ProviderPicker

@@ -12,6 +12,8 @@ import type { ExtensionDeviceOperation } from '@tomeio/extension-protocol';
 
 import { listNativeDirectoryEntries } from '../../modules/expo-progress-folder/src';
 
+import { materializeNativeFolderFile } from './native-folder-file';
+
 const INSPECTION_BATCH_SIZE = 24;
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRY_BYTES = 32 * 1024 * 1024;
@@ -271,7 +273,8 @@ export function createMobileDeviceExtensionHost(): ExtensionDeviceHost {
   const archiveCache = new Map<string, Promise<JSZip>>();
 
   const archive = async (uri: string): Promise<JSZip> => {
-    const info = await FileSystem.getInfoAsync(uri);
+    const readableUri = await materializeNativeFolderFile(uri);
+    const info = await FileSystem.getInfoAsync(readableUri);
     if (!info.exists || info.isDirectory) throw new Error('The selected archive does not exist.');
     if (finiteNumber(info.size) > MAX_ARCHIVE_BYTES) {
       throw new Error('The selected archive exceeds the 64 MB device-workflow limit.');
@@ -280,7 +283,7 @@ export function createMobileDeviceExtensionHost(): ExtensionDeviceHost {
     const existing = archiveCache.get(cacheKey);
     if (existing) return existing;
     const pending = (async () => {
-      const base64 = await FileSystem.readAsStringAsync(uri, {
+      const base64 = await FileSystem.readAsStringAsync(readableUri, {
         encoding: FileSystem.EncodingType.Base64,
       });
       return JSZip.loadAsync(base64, { base64: true });
@@ -368,19 +371,20 @@ export function createMobileDeviceExtensionHost(): ExtensionDeviceHost {
 
       if (operation.kind === 'file.read') {
         const uri = approvedLocalUri(context.evaluate(operation.file), context, 'File path');
-        const info = await FileSystem.getInfoAsync(uri);
+        const readableUri = await materializeNativeFolderFile(uri);
+        const info = await FileSystem.getInfoAsync(readableUri);
         if (!info.exists || info.isDirectory) throw new Error('The selected file does not exist.');
         if (finiteNumber(info.size) > MAX_ARCHIVE_ENTRY_BYTES) {
           throw new Error('The selected file exceeds the 32 MB device-workflow limit.');
         }
         if (operation.response === 'bytes') {
-          const base64 = await FileSystem.readAsStringAsync(uri, {
+          const base64 = await FileSystem.readAsStringAsync(readableUri, {
             encoding: FileSystem.EncodingType.Base64,
           });
           const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
           return { path: uri, bytes };
         }
-        const text = await FileSystem.readAsStringAsync(uri);
+        const text = await FileSystem.readAsStringAsync(readableUri);
         if (text.length > MAX_TEXT_BYTES) throw new Error('The selected text file exceeds 10 MB.');
         if (operation.response === 'text') return { path: uri, text };
         try {

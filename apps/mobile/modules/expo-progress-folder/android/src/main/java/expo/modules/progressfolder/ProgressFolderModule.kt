@@ -121,6 +121,12 @@ class ProgressFolderModule : Module() {
       }
     }
 
+    AsyncFunction("copyFileToLocal") Coroutine { sourceUri: String, destinationUri: String ->
+      runInterruptible(Dispatchers.IO) {
+        copyFileToLocal(sourceUri, Uri.parse(destinationUri))
+      }
+    }
+
     AsyncFunction("deleteFile") Coroutine { fileUri: String ->
       runInterruptible(Dispatchers.IO) {
         deleteFile(Uri.parse(fileUri))
@@ -355,6 +361,35 @@ class ProgressFolderModule : Module() {
       return destination.toString()
     } catch (error: Throwable) {
       if (created) runCatching { DocumentsContract.deleteDocument(resolver, destination) }
+      throw error
+    }
+  }
+
+  private fun copyFileToLocal(sourceUri: String, destinationUri: Uri) {
+    if (destinationUri.scheme != "file" || destinationUri.path == null) {
+      throw IllegalArgumentException("The local destination is invalid.")
+    }
+    val destination = File(destinationUri.path!!)
+    val parent = destination.parentFile
+      ?: throw IllegalArgumentException("The local destination has no parent directory.")
+    if (!parent.exists() && !parent.mkdirs()) {
+      throw IllegalStateException("The app cache directory could not be created.")
+    }
+    val temporary = File(parent, ".tomeio-copy-${System.nanoTime()}")
+    try {
+      sourceStream(sourceUri).use { input ->
+        temporary.outputStream().use { output ->
+          input.copyTo(output, 64 * 1024)
+        }
+      }
+      if (destination.exists() && !destination.delete()) {
+        throw IllegalStateException("The previous cached file could not be replaced.")
+      }
+      if (!temporary.renameTo(destination)) {
+        throw IllegalStateException("The selected file could not be moved into the app cache.")
+      }
+    } catch (error: Throwable) {
+      temporary.delete()
       throw error
     }
   }

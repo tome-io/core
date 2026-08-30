@@ -30,7 +30,7 @@ export async function materializeNativeFolderFile(
   uri: string,
   requestedFilename?: string
 ): Promise<string> {
-  if (!isNativeFolderLocation(uri)) return uri;
+  if (!isNativeFolderLocation(uri) && !uri.startsWith('content:')) return uri;
   if (!FileSystem.cacheDirectory) throw new Error('The app cache is unavailable.');
   const destination = `${FileSystem.cacheDirectory}native-folder/${safeFilename(
     uri,

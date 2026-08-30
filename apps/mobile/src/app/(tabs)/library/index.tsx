@@ -211,7 +211,6 @@ export default function LibraryScreen() {
           onPressBook={openBook}
           onLongPressBook={setSelectedBook}
           onRefresh={() => void refreshLocalBooks()}
-          refreshing={scanning}
           ListEmptyComponent={
             <Text className="mt-20 px-8 text-center text-sm text-neutral-500">
               {downloaded.length
