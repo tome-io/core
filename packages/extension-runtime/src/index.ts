@@ -3,6 +3,7 @@ import {
   parseBookAcquisition,
   parseBookMetadata,
   parseExtensionPage,
+  parseExtensionReviewPage,
   parseExtensionLibraryActionResult,
   type BookExtension,
   type ExtensionQuery,
@@ -12,6 +13,7 @@ import {
   type ExtensionLibraryImportRequest,
   type ExtensionResourceName,
   type ExtensionResolveQuery,
+  type ExtensionReviewsQuery,
   type ExtensionReaderSyncRequest,
   type ExtensionReaderSyncResult,
   type ExtensionWorkflowDefinition,
@@ -642,6 +644,17 @@ function createRemoteExtension(
               query,
               configuration
             ).then(parseExtensionPage),
+        }
+      : {}),
+    ...(has('reviews')
+      ? {
+          reviews: (query: ExtensionReviewsQuery) =>
+            postJson<unknown>(
+              fetchFn,
+              endpointFor(manifest, 'reviews', {}),
+              query,
+              configuration
+            ).then(parseExtensionReviewPage),
         }
       : {}),
     ...(has('acquisition')

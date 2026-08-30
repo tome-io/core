@@ -18,6 +18,31 @@ export function acquisitionActionKind(
   return acquisition.openUrl && !acquisition.downloadUrl ? 'open' : 'download';
 }
 
+const DOWNLOAD_FORMAT_PRIORITY: Record<string, number> = {
+  epub: 4,
+  pdf: 3,
+  mobi: 2,
+  azw3: 1,
+};
+
+export function primaryAcquisition(
+  acquisitions: readonly BookAcquisition[]
+): BookAcquisition | null {
+  return (
+    acquisitions
+      .filter((acquisition) => acquisition.downloadUrl || acquisition.openUrl)
+      .sort((left, right) => {
+        const leftDownload = left.downloadUrl ? 1 : 0;
+        const rightDownload = right.downloadUrl ? 1 : 0;
+        if (leftDownload !== rightDownload) return rightDownload - leftDownload;
+
+        const leftFormat = DOWNLOAD_FORMAT_PRIORITY[left.format.toLocaleLowerCase()] ?? 0;
+        const rightFormat = DOWNLOAD_FORMAT_PRIORITY[right.format.toLocaleLowerCase()] ?? 0;
+        return rightFormat - leftFormat;
+      })[0] ?? null
+  );
+}
+
 export async function searchAcquisitionCandidatePage(
   provider: AcquisitionSearchProvider,
   query: string,

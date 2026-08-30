@@ -7,12 +7,19 @@ import {
   type ExtensionInvocationContext,
   type ExtensionQuery,
   type ExtensionResolveQuery,
+  type ExtensionReviewsQuery,
   type ExtensionReaderSyncRequest,
   type ExtensionDeviceWorkflowDefinition,
   type ExtensionWorkflowDefinition,
 } from '@tomeio/extension-protocol';
 
-export type { BookAcquisition, BookMetadata, BookOffer, BookPrice } from '@tomeio/domain';
+export type {
+  BookAcquisition,
+  BookMetadata,
+  BookOffer,
+  BookPrice,
+  BookReview,
+} from '@tomeio/domain';
 export * from '@tomeio/extension-protocol';
 
 export type TomeAddon = BookExtension;
@@ -20,6 +27,7 @@ export type TomeAddonManifest = ExtensionManifest;
 export type AddonManifest = ExtensionManifest;
 export type AddonQuery = ExtensionQuery;
 export type AddonResolveQuery = ExtensionResolveQuery;
+export type AddonReviewsQuery = ExtensionReviewsQuery;
 export type AddonLibraryActionRequest = ExtensionLibraryActionRequest;
 export type AddonLibraryImportRequest = ExtensionLibraryImportRequest;
 
@@ -94,6 +102,7 @@ export function defineAddon(
     'search',
     'meta',
     'resolve',
+    'reviews',
     'acquisition',
     'readerSync',
     'libraryAction',
@@ -216,6 +225,12 @@ export function createAddonHandler(addon: TomeAddon) {
         if (!addon.resolve) throw new AddonProtocolError('Resolve resource is unavailable.', 404);
         return json(
           await addon.resolve(await jsonBody<ExtensionResolveQuery>(request), context)
+        );
+      }
+      if (request.method === 'POST' && path === '/reviews/book.json') {
+        if (!addon.reviews) throw new AddonProtocolError('Reviews resource is unavailable.', 404);
+        return json(
+          await addon.reviews(await jsonBody<ExtensionReviewsQuery>(request), context)
         );
       }
       if (request.method === 'POST' && path === '/action/library.json') {

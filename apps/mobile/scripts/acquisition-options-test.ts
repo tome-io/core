@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import type { BookMetadata } from '@tomeio/domain';
+import type { BookAcquisition, BookMetadata } from '@tomeio/domain';
 
 import {
   ACQUISITION_CANDIDATE_PAGE_SIZE,
   acquisitionActionKind,
+  primaryAcquisition,
   searchAcquisitionCandidatePage,
   type AcquisitionSearchProvider,
 } from '../src/lib/acquisition-options';
@@ -24,6 +25,50 @@ describe('acquisition action', () => {
       }),
       'download'
     );
+  });
+
+  test('prefers a downloadable EPUB without presenting an intermediate file list', () => {
+    const acquisitions: BookAcquisition[] = [
+      {
+        id: 'page',
+        bookId: 'book',
+        format: 'web',
+        label: 'Read online',
+        openUrl: 'https://example.com/book',
+      },
+      {
+        id: 'pdf',
+        bookId: 'book',
+        format: 'pdf',
+        label: 'PDF',
+        downloadUrl: 'https://example.com/book.pdf',
+      },
+      {
+        id: 'epub',
+        bookId: 'book',
+        format: 'epub',
+        label: 'EPUB',
+        downloadUrl: 'https://example.com/book.epub',
+      },
+    ];
+
+    assert.equal(primaryAcquisition(acquisitions)?.id, 'epub');
+  });
+
+  test('falls back to an open link and ignores unusable acquisition records', () => {
+    const acquisitions: BookAcquisition[] = [
+      { id: 'missing', bookId: 'book', format: 'epub', label: 'Missing URL' },
+      {
+        id: 'page',
+        bookId: 'book',
+        format: 'web',
+        label: 'Read online',
+        openUrl: 'https://example.com/book',
+      },
+    ];
+
+    assert.equal(primaryAcquisition(acquisitions)?.id, 'page');
+    assert.equal(primaryAcquisition([acquisitions[0]!]), null);
   });
 });
 

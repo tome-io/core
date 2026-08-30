@@ -1,4 +1,4 @@
-import type { BookMetadata } from '@tomeio/domain';
+import type { BookAcquisition, BookMetadata } from '@tomeio/domain';
 import {
   defineAddon,
   type BookExtension,
@@ -6,14 +6,18 @@ import {
   type ExtensionPage,
   type ExtensionQuery,
 } from '@tomeio/addon-sdk';
-import { createSourceHttpClient, type SourceHttpOptions } from '@tomeio/sources';
+import {
+  createSourceHttpClient,
+  stringArray,
+  type SourceHttpOptions,
+} from '@tomeio/sources';
 
 export const manifest: ExtensionManifest = {
   manifestVersion: 1,
   id: 'org.tomeio.open-library',
-  version: '0.3.0',
+  version: '0.4.1',
   name: 'Open Library',
-  description: 'Trending catalogs and book metadata from Open Library.',
+  description: 'Book discovery, metadata, covers, and open-access downloads from Open Library.',
   author: 'Tomeio',
   homepage: 'https://openlibrary.org',
   types: ['book'],
@@ -22,8 +26,9 @@ export const manifest: ExtensionManifest = {
     { name: 'search', supportsPagination: true },
     { name: 'meta' },
     { name: 'resolve', supportsPagination: true },
+    { name: 'acquisition' },
   ],
-  providerRoles: ['discovery', 'search', 'cover'],
+  providerRoles: ['discovery', 'search', 'cover', 'acquisition'],
   catalogs: [
     { id: 'trending', name: 'Trending this week', resource: 'catalog' },
     { id: 'fantasy', name: 'Fantasy', resource: 'catalog' },
@@ -37,7 +42,11 @@ export const manifest: ExtensionManifest = {
   ],
   transport: { kind: 'bundled', module: '@tomeio/extension-open-library' },
   permissions: {
-    hosts: ['https://openlibrary.org', 'https://covers.openlibrary.org'],
+    hosts: [
+      'https://openlibrary.org',
+      'https://covers.openlibrary.org',
+      'https://archive.org',
+    ],
   },
 };
 
@@ -53,6 +62,8 @@ interface SearchDocument {
   ratings_average?: number;
   ratings_count?: number;
   description?: string | { value?: string };
+  ia?: string[];
+  public_scan_b?: boolean;
 }
 
 interface SearchResponse {
@@ -62,7 +73,7 @@ interface SearchResponse {
 }
 
 const SEARCH_FIELDS =
-  'key,title,author_name,cover_i,cover_edition_key,first_publish_year,subject,isbn,ratings_average,ratings_count,description';
+  'key,title,author_name,cover_i,cover_edition_key,first_publish_year,subject,isbn,ratings_average,ratings_count,description,ia,public_scan_b';
 const MODERN_FROM_YEAR = new Date().getUTCFullYear() - 10;
 const QUALITY_FILTER = [
   'language:eng',
@@ -82,6 +93,95 @@ const SUBJECT_QUERIES: Record<string, string> = {
 };
 const SECONDARY_TITLE =
   /\b(summary|summaries|workbook|study guide|cliff.?notes|sparknotes|notes on|discussions of|coloring book)\b/i;
+const TRUSTED_OPEN_COLLECTIONS = new Set([
+  'biodiversity',
+  'fedlink',
+  'gutenberg',
+  'library_of_congress',
+  'national_library_of_scotland',
+  'smithsonian',
+]);
+const RESTRICTED_COLLECTIONS = new Set([
+  'bplill',
+  'inlibrary',
+  'internetarchivebooks',
+  'printdisabled',
+]);
+const DOWNLOAD_FORMATS = new Set(['azw3', 'cbr', 'cbz', 'djvu', 'epub', 'fb2', 'mobi', 'pdf']);
+
+interface OpenLibraryEditionLookup {
+  key?: string;
+  ocaid?: string | null;
+}
+
+interface ArchiveDocument {
+  collection?: string | string[];
+  licenseurl?: string;
+  'access-restricted-item'?: boolean | string;
+}
+
+interface ArchiveMetadataResponse {
+  metadata?: ArchiveDocument;
+  files?: Array<{
+    name?: string;
+    format?: string;
+    size?: string;
+    private?: boolean | string;
+  }>;
+}
+
+function trueValue(value: unknown): boolean {
+  return value === true || (typeof value === 'string' && value.toLocaleLowerCase() === 'true');
+}
+
+function collections(document: ArchiveDocument): string[] {
+  return stringArray(document.collection).map((collection) => collection.toLocaleLowerCase());
+}
+
+function mayDownload(document: ArchiveDocument): boolean {
+  if (
+    trueValue(document['access-restricted-item']) ||
+    collections(document).some((collection) => RESTRICTED_COLLECTIONS.has(collection)) ||
+    !collections(document).some((collection) => TRUSTED_OPEN_COLLECTIONS.has(collection))
+  ) {
+    return false;
+  }
+  const license = document.licenseurl?.trim();
+  if (!license) return false;
+  let url: URL;
+  try {
+    url = new URL(license);
+  } catch {
+    return false;
+  }
+  if (!['creativecommons.org', 'www.creativecommons.org'].includes(url.hostname.toLocaleLowerCase())) {
+    return false;
+  }
+  const path = url.pathname.toLocaleLowerCase().replace(/\/+$/, '');
+  return (
+    /^\/publicdomain\/(?:mark|zero)\/1\.0$/.test(path) ||
+    /^\/licenses\/(?:by|by-sa)\/(?:1\.0|2\.0|2\.5|3\.0|4\.0)(?:\/[a-z]{2})?$/.test(path)
+  );
+}
+
+function extensionForFile(name: string): string {
+  return name.split('.').pop()?.toLocaleLowerCase() ?? '';
+}
+
+function openLibraryPath(id: string): string {
+  const normalized = id.replace(/^\/(?:works|books)\//, '');
+  return normalized.endsWith('M') ? `books/${normalized}` : `works/${normalized}`;
+}
+
+function openLibraryAcquisition(id: string): BookAcquisition {
+  return {
+    id: `${id}:open-library`,
+    bookId: id,
+    format: 'web',
+    label: 'View on Open Library',
+    openUrl: `https://openlibrary.org/${openLibraryPath(id)}`,
+  };
+}
 
 function isIsbnQuery(value: string): boolean {
   return /^(97[89])?\d{9}[\dXx]$/.test(value.replace(/[-\s]/g, ''));
@@ -170,11 +270,15 @@ function mapDocument(document: SearchDocument): BookMetadata | null {
         ? document.description
         : document.description?.value,
     coverUrl: coverUrl(document),
+    infoUrl: `https://openlibrary.org/${openLibraryPath(id)}`,
     publishedYear: document.first_publish_year,
     subjects: document.subject?.slice(0, 12) ?? [],
     identifiers: {
       openLibrary: id,
       ...(document.isbn?.[0] ? { isbn: document.isbn[0] } : {}),
+      ...(document.public_scan_b && document.ia?.[0]
+        ? { internetArchive: document.ia[0] }
+        : {}),
     },
     rating: document.ratings_average,
     ratingsCount: document.ratings_count,
@@ -183,6 +287,64 @@ function mapDocument(document: SearchDocument): BookMetadata | null {
 
 export function createOpenLibraryExtension(options: SourceHttpOptions = {}): BookExtension {
   const http = createSourceHttpClient(options);
+
+  const archiveIdentifiers = async (id: string): Promise<string[]> => {
+    const normalized = id.replace(/^\/(?:works|books)\//, '');
+    if (normalized.endsWith('M')) {
+      const edition = await http.json<{ ocaid?: string | null }>(
+        `https://openlibrary.org/books/${encodeURIComponent(normalized)}.json`,
+        24 * 60 * 60_000
+      );
+      return edition.ocaid ? [edition.ocaid] : [];
+    }
+    if (!normalized.endsWith('W')) return [];
+    const parameters = new URLSearchParams({
+      type: '/type/edition',
+      works: `/works/${normalized}`,
+      limit: '20',
+      key: '',
+      ocaid: '',
+    });
+    const editions = await http.json<OpenLibraryEditionLookup[]>(
+      `https://openlibrary.org/query.json?${parameters}`,
+      24 * 60 * 60_000
+    );
+    return [
+      ...new Set(
+        editions
+          .map((edition) => edition.ocaid?.trim())
+          .filter((archiveId): archiveId is string => !!archiveId)
+      ),
+    ];
+  };
+
+  const acquisition = async (id: string): Promise<BookAcquisition[]> => {
+    const archiveIds = await archiveIdentifiers(id);
+    for (const archiveId of archiveIds.slice(0, 5)) {
+      const response = await http.json<ArchiveMetadataResponse>(
+        `https://archive.org/metadata/${encodeURIComponent(archiveId)}`,
+        24 * 60 * 60_000
+      );
+      const document = response.metadata ?? {};
+      if (!mayDownload(document)) continue;
+      const downloads = (response.files ?? []).flatMap((file) => {
+        const name = file.name?.trim();
+        if (!name || trueValue(file.private)) return [];
+        const format = extensionForFile(name);
+        if (!DOWNLOAD_FORMATS.has(format)) return [];
+        return [{
+          id: `${archiveId}:${name}`,
+          bookId: id,
+          format,
+          label: file.format || format.toUpperCase(),
+          downloadUrl: `https://archive.org/download/${encodeURIComponent(archiveId)}/${encodeURIComponent(name)}`,
+          sizeBytes: Number.parseInt(file.size ?? '', 10) || undefined,
+        } satisfies BookAcquisition];
+      });
+      if (downloads.length > 0) return downloads;
+    }
+    return [openLibraryAcquisition(id)];
+  };
 
   const requestPage = async (
     query: ExtensionQuery,
@@ -269,10 +431,12 @@ export function createOpenLibraryExtension(options: SourceHttpOptions = {}): Boo
         coverUrl: response.covers?.[0]
           ? `https://covers.openlibrary.org/b/id/${response.covers[0]}-L.jpg`
           : undefined,
+        infoUrl: `https://openlibrary.org/${openLibraryPath(id)}`,
         subjects: response.subjects?.slice(0, 12) ?? [],
         identifiers: { openLibrary: id },
       };
     },
+    acquisition,
   });
 }
 

@@ -71,7 +71,8 @@ Tomeio add-ons expose capability resources:
 - `reader` — external reader progress.
 - `libraryAction` — buttons rendered and controlled by Tomeio.
 
-The official extensions are Open Library, Project Gutenberg, and Internet Archive — Open Books.
+The official extensions are Open Library and Project Gutenberg. Open Library also provides
+rights-verified downloads for its unrestricted Internet Archive scans.
 They implement the common extension contract and are compiled with the app.
 
 See [extensions/README.md](extensions/README.md) for the source layout and

@@ -7,7 +7,6 @@ const workspacePackages = [
   '@tomeio/database',
   '@tomeio/design',
   '@tomeio/domain',
-  '@tomeio/extension-internet-archive',
   '@tomeio/extension-open-library',
   '@tomeio/extension-project-gutenberg',
   '@tomeio/extension-protocol',

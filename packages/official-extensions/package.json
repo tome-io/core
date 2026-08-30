@@ -10,7 +10,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@tomeio/extension-internet-archive": "workspace:*",
     "@tomeio/extension-open-library": "workspace:*",
     "@tomeio/extension-project-gutenberg": "workspace:*"
   }

@@ -9,9 +9,22 @@ export interface BookMetadata {
   identifiers: Record<string, string>;
   rating?: number;
   ratingsCount?: number;
+  seriesPosition?: number;
   infoUrl?: string;
   offers?: BookOffer[];
   acquisitions?: BookAcquisition[];
+}
+
+export interface BookReview {
+  id: string;
+  author: string;
+  text: string;
+  rating?: number;
+  reviewedAt?: string;
+  containsSpoilers?: boolean;
+  likesCount?: number;
+  authorAvatarUrl?: string;
+  authorUrl?: string;
 }
 
 export interface BookPrice {
@@ -79,7 +92,7 @@ export function mergeBookMetadata(candidates: readonly MetadataCandidate[]): Boo
   const pickText = (key: 'id' | 'title' | 'description' | 'coverUrl' | 'infoUrl') =>
     ordered.map((candidate) => candidate.metadata[key]).find(usefulText);
   const pickNumber = (
-    key: 'publishedYear' | 'rating' | 'ratingsCount'
+    key: 'publishedYear' | 'rating' | 'ratingsCount' | 'seriesPosition'
   ): number | undefined =>
     ordered
       .map((candidate) => candidate.metadata[key])
@@ -115,6 +128,7 @@ export function mergeBookMetadata(candidates: readonly MetadataCandidate[]): Boo
     ),
     rating: pickNumber('rating'),
     ratingsCount: pickNumber('ratingsCount'),
+    seriesPosition: pickNumber('seriesPosition'),
     infoUrl: pickText('infoUrl'),
     offers: pickOffers(),
   };
@@ -180,7 +194,8 @@ export function canonicalBookIdentity(title: string, author: string): string {
 }
 
 export function filenameFromUri(uri: string): string {
-  const encodedDocument = uri.split('?')[0].split('/').filter(Boolean).pop() ?? '';
+  const [path = ''] = uri.split('?');
+  const encodedDocument = path.split('/').filter(Boolean).pop() ?? '';
   try {
     return decodeURIComponent(encodedDocument).split('/').pop() ?? '';
   } catch {

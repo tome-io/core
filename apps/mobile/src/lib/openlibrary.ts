@@ -14,6 +14,7 @@ export interface FeedBook {
   description: string;
   rating?: number;
   ratingsCount?: number;
+  seriesPosition?: number;
   priceLabel?: string;
   sourceUrl?: string;
 }
@@ -28,6 +29,9 @@ export interface DiscoveryBook {
   genre: string;
   rating?: number;
   ratingsCount?: number;
+  seriesPosition?: number;
+  priceLabel?: string;
+  sourceUrl?: string;
 }
 
 export interface FetchOpts {
@@ -88,10 +92,14 @@ function coverUrl(coverI?: number, coverEditionKey?: string): string {
 
 function publicationYear(work: any): string | number {
   const first = Number(work.first_publish_year);
-  const years = Array.isArray(work.publish_year)
-    ? [...new Set(work.publish_year.map(Number).filter(Number.isFinite))].sort(
-        (a: number, b: number) => a - b
-      )
+  const years: number[] = Array.isArray(work.publish_year)
+    ? [
+        ...new Set<number>(
+          work.publish_year
+            .map((value: unknown) => Number(value))
+            .filter((value: number) => Number.isFinite(value))
+        ),
+      ].sort((a, b) => a - b)
     : [];
   if (
     Number.isFinite(first) &&
@@ -232,7 +240,7 @@ export async function findBookMetadata(
     const docs = Array.isArray(data.docs) ? data.docs : [];
     const coveredAlias = docs
       .map((doc: any, index: number) => ({ book: mapWork(doc), doc, index }))
-      .filter(({ book }) => {
+      .filter(({ book }: { book: FeedBook }) => {
         if (!book.cover) return false;
         const candidateAuthor = normalizeLookup(book.author);
         return (
@@ -241,7 +249,7 @@ export async function findBookMetadata(
           wantedAuthor.includes(candidateAuthor)
         );
       })
-      .sort((a, b) => a.index - b.index)[0];
+      .sort((a: { index: number }, b: { index: number }) => a.index - b.index)[0];
     if (coveredAlias) {
       const subjects = Array.isArray(coveredAlias.doc.subject)
         ? coveredAlias.doc.subject.filter((value: unknown) => typeof value === 'string')

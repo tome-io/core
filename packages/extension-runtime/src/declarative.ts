@@ -2,6 +2,7 @@ import {
   parseBookAcquisition,
   parseBookMetadata,
   parseExtensionPage,
+  parseExtensionReviewPage,
   parseExtensionLibraryActionResult,
   type BookExtension,
   type ExtensionConfigValue,
@@ -24,23 +25,35 @@ const MAX_REQUEST_ATTEMPTS = 20;
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_TRANSIENT_REQUEST_ATTEMPTS = 2;
-const MAX_CONCURRENT_REQUESTS_PER_ORIGIN = 2;
+const MAX_CONCURRENT_REQUESTS_PER_ORIGIN = 1;
 
 type OriginRequestSchedule = {
   active: number;
   waiting: Array<() => void>;
+  minimumIntervalMs: number;
+  nextStartAt: number;
 };
 
 const originRequestSchedules = new Map<string, OriginRequestSchedule>();
 
 async function acquireOriginRequest(origin: string): Promise<() => void> {
-  const schedule = originRequestSchedules.get(origin) ?? { active: 0, waiting: [] };
+  const schedule = originRequestSchedules.get(origin) ?? {
+    active: 0,
+    waiting: [],
+    minimumIntervalMs: 0,
+    nextStartAt: 0,
+  };
   originRequestSchedules.set(origin, schedule);
   if (schedule.active >= MAX_CONCURRENT_REQUESTS_PER_ORIGIN) {
     await new Promise<void>((resolve) => schedule.waiting.push(resolve));
   } else {
     schedule.active += 1;
   }
+
+  const now = Date.now();
+  const startAt = Math.max(now, schedule.nextStartAt);
+  schedule.nextStartAt = startAt + schedule.minimumIntervalMs;
+  if (startAt > now) await wait(startAt - now);
 
   let released = false;
   return () => {
@@ -52,8 +65,47 @@ async function acquireOriginRequest(origin: string): Promise<() => void> {
       return;
     }
     schedule.active -= 1;
-    if (schedule.active === 0) originRequestSchedules.delete(origin);
   };
+}
+
+function responseHeader(headers: Record<string, string>, name: string): string | undefined {
+  const target = name.toLowerCase();
+  return Object.entries(headers).find(([key]) => key.toLowerCase() === target)?.[1];
+}
+
+function retryAfterMilliseconds(value: string | undefined): number | null {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1_000);
+  const retryAt = Date.parse(value);
+  return Number.isNaN(retryAt) ? null : Math.max(0, retryAt - Date.now());
+}
+
+function updateOriginRequestPolicy(
+  origin: string,
+  status: number,
+  headers: Record<string, string>
+): void {
+  const schedule = originRequestSchedules.get(origin);
+  if (!schedule) return;
+
+  const policy = responseHeader(headers, 'ratelimit-policy')?.split(',')[0];
+  const quota = Number(policy?.match(/(?:^|;)q=(\d+)/i)?.[1]);
+  const windowSeconds = Number(policy?.match(/(?:^|;)w=(\d+)/i)?.[1]);
+  if (quota > 0 && windowSeconds > 0) {
+    schedule.minimumIntervalMs = Math.ceil((windowSeconds * 1_000) / quota);
+    schedule.nextStartAt = Math.max(
+      schedule.nextStartAt,
+      Date.now() + schedule.minimumIntervalMs
+    );
+  }
+
+  if (status === 429) {
+    const retryDelay = retryAfterMilliseconds(responseHeader(headers, 'retry-after'));
+    if (retryDelay != null) {
+      schedule.nextStartAt = Math.max(schedule.nextStartAt, Date.now() + retryDelay);
+    }
+  }
 }
 
 async function withOriginRequest<T>(origin: string, request: () => Promise<T>): Promise<T> {
@@ -95,6 +147,8 @@ const OPERATIONS = new Set([
   'filter',
   'find',
   'flatten',
+  'slice',
+  'sortByOrder',
   'distinct',
   'compact',
   'get',
@@ -347,6 +401,43 @@ function evaluate(
   if (value.$op === 'flatten') {
     const result = nested(value.value);
     return Array.isArray(result) ? result.flat(1) : [];
+  }
+  if (value.$op === 'slice') {
+    const result = nested(value.value);
+    if (!Array.isArray(result) && typeof result !== 'string') return [];
+    const values = expressionValues(value, context, state, depth);
+    const start = Number(values[0] ?? 0);
+    const end = values[1] == null ? undefined : Number(values[1]);
+    return result.slice(
+      Number.isFinite(start) ? Math.max(0, Math.trunc(start)) : 0,
+      end == null || !Number.isFinite(end) ? undefined : Math.max(0, Math.trunc(end))
+    );
+  }
+  if (value.$op === 'sortByOrder') {
+    const result = nested(value.value);
+    const order = expressionValues(value, context, state, depth)[0];
+    if (!Array.isArray(result) || !Array.isArray(order)) return [];
+    const maxItems = state.maxItems ?? MAX_MAP_ITEMS;
+    if (result.length > maxItems || order.length > maxItems) {
+      throw new Error(`Declarative workflow cannot sort more than ${maxItems} items.`);
+    }
+    const alias = typeof value.as === 'string' && value.as ? value.as : 'item';
+    if (!safeKey(alias)) throw new Error(`Declarative workflow alias "${alias}" is unsafe.`);
+    const positions = new Map(order.map((entry, index) => [String(entry), index]));
+    return result
+      .map((item, index) => ({
+        item,
+        index,
+        position: positions.get(
+          String(evaluate(value.by, { ...context, [alias]: item, index }, state, depth + 1))
+        ),
+      }))
+      .sort(
+        (left, right) =>
+          (left.position ?? Number.MAX_SAFE_INTEGER) -
+            (right.position ?? Number.MAX_SAFE_INTEGER) || left.index - right.index
+      )
+      .map(({ item }) => item);
   }
   if (value.$op === 'distinct') {
     const result = nested(value.value);
@@ -639,13 +730,24 @@ async function readResponse(response: Response, type: 'json' | 'text'): Promise<
 
 function rejectedResponseMessage(result: Record<string, unknown>): string {
   const status = Number(result.status);
-  const providerError = record(result.body)?.error;
+  const responseBody = record(result.body);
+  const providerError = responseBody?.error;
+  const graphQLError = Array.isArray(responseBody?.errors)
+    ? record(responseBody.errors[0])?.message
+    : undefined;
+  const operationError =
+    nestedPathValue(responseBody, 'data.search.error') ??
+    nestedPathValue(responseBody, 'data.books_trending.error');
   const providerMessage =
     typeof providerError === 'string'
       ? providerError.trim()
       : typeof record(providerError)?.message === 'string'
         ? String(record(providerError)?.message).trim()
-        : '';
+        : typeof graphQLError === 'string'
+          ? graphQLError.trim()
+          : typeof operationError === 'string'
+            ? operationError.trim()
+            : '';
   return providerMessage
     ? `HTTP ${status}: ${providerMessage.slice(0, 300)}`
     : `HTTP ${status} did not satisfy the workflow`;
@@ -680,15 +782,22 @@ async function executeRequest(
       }
     }
     let body: string | undefined;
+    let evaluatedJson: unknown;
     if (request.form) {
       body = new URLSearchParams(evaluatedRecord(request.form, context)).toString();
       headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
     } else if (request.json !== undefined) {
-      body = JSON.stringify(evaluate(request.json, context));
+      evaluatedJson = evaluate(request.json, context);
+      body = JSON.stringify(evaluatedJson);
       headers['Content-Type'] = 'application/json';
     }
     const method = request.method ?? 'GET';
-    const requestAttempts = method === 'GET' || method === 'HEAD'
+    const graphqlOperation = record(evaluatedJson)?.query;
+    const retryableGraphqlQuery =
+      method === 'POST' &&
+      typeof graphqlOperation === 'string' &&
+      /^\s*(?:query\b|\{)/i.test(graphqlOperation);
+    const requestAttempts = method === 'GET' || method === 'HEAD' || retryableGraphqlQuery
       ? MAX_TRANSIENT_REQUEST_ATTEMPTS
       : 1;
     for (let attempt = 0; attempt < requestAttempts; attempt += 1) {
@@ -711,12 +820,14 @@ async function executeRequest(
               redirect: 'error',
               signal: controller.signal,
             });
+            const responseHeaders = Object.fromEntries(response.headers.entries());
+            updateOriginRequestPolicy(url.origin, response.status, responseHeaders);
             return {
               status: response.status,
               ok: response.ok,
               url: url.toString(),
               origin: url.origin,
-              headers: Object.fromEntries(response.headers.entries()),
+              headers: responseHeaders,
               body: await readResponse(response, request.response ?? 'json'),
             };
           } finally {
@@ -727,7 +838,7 @@ async function executeRequest(
           ? Boolean(evaluate(accept, { ...context, response: result }))
           : result.ok;
         if (accepted) return result;
-        const transient = result.status >= 500 && result.status <= 599;
+        const transient = result.status === 429 || (result.status >= 500 && result.status <= 599);
         if (transient && attempt + 1 < requestAttempts) {
           await wait(250 * (attempt + 1));
           continue;
@@ -813,6 +924,9 @@ export function createDeclarativeWorkflowExtension(
       : {}),
     ...(has('resolve')
       ? { resolve: (query) => run('resolve', query).then(parseExtensionPage) }
+      : {}),
+    ...(has('reviews')
+      ? { reviews: (query) => run('reviews', query).then(parseExtensionReviewPage) }
       : {}),
     ...(has('acquisition')
       ? {

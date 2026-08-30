@@ -31,9 +31,8 @@ make an add-on a Home discovery provider.
 
 | Extension | Resources | Purpose |
 | --- | --- | --- |
-| [Open Library](official/open-library) | `catalog`, `search`, `meta` | Discovery and metadata |
+| [Open Library](official/open-library) | `catalog`, `search`, `meta`, `resolve`, `acquisition` | Discovery, metadata, covers, and rights-verified open downloads |
 | [Project Gutenberg](official/project-gutenberg) | `catalog`, `search`, `resolve`, `acquisition` | Public-domain catalog and downloads |
-| [Internet Archive — Open Books](official/internet-archive) | `catalog`, `search`, `meta`, `resolve`, `acquisition` | Open-book records and available formats |
 
 ## Structure
 

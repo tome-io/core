@@ -1,9 +1,9 @@
 {
   "manifestVersion": 1,
   "id": "org.tomeio.open-library",
-  "version": "0.3.0",
+  "version": "0.4.1",
   "name": "Open Library",
-  "description": "Trending catalogs and book metadata from Open Library.",
+  "description": "Book discovery, metadata, covers, and open-access downloads from Open Library.",
   "author": "Tomeio",
   "homepage": "https://openlibrary.org",
   "types": ["book"],
@@ -11,9 +11,10 @@
     { "name": "catalog", "supportsPagination": true },
     { "name": "search", "supportsPagination": true },
     { "name": "meta" },
-    { "name": "resolve", "supportsPagination": true }
+    { "name": "resolve", "supportsPagination": true },
+    { "name": "acquisition" }
   ],
-  "providerRoles": ["discovery", "search", "cover"],
+  "providerRoles": ["discovery", "search", "cover", "acquisition"],
   "catalogs": [
     { "id": "trending", "name": "Trending this week", "resource": "catalog" },
     { "id": "fantasy", "name": "Fantasy", "resource": "catalog" },
@@ -27,6 +28,6 @@
   ],
   "transport": { "kind": "bundled", "module": "@tomeio/extension-open-library" },
   "permissions": {
-    "hosts": ["https://openlibrary.org", "https://covers.openlibrary.org"]
+    "hosts": ["https://openlibrary.org", "https://covers.openlibrary.org", "https://archive.org"]
   }
 }

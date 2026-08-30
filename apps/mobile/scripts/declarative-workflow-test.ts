@@ -83,6 +83,88 @@ test('executes an allowlisted declarative search without loading code', async ()
   assert.match(requests[1]?.url ?? '', /q=dune/);
 });
 
+test('maps paginated declarative reviews in provider order', async () => {
+  const reviewManifest: ExtensionManifest = {
+    ...manifest,
+    id: 'community.example.reviews',
+    resources: [{ name: 'reviews', supportsPagination: true }],
+    providerRoles: ['reviews'],
+  };
+  const reviewDefinition: ExtensionWorkflowDefinition = {
+    workflowVersion: 1,
+    resources: {
+      reviews: {
+        steps: [
+          {
+            id: 'reviews',
+            request: {
+              urls: 'https://books.example.com/reviews',
+              method: 'POST',
+              headers: { Authorization: { $op: 'path', path: 'config.token' } },
+              json: { title: { $op: 'path', path: 'input.book.title' } },
+              response: 'json',
+            },
+          },
+        ],
+        output: {
+          items: {
+            $op: 'map',
+            value: {
+              $op: 'slice',
+              value: {
+                $op: 'sortByOrder',
+                value: { $op: 'path', path: 'steps.reviews.body.items' },
+                as: 'review',
+                by: { $op: 'path', path: 'review.id' },
+                values: [{ $op: 'path', path: 'steps.reviews.body.order' }],
+              },
+              values: [0, 1],
+            },
+            as: 'review',
+            values: [
+              {
+                id: { $op: 'string', value: { $op: 'path', path: 'review.id' } },
+                author: { $op: 'path', path: 'review.author' },
+                text: { $op: 'path', path: 'review.text' },
+                rating: { $op: 'number', value: { $op: 'path', path: 'review.rating' } },
+              },
+            ],
+          },
+        },
+      },
+    },
+  };
+  const requests: Request[] = [];
+  const loader = new ExtensionLoader({
+    bundled: new Map(),
+    fetchFn: async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      if (request.url.includes('raw.githubusercontent.com')) {
+        return Response.json(reviewDefinition);
+      }
+      return Response.json({
+        order: [1, 2],
+        items: [
+          { id: 2, author: 'Second', text: 'Second review', rating: 3 },
+          { id: 1, author: 'First', text: 'First review', rating: 4.5 },
+        ],
+      });
+    },
+  });
+  const extension = await loader.load(reviewManifest, { token: 'scoped-secret' });
+  const page = await extension.reviews?.({
+    book: { title: 'Dune', authors: ['Frank Herbert'], identifiers: {} },
+    page: 1,
+    limit: 1,
+  });
+
+  assert.equal(page?.items.length, 1);
+  assert.equal(page?.items[0]?.author, 'First');
+  assert.equal(page?.items[0]?.rating, 4.5);
+  assert.equal(requests[1]?.headers.get('Authorization'), 'scoped-secret');
+});
+
 test('rejects workflow requests to undeclared origins', async () => {
   const unsafeDefinition: ExtensionWorkflowDefinition = {
     workflowVersion: 1,
@@ -205,7 +287,7 @@ test('retries a transient declarative GET failure', async () => {
   assert.equal(providerAttempts, 2);
 });
 
-test('limits declarative requests to two concurrent calls per origin', async () => {
+test('serializes declarative requests per origin', async () => {
   let active = 0;
   let maximumActive = 0;
   const loader = new ExtensionLoader({
@@ -227,7 +309,7 @@ test('limits declarative requests to two concurrent calls per origin', async () 
     )
   );
 
-  assert.equal(maximumActive, 2);
+  assert.equal(maximumActive, 1);
 });
 
 const deviceManifest: ExtensionManifest = {

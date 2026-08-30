@@ -92,18 +92,9 @@
         "typescript": "~6.0.3",
       },
     },
-    "extensions/official/internet-archive": {
-      "name": "@tomeio/extension-internet-archive",
-      "version": "0.2.0",
-      "dependencies": {
-        "@tomeio/addon-sdk": "workspace:*",
-        "@tomeio/domain": "workspace:*",
-        "@tomeio/sources": "workspace:*",
-      },
-    },
     "extensions/official/open-library": {
       "name": "@tomeio/extension-open-library",
-      "version": "0.2.0",
+      "version": "0.4.1",
       "dependencies": {
         "@tomeio/addon-sdk": "workspace:*",
         "@tomeio/domain": "workspace:*",
@@ -174,7 +165,6 @@
       "name": "@tomeio/official-extensions",
       "version": "0.1.0",
       "dependencies": {
-        "@tomeio/extension-internet-archive": "workspace:*",
         "@tomeio/extension-open-library": "workspace:*",
         "@tomeio/extension-project-gutenberg": "workspace:*",
       },
@@ -710,8 +700,6 @@
     "@tomeio/desktop": ["@tomeio/desktop@workspace:apps/desktop"],
 
     "@tomeio/domain": ["@tomeio/domain@workspace:packages/domain"],
-
-    "@tomeio/extension-internet-archive": ["@tomeio/extension-internet-archive@workspace:extensions/official/internet-archive"],
 
     "@tomeio/extension-open-library": ["@tomeio/extension-open-library@workspace:extensions/official/open-library"],
 

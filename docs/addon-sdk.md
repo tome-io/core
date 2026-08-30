@@ -39,6 +39,11 @@ providers. A manifest declares `providerRoles: ['cover']`, and Tomeio reads a ma
 candidate's `coverUrl`. This keeps cover lookup compatible with bundled, HTTP, and
 declarative add-ons without adding a provider-specific endpoint.
 
+Aggregate ratings and an optional featured-series position travel with ordinary
+`BookMetadata`. Add-ons that expose reader
+reviews declare the `reviews` resource and provider role; Tomeio passes the same
+provider-neutral book reference and renders the normalized response itself.
+
 This separates discovery identity from provider identity. Providers own their ids;
 Tomeio carries known identifiers through the handoff instead of forcing every download
 provider to reverse-engineer another provider's ids.
