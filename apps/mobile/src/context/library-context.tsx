@@ -102,6 +102,11 @@ interface LibraryActionsValue {
     book: LibraryBook,
     force?: boolean,
   ) => Promise<string[]>;
+  cacheBookCoverSource: (
+    book: LibraryBook,
+    providerId: string,
+    uri: string,
+  ) => Promise<void>;
   setBookCoverPreference: (
     book: LibraryBook,
     preference: BookCoverPreference,
@@ -155,6 +160,7 @@ const LibraryActionsContext = createContext<LibraryActionsValue>({
   refreshProgressSyncBooks: async () => {},
   refreshBookMetadata: async () => {},
   refreshBookCoverSources: async () => [],
+  cacheBookCoverSource: async () => {},
   setBookCoverPreference: async () => {},
   markAsRead: async () => {},
   removeLocalFile: async () => {},
@@ -1058,8 +1064,11 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       const providers = extensions.coverProviders();
       const fresh =
         book.coverSourcesLookupKey === coverProviderKey &&
-        !!book.coverSourcesUpdatedAt &&
-        book.coverSourcesUpdatedAt > Date.now() - 7 * 24 * 60 * 60 * 1000;
+        ((!!book.coverSourcesUpdatedAt &&
+          book.coverSourcesUpdatedAt >
+            Date.now() - 7 * 24 * 60 * 60 * 1000) ||
+          (!!book.coverSourcesRetryAt &&
+            book.coverSourcesRetryAt > Date.now()));
       if (!force && fresh) return [];
 
       const results = await Promise.all(
@@ -1104,6 +1113,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         catalog,
         providers: providerSources,
         lookupKey: coverProviderKey,
+        complete: unavailableProviders.length === 0,
       });
       const applyCover = (item: LibraryBook): LibraryBook =>
         item.key === book.key ? { ...item, ...persisted } : item;
@@ -1117,6 +1127,28 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       return unavailableProviders;
     },
     [commit, coverProviderKey, extensions.cover, extensions.coverProviders],
+  );
+
+  const cacheBookCoverSource = useCallback(
+    async (book: LibraryBook, providerId: string, uri: string) => {
+      if (book.coverSources?.providers?.[providerId] === uri) return;
+      if (!(await hasUsableRemoteCover(uri))) return;
+      const persisted = await setCatalogBookCoverProviderSource(
+        book.key,
+        providerId,
+        uri,
+      );
+      const applyCover = (item: LibraryBook): LibraryBook =>
+        item.key === book.key ? { ...item, ...persisted } : item;
+      setLocalBooks((current) => current.map(applyCover));
+      setMoonReaderBooks((current) => current.map(applyCover));
+      setProgressSyncBooks((current) => current.map(applyCover));
+      await commit((current) => ({
+        downloaded: current.downloaded.map(applyCover),
+        readingList: current.readingList.map(applyCover),
+      }));
+    },
+    [commit],
   );
 
   const setBookCoverPreference = useCallback(
@@ -1374,6 +1406,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       refreshProgressSyncBooks,
       refreshBookMetadata,
       refreshBookCoverSources,
+      cacheBookCoverSource,
       setBookCoverPreference,
       markAsRead,
       removeLocalFile,
@@ -1383,6 +1416,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       recordDownload,
     }),
     [
+      cacheBookCoverSource,
       removeLocalFile,
       isOnReadingList,
       markAsRead,

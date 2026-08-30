@@ -30,6 +30,7 @@ export interface LibraryBook extends FeedBook {
   coverLookupKey?: string;
   coverSourcesLookupKey?: string;
   coverSourcesUpdatedAt?: number;
+  coverSourcesRetryAt?: number;
   progress?: number;
   isRead?: boolean;
   readingTimeMs?: number;

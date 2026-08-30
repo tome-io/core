@@ -159,6 +159,7 @@ export default function BookDetailScreen() {
   const { readingList } = useLibraryReadingList();
   const { scanning: libraryScanning } = useLibraryUiStatus();
   const {
+    cacheBookCoverSource,
     markAsRead,
     removeLibraryBook,
     removeLocalFile,
@@ -737,6 +738,36 @@ export default function BookDetailScreen() {
     () => extensions.coverProviders(),
     [extensions]
   );
+  const acquisitionCoverSource = useMemo(() => {
+    if (
+      !acquisitionExtensionId ||
+      !coverProviders.some((provider) => provider.id === acquisitionExtensionId)
+    ) {
+      return null;
+    }
+    const uri = options?.find((entry) => !!entry.book.coverUrl)?.book.coverUrl;
+    return uri ? { providerId: acquisitionExtensionId, uri } : null;
+  }, [acquisitionExtensionId, coverProviders, options]);
+  useEffect(() => {
+    if (!libraryActionBook || !acquisitionCoverSource) return;
+    if (
+      libraryActionBook.coverSources?.providers?.[
+        acquisitionCoverSource.providerId
+      ] === acquisitionCoverSource.uri
+    ) {
+      return;
+    }
+    void cacheBookCoverSource(
+      libraryActionBook,
+      acquisitionCoverSource.providerId,
+      acquisitionCoverSource.uri
+    ).catch((cause) => {
+      console.info(
+        `Could not cache ${acquisitionCoverSource.providerId} cover:`,
+        cause instanceof Error ? cause.message : String(cause)
+      );
+    });
+  }, [acquisitionCoverSource, cacheBookCoverSource, libraryActionBook]);
   const chooseCover = useCallback(
     async (preference: BookCoverPreference) => {
       if (!libraryActionBook || coverBusy) return;

@@ -1000,6 +1000,7 @@ function preserveCatalogMetadata(
     coverLookupKey: existing.coverLookupKey,
     coverSourcesLookupKey: existing.coverSourcesLookupKey,
     coverSourcesUpdatedAt: existing.coverSourcesUpdatedAt,
+    coverSourcesRetryAt: existing.coverSourcesRetryAt,
   };
 }
 
@@ -1220,9 +1221,17 @@ export async function setCatalogBookCoverProviderSource(
         [providerId]: uri,
       },
     };
-    const updated = {
+    const resolved = resolveBookCover(coverSources, book.coverPreference, [
+      book.moonReader?.detailCoverUri,
+      book.moonReader?.coverUri,
+      book.cover,
+      book.fallbackCover,
+    ]);
+    const updated: LibraryBook = {
       ...book,
       coverSources,
+      cover: resolved.cover,
+      fallbackCover: resolved.fallbackCover,
     };
     await upsertBook(database, updated);
     return updated;
@@ -1256,6 +1265,7 @@ export async function setCatalogBookCoverSources(
     catalog?: string;
     providers: Record<string, string>;
     lookupKey: string;
+    complete: boolean;
   },
 ): Promise<LibraryBook> {
   return withDatabaseWrite(async (database) => {
@@ -1286,7 +1296,10 @@ export async function setCatalogBookCoverSources(
       cover: resolved.cover,
       fallbackCover: resolved.fallbackCover,
       coverSourcesLookupKey: sources.lookupKey,
-      coverSourcesUpdatedAt: Date.now(),
+      coverSourcesUpdatedAt: sources.complete ? Date.now() : undefined,
+      coverSourcesRetryAt: sources.complete
+        ? undefined
+        : Date.now() + 5 * 60 * 1000,
     };
     await upsertBook(database, updated);
     return updated;
