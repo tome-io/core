@@ -14,6 +14,7 @@ import {
 } from "./library-db";
 import { koreaderPartialMd5 } from "./koreader-document";
 import { bookIdentity } from "./book-metadata";
+import { materializeNativeFolderFile } from "./native-folder-file";
 import {
   mergeProgressRecords,
   type ProgressSyncRecord,
@@ -577,7 +578,24 @@ async function localDocumentIdentifiers(): Promise<
   const identifiersByAlias = new Map<string, HostedDocumentIds | null>();
   for (const local of localDocuments) {
     const logical = await md5(local.identity);
-    const partial = await koreaderPartialMd5(local.uri);
+    let partial: string;
+    try {
+      const readableUri = await materializeNativeFolderFile(
+        local.uri,
+        local.filename,
+      );
+      partial = await koreaderPartialMd5(readableUri);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      if (
+        /(?:FileNotFoundException|Missing file|ENOENT|no such file|does not exist)/iu.test(
+          message,
+        )
+      ) {
+        continue;
+      }
+      throw cause;
+    }
     const identifiers = {
       primary: partial,
       aliases: [logical],

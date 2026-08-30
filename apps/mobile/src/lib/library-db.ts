@@ -810,12 +810,14 @@ export async function reconcileLocalCatalog(
       }
 
       const removed = await transaction.getAllAsync<{ book_key: string }>(
-        "SELECT book_key FROM local_files WHERE directory_key = ? AND seen_token != ?",
+        `SELECT DISTINCT book_key
+         FROM local_files
+         WHERE directory_key != ? OR seen_token != ?`,
         directoryKey,
         seenToken,
       );
       await transaction.runAsync(
-        "DELETE FROM local_files WHERE directory_key = ? AND seen_token != ?",
+        "DELETE FROM local_files WHERE directory_key != ? OR seen_token != ?",
         directoryKey,
         seenToken,
       );
