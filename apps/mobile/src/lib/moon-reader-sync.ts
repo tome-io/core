@@ -1,5 +1,8 @@
 import type { LibraryBook } from './library';
-import { resolveBookCover } from './book-cover';
+import {
+  resolveBookCover,
+  type ExtensionCoverLookup,
+} from './book-cover';
 import {
   persistCatalogBook,
   persistMetadataSource,
@@ -17,13 +20,18 @@ export interface ReaderCatalogResult {
   warnings: string[];
 }
 
-async function enrichReaderBook(book: LibraryBook): Promise<{
+async function enrichReaderBook(
+  book: LibraryBook,
+  coverLookup?: ExtensionCoverLookup
+): Promise<{
   book: LibraryBook;
   warning?: string;
 }> {
   if (book.local) return { book };
+  const warnings: string[] = [];
+  let metadata: Awaited<ReturnType<typeof findBookMetadata>> = null;
   try {
-    let metadata = await findBookMetadata(book.title, book.author);
+    metadata = await findBookMetadata(book.title, book.author);
     if (
       metadata &&
       (!metadata.cover || !metadata.description || metadata.genre === 'Other') &&
@@ -40,19 +48,31 @@ async function enrichReaderBook(book: LibraryBook): Promise<{
             : details.subjects[0] || metadata.genre,
       };
     }
-    if (!metadata) {
-      return {
-        book: {
-          ...book,
-          metadataPending: false,
-          metadataUpdatedAt: Date.now(),
-          metadataVersion: READER_METADATA_VERSION,
-        },
-      };
+  } catch (err: any) {
+    warnings.push(`Open Library: ${err.message || String(err)}`);
+  }
+
+  let extensionCover = null;
+  if (!metadata?.cover && !book.coverSources?.catalog && coverLookup) {
+    try {
+      extensionCover = await coverLookup(book);
+    } catch (err: any) {
+      warnings.push(`Cover providers: ${err.message || String(err)}`);
     }
+  }
+
+  try {
     const coverSources = {
       ...book.coverSources,
-      ...(metadata.cover ? { catalog: metadata.cover } : {}),
+      ...(metadata?.cover ? { catalog: metadata.cover } : {}),
+      ...(extensionCover
+        ? {
+            providers: {
+              ...book.coverSources?.providers,
+              [extensionCover.providerId]: extensionCover.uri,
+            },
+          }
+        : {}),
     };
     const resolvedCover = resolveBookCover(coverSources, book.coverPreference, [
       book.moonReader?.detailCoverUri,
@@ -63,22 +83,26 @@ async function enrichReaderBook(book: LibraryBook): Promise<{
     return {
       book: {
         ...book,
-        title: metadata.title || book.title,
-        author: metadata.author || book.author,
+        title: metadata?.title || book.title,
+        author: metadata?.author || book.author,
         cover: resolvedCover.cover,
         fallbackCover: resolvedCover.fallbackCover,
         coverSources,
         coverPreference: book.coverPreference ?? 'auto',
-        description: metadata.description || book.description,
-        year: metadata.year || book.year,
-        genre: metadata.genre !== 'Other' ? metadata.genre : book.genre,
-        rating: metadata.rating ?? book.rating,
-        ratingsCount: metadata.ratingsCount ?? book.ratingsCount,
-        discovery: metadata,
-        metadataPending: false,
+        description: metadata?.description || book.description,
+        year: metadata?.year || book.year,
+        genre:
+          metadata && metadata.genre !== 'Other'
+            ? metadata.genre
+            : book.genre,
+        rating: metadata?.rating ?? book.rating,
+        ratingsCount: metadata?.ratingsCount ?? book.ratingsCount,
+        discovery: metadata ?? book.discovery,
+        metadataPending: warnings.length > 0 && !metadata && !extensionCover,
         metadataUpdatedAt: Date.now(),
         metadataVersion: READER_METADATA_VERSION,
       },
+      ...(warnings.length ? { warning: `${book.title}: ${warnings.join(' ')}` } : {}),
     };
   } catch (err: any) {
     return {
@@ -96,7 +120,11 @@ async function enrichReaderBook(book: LibraryBook): Promise<{
 export async function enrichIndexedReaderCatalog(
   initialBooks: LibraryBook[],
   onBookUpdated?: (book: LibraryBook) => void,
-  options: { force?: boolean } = {}
+  options: {
+    force?: boolean;
+    onProgress?: (completed: number, total: number) => void;
+    coverLookup?: ExtensionCoverLookup;
+  } = {},
 ): Promise<ReaderCatalogResult> {
   let books = initialBooks;
   const warnings: string[] = [];
@@ -104,10 +132,14 @@ export async function enrichIndexedReaderCatalog(
   const candidates = books.filter(
     (book) => shouldEnrichReaderMetadata(book, now, options.force)
   );
+  let completed = 0;
+  options.onProgress?.(completed, candidates.length);
 
   for (let offset = 0; offset < candidates.length; offset += METADATA_BATCH_SIZE) {
     const batch = candidates.slice(offset, offset + METADATA_BATCH_SIZE);
-    const results = await Promise.all(batch.map(enrichReaderBook));
+    const results = await Promise.all(
+      batch.map((book) => enrichReaderBook(book, options.coverLookup))
+    );
     for (const result of results) {
       await persistCatalogBook(result.book);
       if (result.book.discovery) {
@@ -116,6 +148,8 @@ export async function enrichIndexedReaderCatalog(
       books = books.map((book) => (book.key === result.book.key ? result.book : book));
       onBookUpdated?.(result.book);
       if (result.warning) warnings.push(result.warning);
+      completed += 1;
+      options.onProgress?.(completed, candidates.length);
     }
   }
   return { books, warnings };

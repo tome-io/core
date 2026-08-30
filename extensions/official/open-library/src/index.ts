@@ -11,7 +11,7 @@ import { createSourceHttpClient, type SourceHttpOptions } from '@tomeio/sources'
 export const manifest: ExtensionManifest = {
   manifestVersion: 1,
   id: 'org.tomeio.open-library',
-  version: '0.2.0',
+  version: '0.3.0',
   name: 'Open Library',
   description: 'Trending catalogs and book metadata from Open Library.',
   author: 'Tomeio',
@@ -21,8 +21,9 @@ export const manifest: ExtensionManifest = {
     { name: 'catalog', supportsPagination: true },
     { name: 'search', supportsPagination: true },
     { name: 'meta' },
+    { name: 'resolve', supportsPagination: true },
   ],
-  providerRoles: ['discovery', 'search'],
+  providerRoles: ['discovery', 'search', 'cover'],
   catalogs: [
     { id: 'trending', name: 'Trending this week', resource: 'catalog' },
     { id: 'fantasy', name: 'Fantasy', resource: 'catalog' },
@@ -228,6 +229,15 @@ export function createOpenLibraryExtension(options: SourceHttpOptions = {}): Boo
 
   return defineAddon(manifest, {
     search,
+    resolve: (query) =>
+      search({
+        query: [query.book.title, ...query.book.authors]
+          .filter(Boolean)
+          .join(' '),
+        page: query.page,
+        limit: query.limit,
+        format: query.format,
+      }),
     catalog: (query) => {
       const catalogId = query.catalogId ?? 'trending';
       const subjectQuery =

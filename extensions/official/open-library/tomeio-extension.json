@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "id": "org.tomeio.open-library",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "name": "Open Library",
   "description": "Trending catalogs and book metadata from Open Library.",
   "author": "Tomeio",
@@ -10,9 +10,10 @@
   "resources": [
     { "name": "catalog", "supportsPagination": true },
     { "name": "search", "supportsPagination": true },
-    { "name": "meta" }
+    { "name": "meta" },
+    { "name": "resolve", "supportsPagination": true }
   ],
-  "providerRoles": ["discovery", "search"],
+  "providerRoles": ["discovery", "search", "cover"],
   "catalogs": [
     { "id": "trending", "name": "Trending this week", "resource": "catalog" },
     { "id": "fantasy", "name": "Fantasy", "resource": "catalog" },

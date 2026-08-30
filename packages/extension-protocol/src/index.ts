@@ -68,7 +68,11 @@ export interface ExtensionAttribution {
   imageUrl?: string;
 }
 
-export type ExtensionProviderRole = 'discovery' | 'search' | 'acquisition';
+export type ExtensionProviderRole =
+  | 'discovery'
+  | 'search'
+  | 'acquisition'
+  | 'cover';
 
 export type ExtensionPlatform = 'android' | 'ios' | 'web' | 'desktop';
 
@@ -180,6 +184,7 @@ export function supportsExtensionProviderRole(
 ): boolean {
   if (manifest.providerRoles) return manifest.providerRoles.includes(role);
   if (role === 'discovery') return false;
+  if (role === 'cover') return false;
   if (role === 'search') {
     return manifest.resources.some((resource) => resource.name === 'search');
   }
@@ -562,7 +567,7 @@ export function parseExtensionManifest(input: unknown): ExtensionManifest {
   }
   const providerRoles = Array.isArray(value.providerRoles)
     ? value.providerRoles.map((candidate, index): ExtensionProviderRole => {
-        if (!['discovery', 'search', 'acquisition'].includes(String(candidate))) {
+        if (!['discovery', 'search', 'acquisition', 'cover'].includes(String(candidate))) {
           throw new InvalidExtensionManifestError(
             `Invalid provider role at index ${index}.`
           );
@@ -588,6 +593,14 @@ export function parseExtensionManifest(input: unknown): ExtensionManifest {
   ) {
     throw new InvalidExtensionManifestError(
       'Acquisition providers must declare resolve or acquisition resources.'
+    );
+  }
+  if (
+    providerRoles?.includes('cover') &&
+    !resources.some((resource) => resource.name === 'resolve')
+  ) {
+    throw new InvalidExtensionManifestError(
+      'Cover providers must declare the resolve resource.'
     );
   }
 

@@ -12,11 +12,11 @@ import {
 } from "react-native-safe-area-context";
 
 import { Sidebar } from "@/components/sidebar";
-import { AppErrorDialog } from "@/components/app-error-dialog";
+import { LibraryActivityToast } from "@/components/library-activity-toast";
 import { DownloadProvider } from "@/context/download-context";
 import { ExtensionsProvider } from "@/context/extensions-context";
 import { HomeNavigationProvider } from "@/context/home-navigation-context";
-import { LibraryProvider, useLibraryUiStatus } from "@/context/library-context";
+import { LibraryProvider } from "@/context/library-context";
 import { SettingsContext } from "@/context/settings-context";
 import {
   DEFAULT_SETTINGS,
@@ -24,18 +24,6 @@ import {
   saveSettings,
   type Settings,
 } from "@/lib/settings";
-
-function LibraryStatusDialog() {
-  const { error, warning, dismissError, dismissWarning } = useLibraryUiStatus();
-  const message = error ?? warning;
-  return (
-    <AppErrorDialog
-      title={error ? "Library error" : "Library needs attention"}
-      message={message}
-      onClose={error ? dismissError : dismissWarning}
-    />
-  );
-}
 
 export default function RootLayout() {
   const { width } = useWindowDimensions();
@@ -130,7 +118,7 @@ export default function RootLayout() {
                         </View>
                       )}
                     </View>
-                    <LibraryStatusDialog />
+                    <LibraryActivityToast />
                   </SafeAreaView>
                 </HomeNavigationProvider>
               </DownloadProvider>

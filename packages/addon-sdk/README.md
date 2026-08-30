@@ -9,6 +9,10 @@ can be selected as Tomeio's Discovery provider. Catalog support alone does not o
 the Home provider picker. Optional normalized `BookMetadata.offers` let Tomeio render prices and
 purchase actions consistently; add-ons never provide their own cover overlays or buttons.
 
+Add-ons that declare `providerRoles: ['cover']` and the `resolve` resource can provide
+cover candidates. Tomeio passes a provider-neutral book reference and uses a matched
+candidate's normalized `coverUrl`; the app retains control of ordering and UI.
+
 ```ts
 import { createAddonHandler, defineAddon } from '@tomeio/addon-sdk';
 

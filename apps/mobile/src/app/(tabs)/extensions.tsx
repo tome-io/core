@@ -46,6 +46,9 @@ type ScopeFilter = 'installed' | 'community' | 'enabled';
 type ResourceFilter = 'all' | ExtensionResourceName;
 type FilterPicker = 'scope' | 'resource';
 
+const EXTENSION_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+let lastExtensionRefreshAt = 0;
+
 const SCOPE_FILTERS: { label: string; value: ScopeFilter }[] = [
   { label: 'Installed', value: 'installed' },
   { label: 'Community', value: 'community' },
@@ -570,6 +573,9 @@ export default function ExtensionsScreen() {
   const extensions = useExtensions();
   useFocusEffect(
     useCallback(() => {
+      const now = Date.now();
+      if (now - lastExtensionRefreshAt < EXTENSION_REFRESH_INTERVAL_MS) return;
+      lastExtensionRefreshAt = now;
       void extensions.refreshCommunity().catch(() => undefined);
     }, [extensions.refreshCommunity])
   );

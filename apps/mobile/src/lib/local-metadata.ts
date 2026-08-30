@@ -310,6 +310,9 @@ async function enrichLocalBook(
   }
 
   const coverSources: BookCoverSources = {
+    ...(book.coverSources?.providers
+      ? { providers: book.coverSources.providers }
+      : {}),
     ...(canReadEmbedded
       ? embedded.cover
         ? { local: embedded.cover }
@@ -371,7 +374,8 @@ async function enrichLocalBook(
 
 export async function enrichLocalLibrary(
   books: LibraryBook[],
-  onBook: (book: LibraryBook, sources: LocalMetadataSources) => void | Promise<void>
+  onBook: (book: LibraryBook, sources: LocalMetadataSources) => void | Promise<void>,
+  onProgress?: (completed: number, total: number) => void,
 ): Promise<MetadataWarning[]> {
   const warnings: MetadataWarning[] = [];
   const retryFailuresBefore = Date.now() - METADATA_FAILURE_RETRY_MS;
@@ -383,6 +387,8 @@ export async function enrichLocalLibrary(
       book.metadataUpdatedAt < staleBefore ||
       (book.metadataPending && book.metadataUpdatedAt < retryFailuresBefore)
   );
+  let completed = 0;
+  onProgress?.(completed, candidates.length);
   for (let offset = 0; offset < candidates.length; offset += ENRICH_BATCH_SIZE) {
     const batch = candidates.slice(offset, offset + ENRICH_BATCH_SIZE);
     const results = await Promise.allSettled(batch.map(enrichLocalBook));
@@ -406,6 +412,8 @@ export async function enrichLocalLibrary(
           message: result.reason?.message || String(result.reason),
         });
       }
+      completed += 1;
+      onProgress?.(completed, candidates.length);
     }
   }
   return warnings;

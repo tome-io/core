@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { memo, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { colors } from '@/components/app-ui';
@@ -41,8 +41,10 @@ export const BookCard = memo(function BookCard({ book, onPress, onLongPress, wid
   const activeCover = coverCandidates.find(
     (cover): cover is string => !!cover && !failedCovers.includes(cover)
   );
-  const allCoversFailed =
-    coverCandidates.length > 0 && coverCandidates.every((cover) => failedCovers.includes(cover));
+
+  useEffect(() => {
+    setFailedCovers([]);
+  }, [book.cover, book.fallbackCover, book.metadataUpdatedAt]);
 
   return (
     <Pressable
@@ -65,10 +67,13 @@ export const BookCard = memo(function BookCard({ book, onPress, onLongPress, wid
       })}
     >
       <View style={[styles.cover, { width, height, backgroundColor: colors.surfaceRaised }]}>
+        <View style={styles.fallbackCover}>
+          <Text style={styles.fallbackIcon}>📚</Text>
+        </View>
         {activeCover ? (
           <Image
             source={{ uri: activeCover }}
-            style={{ width: '100%', height: '100%' }}
+            style={StyleSheet.absoluteFill}
             contentFit="cover"
             cachePolicy="memory-disk"
             recyclingKey={activeCover}
@@ -78,17 +83,7 @@ export const BookCard = memo(function BookCard({ book, onPress, onLongPress, wid
               )
             }
           />
-        ) : allCoversFailed ? (
-          <View style={styles.fallbackCover}>
-            <Text style={styles.fallbackIcon}>📚</Text>
-          </View>
-        ) : book.metadataPending ? (
-          <View style={[styles.fill, { backgroundColor: colors.surfaceRaised }]} />
-        ) : (
-          <View style={styles.fallbackCover}>
-            <Text style={styles.fallbackIcon}>📚</Text>
-          </View>
-        )}
+        ) : null}
         {(book.availableLocally === false ||
           book.moonReader?.availableLocally === false) && (
           <View style={styles.notLocalBadge}>
@@ -159,9 +154,6 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     overflow: 'hidden',
     borderRadius: 8,
-  },
-  fill: {
-    flex: 1,
   },
   fallbackCover: {
     flex: 1,

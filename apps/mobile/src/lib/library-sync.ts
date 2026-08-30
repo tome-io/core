@@ -58,23 +58,29 @@ export async function enrichIndexedLocalLibrary({
   directoryKey,
   books: initialBooks,
   onBookUpdated,
+  onProgress,
 }: {
   directoryKey: string;
   books: LibraryBook[];
   onBookUpdated?: (book: LibraryBook) => void;
+  onProgress?: (completed: number, total: number) => void;
 }): Promise<LocalLibrarySyncResult> {
   let books = initialBooks;
   const warnings: string[] = [];
 
-  const metadataWarnings = await enrichLocalLibrary(books, async (enriched, sources) => {
-    await persistLocalBook(directoryKey, enriched);
-    await persistMetadataSource(enriched, 'embedded', sources.embedded);
-    if (sources.catalog) {
-      await persistMetadataSource(enriched, 'catalog', sources.catalog);
-    }
-    books = books.map((book) => (book.key === enriched.key ? enriched : book));
-    onBookUpdated?.(enriched);
-  });
+  const metadataWarnings = await enrichLocalLibrary(
+    books,
+    async (enriched, sources) => {
+      await persistLocalBook(directoryKey, enriched);
+      await persistMetadataSource(enriched, 'embedded', sources.embedded);
+      if (sources.catalog) {
+        await persistMetadataSource(enriched, 'catalog', sources.catalog);
+      }
+      books = books.map((book) => (book.key === enriched.key ? enriched : book));
+      onBookUpdated?.(enriched);
+    },
+    onProgress,
+  );
   if (metadataWarnings.length) {
     warnings.push(
       `Could not load complete metadata for ${metadataWarnings.length} local ${

@@ -11,6 +11,7 @@ import {
 import type {
   BookExtension,
   ExtensionConfigValue,
+  ExtensionBookReference,
   ExtensionLibraryAction,
   ExtensionLibraryBook,
   ExtensionLibraryImport,
@@ -57,6 +58,11 @@ export interface AvailableLibraryImport extends ExtensionLibraryImport {
   extensionName: string;
 }
 
+export interface AvailableCoverProvider {
+  id: string;
+  name: string;
+}
+
 interface ExtensionsContextValue extends ExtensionRegistrySnapshot {
   ready: boolean;
   error: string | null;
@@ -80,6 +86,8 @@ interface ExtensionsContextValue extends ExtensionRegistrySnapshot {
   load(id: string): Promise<BookExtension>;
   catalog(id: string, query: ExtensionQuery): Promise<ExtensionPage<import('@tomeio/domain').BookMetadata>>;
   search(id: string, query: ExtensionQuery): Promise<ExtensionPage<import('@tomeio/domain').BookMetadata>>;
+  coverProviders(): AvailableCoverProvider[];
+  cover(extensionId: string, book: ExtensionBookReference): Promise<string | null>;
   libraryActions(
     book: ExtensionLibraryBook,
     placement: 'library' | 'details',
@@ -142,6 +150,10 @@ const EMPTY: ExtensionsContextValue = {
   search: async () => {
     throw new Error('Extensions provider is unavailable.');
   },
+  coverProviders: () => [],
+  cover: async () => {
+    throw new Error('Extensions provider is unavailable.');
+  },
   libraryActions: () => [],
   runLibraryAction: async () => {
     throw new Error('Extensions provider is unavailable.');
@@ -156,6 +168,10 @@ const EMPTY: ExtensionsContextValue = {
 };
 
 const ExtensionsContext = createContext<ExtensionsContextValue>(EMPTY);
+
+function sameRegistrySection(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
 
 export function ExtensionsProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<ExtensionRegistrySnapshot>({
@@ -174,7 +190,22 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     const next = await extensionRegistry.list();
-    setSnapshot(next);
+    setSnapshot((current) => {
+      const bundled = sameRegistrySection(current.bundled, next.bundled)
+        ? current.bundled
+        : next.bundled;
+      const community = sameRegistrySection(current.community, next.community)
+        ? current.community
+        : next.community;
+      const thirdParty = sameRegistrySection(current.thirdParty, next.thirdParty)
+        ? current.thirdParty
+        : next.thirdParty;
+      return bundled === current.bundled &&
+        community === current.community &&
+        thirdParty === current.thirdParty
+        ? current
+        : { bundled, community, thirdParty };
+    });
     const [savedDiscoveryId, savedSearchId, savedAcquisitionId] = await Promise.all([
       readDiscoveryExtensionId(),
       readSearchExtensionId(),
@@ -399,6 +430,46 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       return extension.catalog(query);
     },
     [load]
+  );
+  const coverProviders = useCallback((): AvailableCoverProvider[] => {
+    const manifests = [
+      ...snapshot.thirdParty
+        .filter((extension) => extension.enabled)
+        .map((extension) => extension.manifest),
+      ...snapshot.bundled,
+    ].filter((manifest) => supportsExtensionProviderRole(manifest, 'cover'));
+    const priority = (id: string) =>
+      id === 'org.tomeio.open-library'
+        ? 0
+        : id === 'org.tomeio.internet-archive'
+          ? 1
+          : id === 'community.tomeio.zlibrary'
+            ? 2
+            : 3;
+    return manifests
+      .map((manifest) => ({ id: manifest.id, name: manifest.name }))
+      .sort(
+        (left, right) =>
+          priority(left.id) - priority(right.id) ||
+          left.name.localeCompare(right.name)
+      );
+  }, [snapshot.bundled, snapshot.thirdParty]);
+  const cover = useCallback(
+    async (extensionId: string, book: ExtensionBookReference) => {
+      const provider = coverProviders().find(
+        (candidate) => candidate.id === extensionId
+      );
+      if (!provider) {
+        throw new Error(`Extension "${extensionId}" is not an enabled cover provider.`);
+      }
+      const extension = await load(extensionId);
+      if (!extension.resolve) {
+        throw new Error(`Extension "${provider.name}" does not resolve books.`);
+      }
+      const resolved = await extension.resolve({ book, page: 1, limit: 8 });
+      return resolved.items.find((candidate) => !!candidate.coverUrl)?.coverUrl ?? null;
+    },
+    [coverProviders, load]
   );
   const libraryActions = useCallback(
     (
@@ -632,6 +703,8 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       load,
       catalog,
       search,
+      coverProviders,
+      cover,
       libraryActions,
       runLibraryAction,
       libraryImports,
@@ -659,6 +732,8 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       load,
       catalog,
       search,
+      coverProviders,
+      cover,
       libraryActions,
       runLibraryAction,
       libraryImports,

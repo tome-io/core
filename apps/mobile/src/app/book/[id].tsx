@@ -33,6 +33,7 @@ import {
 } from '@/components/app-ui';
 import { useDownloads, type BookDownloadJob } from '@/context/download-context';
 import { useExtensions } from '@/context/extensions-context';
+import type { AvailableCoverProvider } from '@/context/extensions-context';
 import {
   useLibraryActions,
   useLibraryCatalog,
@@ -721,6 +722,10 @@ export default function BookDetailScreen() {
   );
 
   const libraryActionBook = localBook ?? moonBook;
+  const coverProviders = useMemo(
+    () => extensions.coverProviders(),
+    [extensions]
+  );
   const chooseCover = useCallback(
     async (preference: BookCoverPreference) => {
       if (!libraryActionBook || coverBusy) return;
@@ -728,6 +733,7 @@ export default function BookDetailScreen() {
       setLibraryError(null);
       try {
         await setBookCoverPreference(libraryActionBook, preference);
+        setFailedCovers([]);
         setCoverPickerOpen(false);
       } catch (cause) {
         setLibraryError(cause instanceof Error ? cause.message : String(cause));
@@ -743,6 +749,7 @@ export default function BookDetailScreen() {
     setLibraryError(null);
     try {
       await refreshBookMetadata(libraryActionBook);
+      setFailedCovers([]);
     } catch (cause) {
       setLibraryError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -1128,6 +1135,7 @@ export default function BookDetailScreen() {
         visible={coverPickerOpen}
         title={title}
         sources={libraryActionBook?.coverSources}
+        providers={coverProviders}
         preference={libraryActionBook?.coverPreference ?? 'auto'}
         busy={coverBusy}
         onClose={() => {
@@ -1177,6 +1185,7 @@ function CoverPicker({
   visible,
   title,
   sources,
+  providers,
   preference,
   busy,
   onClose,
@@ -1186,23 +1195,31 @@ function CoverPicker({
   visible: boolean;
   title: string;
   sources?: BookCoverSources;
+  providers: AvailableCoverProvider[];
   preference: BookCoverPreference;
   busy: boolean;
   onClose: () => void;
   onChoose: (preference: BookCoverPreference) => void;
   onRefresh: () => void;
 }) {
+  const openLibraryAvailable = providers.some(
+    (provider) => provider.id === 'org.tomeio.open-library'
+  );
   const choices: {
     preference: BookCoverPreference;
     label: string;
     detail: string;
     uri?: string;
+    resolvable?: boolean;
   }[] = [
     {
       preference: 'auto',
       label: 'Automatic',
-      detail: 'Prefer a usable local cover, then Open Library.',
-      uri: sources?.local || sources?.catalog,
+      detail: 'Prefer local, then Open Library, then installed cover providers.',
+      uri:
+        sources?.local ||
+        sources?.catalog ||
+        Object.values(sources?.providers ?? {})[0],
     },
     ...(sources?.local
       ? [{
@@ -1212,14 +1229,28 @@ function CoverPicker({
           uri: sources.local,
         }]
       : []),
-    ...(sources?.catalog
+    ...(sources?.catalog || openLibraryAvailable
       ? [{
           preference: 'catalog' as const,
           label: 'Open Library',
-          detail: 'Use the matched catalog cover.',
-          uri: sources.catalog,
+          detail: sources?.catalog
+            ? 'Use the matched catalog cover.'
+            : 'Ask Open Library to find a cover.',
+          uri: sources?.catalog,
+          resolvable: openLibraryAvailable,
         }]
       : []),
+    ...providers
+      .filter((provider) => provider.id !== 'org.tomeio.open-library')
+      .map((provider) => ({
+        preference: `provider:${provider.id}` as BookCoverPreference,
+        label: provider.name,
+        detail: sources?.providers?.[provider.id]
+          ? 'Use the cover found by this add-on.'
+          : 'Ask this add-on to find a cover.',
+        uri: sources?.providers?.[provider.id],
+        resolvable: true,
+      })),
   ];
 
   return (
@@ -1260,7 +1291,7 @@ function CoverPicker({
                 <Pressable
                   key={choice.preference}
                   onPress={() => onChoose(choice.preference)}
-                  disabled={busy || !choice.uri}
+                  disabled={busy || (!choice.uri && !choice.resolvable)}
                   className="min-h-20 flex-row items-center gap-4 rounded-2xl border px-3 py-3 disabled:opacity-40"
                   style={{
                     borderColor: selected ? colors.accent : colors.border,
@@ -1296,7 +1327,8 @@ function CoverPicker({
 
           {!sources?.local ? (
             <Text className="mt-3 text-xs leading-4 text-neutral-500">
-              No usable embedded cover was found. Automatic mode will use Open Library when available.
+              No usable embedded cover was found. Automatic mode will try Open Library,
+              then your installed cover-provider add-ons.
             </Text>
           ) : null}
           <Pressable

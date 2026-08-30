@@ -45,6 +45,7 @@ import {
 import {
   useLibraryActions,
   useLibraryCatalog,
+  useLibraryUiStatus,
 } from "@/context/library-context";
 import { useSettings } from "@/context/settings-context";
 import {
@@ -67,7 +68,6 @@ import {
   registerHostedSync,
   requestHostedSyncCode,
   resetHostedSyncPassword,
-  synchronizeHostedProgress,
   verifyHostedSyncEmail,
   verifyHostedSyncRecoveryCode,
   type HostedSyncAccount,
@@ -831,10 +831,7 @@ export default function SettingsScreen() {
   const [hostedSyncAccount, setHostedSyncAccount] =
     useState<HostedSyncAccount | null>(null);
   const [hostedSyncDialog, setHostedSyncDialog] = useState(false);
-  const [hostedSyncBusy, setHostedSyncBusy] = useState(false);
-  const [hostedSyncLastSyncedAt, setHostedSyncLastSyncedAt] = useState<
-    number | null
-  >(null);
+  const [hostedAuthBusy, setHostedAuthBusy] = useState(false);
   const [libraryImport, setLibraryImport] =
     useState<LibraryImportPreview | null>(null);
   const [libraryImportBusy, setLibraryImportBusy] = useState(false);
@@ -844,7 +841,13 @@ export default function SettingsScreen() {
   const extensions = useExtensions();
   const { settings, update } = useSettings();
   const { downloaded } = useLibraryCatalog();
-  const { refreshLocalBooks } = useLibraryActions();
+  const { refreshLocalBooks, synchronizeLibrary } = useLibraryActions();
+  const { scanning, activity, lastSyncedAt } = useLibraryUiStatus();
+  const hostedSyncBusy =
+    scanning ||
+    (activity?.state === "running" &&
+      (activity.title.includes("Synchron") ||
+        activity.title.includes("Updating library")));
 
   const showError = useCallback((title: string, cause: unknown) => {
     setSettingsError({
@@ -997,34 +1000,22 @@ export default function SettingsScreen() {
   };
 
   const syncHostedNow = async () => {
-    setHostedSyncBusy(true);
     try {
-      const result = await synchronizeHostedProgress();
-      await refreshLocalBooks();
-      setHostedSyncLastSyncedAt(result.syncedAt);
-      if (result.unmatchedRecords > 0) {
-        setSettingsError({
-          title: "Sync incomplete",
-          message: `${result.unmatchedRecords} remote book${result.unmatchedRecords === 1 ? "" : "s"} could not be matched on this device.`,
-        });
-      }
+      await synchronizeLibrary();
     } catch (cause) {
       showError("Tomeio Sync failed", cause);
-    } finally {
-      setHostedSyncBusy(false);
     }
   };
 
   const signOutHostedSync = async () => {
-    setHostedSyncBusy(true);
+    setHostedAuthBusy(true);
     try {
       await logoutHostedSync();
       setHostedSyncAccount(null);
-      setHostedSyncLastSyncedAt(null);
     } catch (cause) {
       showError("Could not sign out", cause);
     } finally {
-      setHostedSyncBusy(false);
+      setHostedAuthBusy(false);
     }
   };
 
@@ -1205,10 +1196,10 @@ export default function SettingsScreen() {
           >
             {hostedSyncAccount ? (
               <PillButton
-                label={hostedSyncBusy ? "Please wait…" : "Sign out"}
+                label={hostedAuthBusy ? "Signing out…" : "Sign out"}
                 icon="log-out"
                 variant="overlay"
-                disabled={hostedSyncBusy}
+                disabled={hostedAuthBusy}
                 onPress={() => void signOutHostedSync()}
               />
             ) : (
@@ -1226,8 +1217,8 @@ export default function SettingsScreen() {
               compact={compactOptions}
               label="Synchronize Tomeio"
               detail={
-                hostedSyncLastSyncedAt
-                  ? `Last synced ${new Date(hostedSyncLastSyncedAt).toLocaleString()}`
+                lastSyncedAt
+                  ? `Last synced ${new Date(lastSyncedAt).toLocaleString()}`
                   : "Sync your library and reading list across Tomeio devices, with shared progress from KOReader and Moon+ Reader."
               }
             >
@@ -1235,7 +1226,7 @@ export default function SettingsScreen() {
                 label={hostedSyncBusy ? "Syncing…" : "Sync now"}
                 icon={hostedSyncBusy ? undefined : "refresh-cw"}
                 variant="accent"
-                disabled={hostedSyncBusy}
+                disabled={hostedSyncBusy || hostedAuthBusy}
                 onPress={() => void syncHostedNow()}
               />
             </SettingsOption>
@@ -1300,9 +1291,7 @@ export default function SettingsScreen() {
             setHostedSyncDialog(false);
             void syncHostedNow();
           }}
-          onClose={() => {
-            if (!hostedSyncBusy) setHostedSyncDialog(false);
-          }}
+          onClose={() => setHostedSyncDialog(false)}
         />
       ) : null}
       <LibraryImportDialog

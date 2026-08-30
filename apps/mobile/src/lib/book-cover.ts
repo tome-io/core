@@ -1,14 +1,28 @@
-export type BookCoverPreference = 'auto' | 'local' | 'catalog';
+export type BookCoverPreference =
+  | 'auto'
+  | 'local'
+  | 'catalog'
+  | `provider:${string}`;
 
 export interface BookCoverSources {
   local?: string;
   catalog?: string;
+  providers?: Record<string, string>;
 }
 
 export interface ResolvedBookCover {
   cover: string;
   fallbackCover?: string;
 }
+
+export interface ExtensionCoverLookupResult {
+  providerId: string;
+  uri: string;
+}
+
+export type ExtensionCoverLookup = (
+  book: import('./library').LibraryBook
+) => Promise<ExtensionCoverLookupResult | null>;
 
 export function isUsableBookCoverSize(width: number, height: number): boolean {
   const aspectRatio = height > 0 ? width / height : 0;
@@ -25,10 +39,28 @@ export function resolveBookCover(
   preference: BookCoverPreference = 'auto',
   additionalFallbacks: (string | undefined)[] = []
 ): ResolvedBookCover {
-  const preferredSources =
-    preference === 'catalog'
-      ? [sources?.catalog, sources?.local]
-      : [sources?.local, sources?.catalog];
+  const providerPriority = (providerId: string) =>
+    providerId === 'org.tomeio.internet-archive'
+      ? 0
+      : providerId === 'community.tomeio.zlibrary'
+        ? 1
+        : 2;
+  const providerEntries = Object.entries(sources?.providers ?? {}).sort(
+    ([left], [right]) =>
+      providerPriority(left) - providerPriority(right) ||
+      left.localeCompare(right)
+  );
+  const selectedProvider = preference.startsWith('provider:')
+    ? preference.slice('provider:'.length)
+    : null;
+  const providerCovers = providerEntries
+    .filter(([providerId]) => providerId !== selectedProvider)
+    .map(([, uri]) => uri);
+  const preferredSources = selectedProvider
+    ? [sources?.providers?.[selectedProvider], sources?.local, sources?.catalog, ...providerCovers]
+    : preference === 'catalog'
+      ? [sources?.catalog, sources?.local, ...providerCovers]
+      : [sources?.local, sources?.catalog, ...providerCovers];
   const candidates = [...preferredSources, ...additionalFallbacks].filter(
     (uri, index, values): uri is string => !!uri && values.indexOf(uri) === index
   );

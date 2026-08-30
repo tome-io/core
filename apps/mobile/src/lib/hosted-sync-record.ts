@@ -2,6 +2,62 @@ import {
   isProgressSyncRecord,
   type ProgressSyncRecord,
 } from './progress-sync-model';
+import type { CollectionSyncRecord } from './library-sync-model';
+
+interface SyncIdentityRecord {
+  identity: string;
+  aliases: string[];
+}
+
+function sameOptionalNumber(
+  left: number | undefined,
+  right: number | undefined
+): boolean {
+  return left === right;
+}
+
+export function matchingSyncRecord<T extends SyncIdentityRecord>(
+  record: SyncIdentityRecord,
+  candidates: T[]
+): T | undefined {
+  const identities = new Set([record.identity, ...record.aliases]);
+  return candidates.find((candidate) =>
+    [candidate.identity, ...candidate.aliases].some((identity) =>
+      identities.has(identity)
+    )
+  );
+}
+
+export function sameCollectionSyncContent(
+  left: CollectionSyncRecord,
+  right: CollectionSyncRecord
+): boolean {
+  return (
+    left.title === right.title &&
+    left.author === right.author &&
+    left.format === right.format &&
+    left.addedAt === right.addedAt &&
+    left.sortAt === right.sortAt &&
+    (left.removedAt ?? undefined) === (right.removedAt ?? undefined)
+  );
+}
+
+export function sameProgressSyncContent(
+  left: ProgressSyncRecord,
+  right: ProgressSyncRecord
+): boolean {
+  return (
+    Math.abs(left.progress - right.progress) < 0.000001 &&
+    left.isRead === right.isRead &&
+    left.title === right.title &&
+    left.author === right.author &&
+    left.format === right.format &&
+    sameOptionalNumber(left.readingTimeMs, right.readingTimeMs) &&
+    sameOptionalNumber(left.wordsRead, right.wordsRead) &&
+    sameOptionalNumber(left.lastReadAt, right.lastReadAt) &&
+    sameOptionalNumber(left.removedAt, right.removedAt)
+  );
+}
 
 export interface HostedProgressRecord {
   document: string;

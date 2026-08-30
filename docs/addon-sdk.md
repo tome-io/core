@@ -34,6 +34,11 @@ download add-on ◄── resolve(BookReference) ── Tomeio
         └── acquisition(providerBookId) ─────► normalized options ──► host download
 ```
 
+The same provider-neutral `resolve(BookReference)` handoff powers optional cover
+providers. A manifest declares `providerRoles: ['cover']`, and Tomeio reads a matched
+candidate's `coverUrl`. This keeps cover lookup compatible with bundled, HTTP, and
+declarative add-ons without adding a provider-specific endpoint.
+
 This separates discovery identity from provider identity. Providers own their ids;
 Tomeio carries known identifiers through the handoff instead of forcing every download
 provider to reverse-engineer another provider's ids.

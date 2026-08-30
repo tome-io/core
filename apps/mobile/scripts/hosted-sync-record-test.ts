@@ -3,7 +3,10 @@ import { test } from 'node:test';
 
 import {
   hostedAccountMetadata,
+  matchingSyncRecord,
   progressRecordFromHosted,
+  sameCollectionSyncContent,
+  sameProgressSyncContent,
 } from '../src/lib/hosted-sync-record';
 import { shouldEnrichReaderMetadata } from '../src/lib/reader-metadata-policy';
 
@@ -72,8 +75,55 @@ test('forces metadata enrichment after hosted sync even during the failure retry
     addedAt: now,
     metadataPending: true,
     metadataUpdatedAt: now - 1_000,
-    metadataVersion: 6,
+    metadataVersion: 7,
   };
   assert.equal(shouldEnrichReaderMetadata(book, now), false);
   assert.equal(shouldEnrichReaderMetadata(book, now, true), true);
+});
+
+test('matches sync records through aliases', () => {
+  const candidate = {
+    identity: 'book:project-hail-mary',
+    aliases: ['fingerprint:project-hail-mary'],
+  };
+  assert.equal(
+    matchingSyncRecord(
+      {
+        identity: 'fingerprint:project-hail-mary',
+        aliases: [],
+      },
+      [candidate]
+    ),
+    candidate
+  );
+});
+
+test('ignores sync timestamps when progress content is unchanged', () => {
+  const base = {
+    identity: 'book:project-hail-mary',
+    aliases: [],
+    title: 'Project Hail Mary',
+    author: 'Andy Weir',
+    format: 'epub',
+    progress: 64,
+    isRead: false,
+    updatedAt: 100,
+  };
+  assert.equal(sameProgressSyncContent(base, { ...base, updatedAt: 200 }), true);
+  assert.equal(sameProgressSyncContent(base, { ...base, progress: 65 }), false);
+});
+
+test('detects meaningful collection changes without repeating timestamp-only writes', () => {
+  const base = {
+    identity: 'book:project-hail-mary',
+    aliases: [],
+    title: 'Project Hail Mary',
+    author: 'Andy Weir',
+    format: 'epub',
+    addedAt: 10,
+    sortAt: 20,
+    updatedAt: 30,
+  };
+  assert.equal(sameCollectionSyncContent(base, { ...base, updatedAt: 40 }), true);
+  assert.equal(sameCollectionSyncContent(base, { ...base, sortAt: 21 }), false);
 });

@@ -23,6 +23,13 @@ Tomeio itself.
 identifiers. Download providers should implement it instead of making Tomeio guess a
 search string. `search` remains a compatibility fallback during migration.
 
+An add-on can also declare the `cover` provider role alongside `resolve`. Tomeio can
+then ask it for provider-owned matches and use the first matching `coverUrl` as a
+library cover source. The host owns provider ordering, fallback, persistence, and the
+cover-selection UI; add-ons return ordinary book metadata and do not inject UI.
+Automatic lookup currently prefers Open Library, then Internet Archive, then
+Z-Library when installed, followed by any other enabled cover providers.
+
 Acquisition responses are data only. Tomeio decides how to present an option and owns
 the download. Add-ons cannot render download links, buttons, or dialogs.
 

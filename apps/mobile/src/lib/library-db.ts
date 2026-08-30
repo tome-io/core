@@ -129,6 +129,9 @@ async function withValidGeneratedCover(
     return book;
   }
   const coverSources = {
+    ...(book.coverSources?.providers
+      ? { providers: book.coverSources.providers }
+      : {}),
     ...(localCover ? { local: localCover } : {}),
     ...(catalogCover ? { catalog: catalogCover } : {}),
   };
@@ -964,12 +967,52 @@ async function clearLocalMoonReaderData(
   }
 }
 
+function preserveCatalogMetadata(
+  existing: LibraryBook | undefined,
+  incoming: LibraryBook,
+): LibraryBook {
+  if (!existing) return incoming;
+  const hasLocalMetadata =
+    !!existing.metadataUpdatedAt ||
+    !!existing.discovery ||
+    !!existing.coverSources;
+  if (!hasLocalMetadata) return incoming;
+  return {
+    ...incoming,
+    title: existing.title || incoming.title,
+    author: existing.author || incoming.author,
+    cover: existing.cover || incoming.cover,
+    fallbackCover: existing.fallbackCover || incoming.fallbackCover,
+    coverSources: existing.coverSources ?? incoming.coverSources,
+    coverPreference: existing.coverPreference ?? incoming.coverPreference,
+    description: existing.description || incoming.description,
+    year: existing.year || incoming.year,
+    genre:
+      existing.genre && existing.genre !== "Other"
+        ? existing.genre
+        : incoming.genre,
+    rating: existing.rating ?? incoming.rating,
+    ratingsCount: existing.ratingsCount ?? incoming.ratingsCount,
+    discovery: existing.discovery ?? incoming.discovery,
+    metadataPending: existing.metadataPending,
+    metadataUpdatedAt: existing.metadataUpdatedAt,
+    metadataVersion: existing.metadataVersion,
+  };
+}
+
 export async function persistMoonReaderCatalog(
   sourceKey: string,
   books: LibraryBook[],
 ): Promise<void> {
-  await withDatabaseWrite((database) =>
-    database.withExclusiveTransactionAsync(async (transaction) => {
+  await withDatabaseWrite(async (database) => {
+    const existingRows = await database.getAllAsync<{
+      book_key: string;
+      book_json: string;
+    }>("SELECT book_key, book_json FROM catalog_books");
+    const existingByKey = new Map(
+      existingRows.map((row) => [row.book_key, parseBook(row.book_json)]),
+    );
+    await database.withExclusiveTransactionAsync(async (transaction) => {
       // The table/source names are retained for on-device schema compatibility,
       // but this catalog may contain records from several reader add-ons.
       await transaction.runAsync("DELETE FROM moonreader_items");
@@ -988,7 +1031,11 @@ export async function persistMoonReaderCatalog(
             `Reader add-on item ${book.key} has no source filename.`,
           );
         }
-        await upsertBook(transaction, withoutMoonReaderData(book));
+        const catalogBook = preserveCatalogMetadata(
+          existingByKey.get(book.key),
+          book,
+        );
+        await upsertBook(transaction, withoutMoonReaderData(catalogBook));
         await persistProgressRecord(transaction, book);
         await transaction.runAsync(
           `INSERT INTO moonreader_items (source_key, filename, book_key, sort_at)
@@ -1018,8 +1065,8 @@ export async function persistMoonReaderCatalog(
         AND book_key NOT IN (SELECT book_key FROM moonreader_items)
         AND book_key NOT IN (SELECT book_key FROM progress_sync_items)
     `);
-    }),
-  );
+    });
+  });
 }
 
 export async function clearMoonReaderCatalog(): Promise<void> {
@@ -1115,14 +1162,22 @@ export async function setCatalogBookCoverPreference(
         ? book.coverSources?.local
         : preference === "catalog"
           ? book.coverSources?.catalog
-          : book.coverSources?.local || book.coverSources?.catalog;
+          : preference.startsWith("provider:")
+            ? book.coverSources?.providers?.[
+                preference.slice("provider:".length)
+              ]
+            : book.coverSources?.local ||
+              book.coverSources?.catalog ||
+              Object.values(book.coverSources?.providers ?? {})[0];
     if (!requestedCover) {
       throw new Error(
         preference === "local"
           ? "No usable cover was found in the local book file."
           : preference === "catalog"
             ? "No Open Library cover is available for this book."
-            : "No cover source is available for this book.",
+            : preference.startsWith("provider:")
+              ? "This cover provider did not return a usable cover for this book."
+              : "No cover source is available for this book.",
       );
     }
     const resolved = resolveBookCover(book.coverSources, preference, [
@@ -1136,6 +1191,56 @@ export async function setCatalogBookCoverPreference(
       coverPreference: preference,
       cover: resolved.cover,
       fallbackCover: resolved.fallbackCover,
+    };
+    await upsertBook(database, updated);
+    return updated;
+  });
+}
+
+export async function setCatalogBookCoverProviderSource(
+  bookKey: string,
+  providerId: string,
+  uri: string,
+): Promise<LibraryBook> {
+  return withDatabaseWrite(async (database) => {
+    const row = await database.getFirstAsync<CatalogRow>(
+      "SELECT book_json FROM catalog_books WHERE book_key = ?",
+      bookKey,
+    );
+    if (!row)
+      throw new Error("This book is not present in the library catalog.");
+    const book = parseBook(row.book_json);
+    const coverSources = {
+      ...book.coverSources,
+      providers: {
+        ...book.coverSources?.providers,
+        [providerId]: uri,
+      },
+    };
+    const updated = {
+      ...book,
+      coverSources,
+    };
+    await upsertBook(database, updated);
+    return updated;
+  });
+}
+
+export async function setCatalogBookCoverCatalogSource(
+  bookKey: string,
+  uri: string,
+): Promise<LibraryBook> {
+  return withDatabaseWrite(async (database) => {
+    const row = await database.getFirstAsync<CatalogRow>(
+      "SELECT book_json FROM catalog_books WHERE book_key = ?",
+      bookKey,
+    );
+    if (!row)
+      throw new Error("This book is not present in the library catalog.");
+    const book = parseBook(row.book_json);
+    const updated = {
+      ...book,
+      coverSources: { ...book.coverSources, catalog: uri },
     };
     await upsertBook(database, updated);
     return updated;
