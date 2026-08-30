@@ -1,4 +1,5 @@
 import { Feather } from "@expo/vector-icons";
+import { usePathname } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -13,7 +14,39 @@ import { useLibraryUiStatus } from "@/context/library-context";
 import { AppErrorDialog } from "./app-error-dialog";
 import { colors, radii } from "./app-ui";
 
+const STATUS_BADGE_WIDTH = 160;
+const STATUS_BADGE_HEIGHT = 40;
+
+function conciseStatus(
+  state: "running" | "success" | "error" | undefined,
+  title: string,
+  detail: string | undefined,
+): string {
+  const value = `${title} ${detail ?? ""}`.toLowerCase();
+  if (state === "error") return "Needs attention";
+  if (value.includes("remov")) {
+    return state === "success" ? "Book removed" : "Removing book";
+  }
+  if (state === "success") return "Up to date";
+  if (value.includes("index") || value.includes("scann")) return "Scanning files";
+  if (value.includes("reader add-on")) return "Checking reader";
+  if (value.includes("upload")) return "Uploading";
+  if (value.includes("updating this device") || value.includes("apply")) {
+    return "Applying";
+  }
+  if (
+    value.includes("cover") ||
+    value.includes("metadata") ||
+    value.includes("book details")
+  ) {
+    return "Updating details";
+  }
+  if (value.includes("sync") || value.includes("checking")) return "Checking sync";
+  return "Updating";
+}
+
 export function LibraryActivityToast() {
+  const pathname = usePathname();
   const { width } = useWindowDimensions();
   const {
     activity,
@@ -29,6 +62,11 @@ export function LibraryActivityToast() {
     activity?.title ?? (error ? "Library error" : "Library needs attention");
   const detail = activity?.detail ?? fallbackMessage ?? undefined;
   const visible = activity != null || fallbackMessage != null;
+  const status = conciseStatus(
+    activity?.state ?? (fallbackMessage ? "error" : undefined),
+    title,
+    detail,
+  );
 
   useEffect(() => {
     if (activity?.state !== "success") return;
@@ -45,15 +83,6 @@ export function LibraryActivityToast() {
 
   if (!visible) return null;
   const compact = width < 700;
-  const determinate =
-    activity?.state === "running" &&
-    typeof activity.completed === "number" &&
-    typeof activity.total === "number" &&
-    activity.total > 0;
-  const progress = determinate
-    ? Math.max(0, Math.min(1, activity.completed! / activity.total!))
-    : 0;
-
   return (
     <>
       <View
@@ -61,9 +90,9 @@ export function LibraryActivityToast() {
         style={{
           position: "absolute",
           right: compact ? 12 : 24,
-          bottom: compact ? 92 : 24,
+          bottom: compact && !pathname.startsWith("/book/") ? 108 : 32,
           left: compact ? 12 : undefined,
-          width: compact ? undefined : 360,
+          alignItems: compact ? "center" : undefined,
           zIndex: 50,
         }}
       >
@@ -72,11 +101,10 @@ export function LibraryActivityToast() {
           accessibilityLabel={`${title}. ${detail ?? ""}`}
           onPress={() => setDetailsVisible(true)}
           style={({ pressed }) => ({
-            overflow: "hidden",
-            borderRadius: radii.large,
-            borderWidth: 1,
-            borderColor: colors.accentMuted,
-            backgroundColor: '#2b1d14',
+            width: STATUS_BADGE_WIDTH,
+            height: STATUS_BADGE_HEIGHT,
+            justifyContent: "center",
+            borderRadius: radii.pill,
             opacity: pressed ? 0.9 : 1,
             shadowColor: "#000",
             shadowOpacity: 0.35,
@@ -85,49 +113,38 @@ export function LibraryActivityToast() {
             elevation: 10,
           })}
         >
-          <View className="flex-row items-center gap-3 px-4 py-3.5">
+          <View
+            style={{
+              width: STATUS_BADGE_WIDTH,
+              height: STATUS_BADGE_HEIGHT,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              paddingHorizontal: 10,
+              borderRadius: radii.pill,
+              borderWidth: 1,
+              borderColor: colors.border,
+              backgroundColor: colors.surfaceRaised,
+            }}
+          >
             {activity?.state === "running" ? (
-              <ActivityIndicator size="small" color={colors.accent} />
+              <ActivityIndicator size="small" color={colors.text} />
             ) : (
               <Feather
                 name={activity?.state === "success" ? "check-circle" : "alert-circle"}
-                size={20}
-                color={
-                  activity?.state === "success" ? colors.success : colors.accent
-                }
+                size={18}
+                color={colors.text}
               />
             )}
-            <View className="min-w-0 flex-1">
-              <Text
-                numberOfLines={1}
-                className="text-sm font-semibold"
-                style={{ color: colors.text }}
-              >
-                {title}
-              </Text>
-              {detail ? (
-                <Text
-                  numberOfLines={1}
-                  className="mt-0.5 text-xs"
-                  style={{ color: colors.textMuted }}
-                >
-                  {detail}
-                </Text>
-              ) : null}
-            </View>
-            <Feather name="chevron-up" size={17} color={colors.textMuted} />
+            <Text
+              numberOfLines={1}
+              className="text-[13px] font-medium"
+              style={{ color: colors.text }}
+            >
+              {status}
+            </Text>
           </View>
-          {activity?.state === "running" ? (
-            <View style={{ height: 3, backgroundColor: colors.border }}>
-              <View
-                style={{
-                  height: 3,
-                  width: determinate ? `${Math.max(4, progress * 100)}%` : "28%",
-                  backgroundColor: colors.accent,
-                }}
-              />
-            </View>
-          ) : null}
         </Pressable>
       </View>
       <AppErrorDialog

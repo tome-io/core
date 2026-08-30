@@ -3,7 +3,9 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { colors } from '@/components/app-ui';
+import { CoverProgress } from './cover-progress';
 import { RatingChip } from './rating-chip';
+import { SeriesPositionChip } from './series-position-chip';
 
 export interface CardBook {
   id: string;
@@ -14,12 +16,16 @@ export interface CardBook {
   format?: string;
   year?: string | number;
   rating?: number;
+  seriesPosition?: number;
   priceLabel?: string;
   sourceUrl?: string;
   metadataPending?: boolean;
+  metadataUpdatedAt?: number;
   progress?: number;
   isRead?: boolean;
   availableLocally?: boolean;
+  fileUri?: string;
+  local?: { uri: string };
   moonReader?: { availableLocally?: boolean };
 }
 
@@ -41,6 +47,11 @@ export const BookCard = memo(function BookCard({ book, onPress, onLongPress, wid
   const activeCover = coverCandidates.find(
     (cover): cover is string => !!cover && !failedCovers.includes(cover)
   );
+  const localReference = book.local?.uri ?? book.fileUri;
+  const isNotLocal =
+    book.availableLocally === false ||
+    book.moonReader?.availableLocally === false ||
+    (!localReference && book.moonReader?.availableLocally !== true);
 
   useEffect(() => {
     setFailedCovers([]);
@@ -84,13 +95,13 @@ export const BookCard = memo(function BookCard({ book, onPress, onLongPress, wid
             }
           />
         ) : null}
-        {(book.availableLocally === false ||
-          book.moonReader?.availableLocally === false) && (
+        {isNotLocal && (
           <View style={styles.notLocalBadge}>
             <Text style={styles.notLocalText}>Not local</Text>
           </View>
         )}
         <RatingChip rating={book.rating} />
+        <SeriesPositionChip position={book.seriesPosition} />
         {book.sourceUrl && book.priceLabel ? (
           <Pressable
             accessibilityLabel={`${book.priceLabel}; open source`}
@@ -106,33 +117,7 @@ export const BookCard = memo(function BookCard({ book, onPress, onLongPress, wid
             </Text>
           </Pressable>
         ) : null}
-        {typeof progress === 'number' && progress > 0 && (
-          <>
-            <View style={styles.progressTrack}>
-              <View
-                style={{
-                  height: '100%',
-                  width: `${Math.max(0, Math.min(100, progress))}%`,
-                  backgroundColor: colors.accent,
-                }}
-              />
-            </View>
-            <View
-              style={[
-                styles.progressBadge,
-                {
-                  backgroundColor: book.isRead
-                    ? colors.success
-                    : colors.accentMuted,
-                },
-              ]}
-            >
-              <Text style={styles.progressText}>
-                {book.isRead ? 'Read' : `${Math.max(1, Math.round(progress))}%`}
-              </Text>
-            </View>
-          </>
-        )}
+        <CoverProgress progress={progress} isRead={book.isRead} />
       </View>
       <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.title, { width }]}>
         {book.title || 'Untitled'}
@@ -173,7 +158,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.8)',
   },
   notLocalText: {
-    color: '#e5e5e5',
+    color: colors.text,
     fontSize: 9,
     fontWeight: '600',
   },
@@ -188,29 +173,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.84)',
   },
   priceText: {
-    color: '#ffffff',
+    color: colors.text,
     fontSize: 10,
-    fontWeight: '700',
-  },
-  progressTrack: {
-    position: 'absolute',
-    right: 0,
-    bottom: 0,
-    left: 0,
-    height: 6,
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-  },
-  progressBadge: {
-    position: 'absolute',
-    bottom: 12,
-    left: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  progressText: {
-    color: '#fff',
-    fontSize: 9,
     fontWeight: '700',
   },
   title: {

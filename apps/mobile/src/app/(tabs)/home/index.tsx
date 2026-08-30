@@ -1,17 +1,14 @@
-import { Feather } from '@expo/vector-icons';
 import type { BookMetadata } from '@tomeio/domain';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
   Keyboard,
-  Pressable,
-  TextInput,
   type ViewToken,
   View,
 } from 'react-native';
 
-import { colors, usePageBottomPadding, usePageGutter } from '@/components/app-ui';
+import { colors, SearchField, usePageBottomPadding, usePageGutter } from '@/components/app-ui';
 import { ProviderAttribution, Rail } from '@/components/poster';
 import { useExtensions } from '@/context/extensions-context';
 import { useLibraryCatalog } from '@/context/library-context';
@@ -20,6 +17,8 @@ import { detailParams, type LibraryBook } from '@/lib/library';
 import type { FeedBook } from '@/lib/openlibrary';
 
 const MIN_CONTINUE_READING_PROGRESS = 1;
+const INITIAL_FEED_COUNT = 4;
+const FEED_REQUEST_INTERVAL_MS = 2_000;
 
 interface FeedConfig {
   key: string;
@@ -41,6 +40,7 @@ function providerFeedBook(book: BookMetadata, extensionId: string): ProviderFeed
     description: book.description || '',
     rating: book.rating,
     ratingsCount: book.ratingsCount,
+    seriesPosition: book.seriesPosition,
     priceLabel: bookPriceLabel(book),
     sourceUrl: bookSourceUrl(book),
     extensionId,
@@ -76,39 +76,14 @@ function HomeSearchBar({ gutter }: { gutter: number }) {
 
   return (
     <View className="pb-6" style={{ paddingHorizontal: gutter }}>
-      <View
-        className="h-12 max-w-[700px] self-center w-full rounded-full flex-row items-center"
-        style={{ backgroundColor: colors.surfaceRaised }}
-      >
-        <TextInput
+      <View className="h-12 max-w-[700px] self-center w-full">
+        <SearchField
           value={query}
           onChangeText={setQuery}
-          onSubmitEditing={() => openSearch(query)}
+          onSearch={() => openSearch(query)}
           returnKeyType="search"
           placeholder="Search books, authors or ISBNs"
-          placeholderTextColor={colors.textMuted}
-          className="flex-1 h-12 pl-5 pr-2 text-[15px] font-medium text-white"
         />
-        {query ? (
-          <Pressable
-            onPress={() => setQuery('')}
-            accessibilityLabel="Clear search"
-            accessibilityRole="button"
-            className="h-12 w-10 items-center justify-center"
-          >
-            <Feather name="x" size={19} color={colors.textMuted} />
-          </Pressable>
-        ) : null}
-        <Pressable
-          onPress={() => openSearch(query)}
-          disabled={query.trim().length < 2}
-          accessibilityLabel="Search"
-          accessibilityRole="button"
-          accessibilityState={{ disabled: query.trim().length < 2 }}
-          className="h-12 w-12 items-center justify-center disabled:opacity-40"
-        >
-          <Feather name="search" size={20} color={colors.textMuted} />
-        </Pressable>
       </View>
     </View>
   );
@@ -117,12 +92,14 @@ function HomeSearchBar({ gutter }: { gutter: number }) {
 function HomeFeedRail({
   feed,
   state,
+  attribution,
   onOpenBook,
   onOpenCategory,
   onRetry,
 }: {
   feed: FeedConfig;
   state: FeedState;
+  attribution?: { label: string; url: string; imageUrl?: string };
   onOpenBook: (book: ProviderFeedBook) => void;
   onOpenCategory: (feed: FeedConfig) => void;
   onRetry: (feed: FeedConfig) => void;
@@ -137,6 +114,9 @@ function HomeFeedRail({
   return (
     <Rail
       title={feed.title}
+      subtitle={
+        attribution ? <ProviderAttribution attribution={attribution} align="start" /> : undefined
+      }
       books={state.books}
       loading={state.status === 'loading'}
       error={state.error}
@@ -152,13 +132,11 @@ function HomeListHeader({
   continueReading,
   onOpenLibraryBook,
   onSeeAllContinue,
-  attribution,
 }: {
   gutter: number;
   continueReading: LibraryBook[];
   onOpenLibraryBook: (book: LibraryBook) => void;
   onSeeAllContinue: () => void;
-  attribution?: { label: string; url: string; imageUrl?: string };
 }) {
   return (
     <View>
@@ -170,11 +148,6 @@ function HomeListHeader({
           onPressBook={onOpenLibraryBook}
           onSeeAll={onSeeAllContinue}
         />
-      ) : null}
-      {attribution ? (
-        <View className="mb-4" style={{ paddingHorizontal: gutter }}>
-          <ProviderAttribution attribution={attribution} />
-        </View>
       ) : null}
     </View>
   );
@@ -188,6 +161,7 @@ export default function HomeScreen() {
   const { downloaded } = useLibraryCatalog();
   const generation = useRef(0);
   const requestedFeeds = useRef(new Set<string>());
+  const scheduledFeedRequests = useRef<ReturnType<typeof setTimeout>[]>([]);
   const discoveryManifest = useMemo(() => {
     const manifests = [
       ...extensions.thirdParty
@@ -242,7 +216,7 @@ export default function HomeScreen() {
     const request = extensions.catalog(extensionId, {
       catalogId: feed.key,
       page: 1,
-      limit: 24,
+      limit: 10,
       language: 'en',
     });
 
@@ -269,18 +243,29 @@ export default function HomeScreen() {
           },
         }));
       });
-  }, [extensions.catalog, extensions.discoveryExtensionId]);
+  }, [extensions]);
 
   const load = useCallback(() => {
     const requestGeneration = ++generation.current;
+    scheduledFeedRequests.current.forEach(clearTimeout);
+    scheduledFeedRequests.current = [];
     requestedFeeds.current.clear();
     setFeeds(initialFeeds(feedConfigs));
-    feedConfigs.slice(0, 4).forEach((feed) => requestFeed(feed, requestGeneration));
+    feedConfigs.slice(0, INITIAL_FEED_COUNT).forEach((feed, index) => {
+      const timeout = setTimeout(
+        () => requestFeed(feed, requestGeneration),
+        index * FEED_REQUEST_INTERVAL_MS
+      );
+      scheduledFeedRequests.current.push(timeout);
+    });
   }, [feedConfigs, requestFeed]);
 
   useEffect(() => {
-    load();
+    const initialLoad = setTimeout(load, 0);
     return () => {
+      clearTimeout(initialLoad);
+      scheduledFeedRequests.current.forEach(clearTimeout);
+      scheduledFeedRequests.current = [];
       generation.current += 1;
     };
   }, [load]);
@@ -293,6 +278,7 @@ export default function HomeScreen() {
           id: book.metadata.id,
           extensionId: book.extensionId,
           extensionBook: JSON.stringify(book.metadata),
+          sourceCover: book.cover,
         },
       });
     },
@@ -333,12 +319,10 @@ export default function HomeScreen() {
         continueReading={continueReading}
         onOpenLibraryBook={openLibraryBook}
         onSeeAllContinue={openContinueReading}
-        attribution={discoveryManifest?.attribution}
       />
     ),
     [
       continueReading,
-      discoveryManifest?.attribution,
       gutter,
       openContinueReading,
       openLibraryBook,
@@ -350,26 +334,30 @@ export default function HomeScreen() {
   );
 
   const renderFeed = useCallback(
-    ({ item }: { item: FeedConfig }) => (
+    ({ item, index }: { item: FeedConfig; index: number }) => (
       <HomeFeedRail
         feed={item}
         state={feeds[item.key] ?? EMPTY_FEED}
+        attribution={index === 0 ? discoveryManifest?.attribution : undefined}
         onOpenBook={openBook}
         onOpenCategory={openCategory}
         onRetry={retryFeed}
       />
     ),
-    [feeds, openBook, openCategory, retryFeed]
+    [discoveryManifest?.attribution, feeds, openBook, openCategory, retryFeed]
   );
 
-  const requestFeedRef = useRef(requestFeed);
-  requestFeedRef.current = requestFeed;
-  const onViewableItemsChanged = useRef(
+  const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken<FeedConfig>[] }) => {
-      viewableItems.forEach(({ item }) => requestFeedRef.current(item, generation.current));
-    }
-  ).current;
-  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 5 }).current;
+      viewableItems.forEach(({ item, index }) => {
+        if (index != null && index >= INITIAL_FEED_COUNT) {
+          requestFeed(item, generation.current);
+        }
+      });
+    },
+    [requestFeed]
+  );
+  const viewabilityConfig = useMemo(() => ({ itemVisiblePercentThreshold: 5 }), []);
 
   return (
     <View className="flex-1" style={{ backgroundColor: colors.background }}>

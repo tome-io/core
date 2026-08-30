@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '@tomeio/design';
 import { usePathname, useRouter } from 'expo-router';
-import { Pressable, Text, View } from 'react-native';
+import { Platform, Pressable, Text, View } from 'react-native';
 
 import { MOBILE_NAV_FADE_HEIGHT, MOBILE_NAV_HEIGHT } from '@/components/app-ui';
 import { useHomeNavigation } from '@/context/home-navigation-context';
@@ -21,7 +21,7 @@ const ITEMS = [
   },
   {
     route: '/reading-list',
-    label: 'Reading list',
+    label: 'Saved',
     icon: 'bookmark' as const,
     outlineIcon: 'bookmark-outline' as const,
   },
@@ -103,7 +103,11 @@ export function Sidebar({ compact = false }: SidebarProps) {
         style={{
           height: MOBILE_NAV_FADE_HEIGHT,
           backgroundColor: 'transparent',
-          experimental_backgroundImage: `linear-gradient(to top, ${colors.background} 0%, rgba(16, 11, 8, 0.96) 24%, rgba(16, 11, 8, 0.78) 48%, rgba(16, 11, 8, 0.46) 70%, rgba(16, 11, 8, 0.16) 88%, rgba(16, 11, 8, 0) 100%)`,
+          ...(Platform.OS === 'android'
+            ? {
+                experimental_backgroundImage: `linear-gradient(to top, ${colors.background} 0%, rgba(16, 11, 8, 0.96) 24%, rgba(16, 11, 8, 0.78) 48%, rgba(16, 11, 8, 0.46) 70%, rgba(16, 11, 8, 0.16) 88%, rgba(16, 11, 8, 0) 100%)`,
+              }
+            : {}),
         }}
       >
         <View

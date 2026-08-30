@@ -78,10 +78,14 @@ export default function LibraryScreen() {
     refreshBookMetadata,
     refreshLocalBooks,
   } = useLibraryActions();
-  const { settings } = useSettings();
+  const { settings, update: updateSettings } = useSettings();
   const extensions = useExtensions();
-  const [format, setFormat] = useState<FormatFilter>("all");
-  const [sort, setSort] = useState<LibrarySort>("recent");
+  const format = FILTERS.some((option) => option.value === settings.libraryCatalogFilter)
+    ? (settings.libraryCatalogFilter as FormatFilter)
+    : "all";
+  const sort = SORTS.some((option) => option.value === settings.libraryCatalogSort)
+    ? (settings.libraryCatalogSort as LibrarySort)
+    : "recent";
   const [selectedBook, setSelectedBook] = useState<LibraryBook | null>(null);
   const [busyAction, setBusyAction] = useState<LibraryAction | null>(null);
 
@@ -197,10 +201,22 @@ export default function LibraryScreen() {
         filterLabel="Format"
         filters={FILTERS}
         selectedFilter={format}
-        onFilter={setFormat}
+        onFilter={(value) =>
+          void updateSettings({ libraryCatalogFilter: value }).catch((cause) =>
+            showWarning(
+              `Could not save library filter: ${cause instanceof Error ? cause.message : String(cause)}`,
+            ),
+          )
+        }
         sorts={SORTS}
         selectedSort={sort}
-        onSort={setSort}
+        onSort={(value) =>
+          void updateSettings({ libraryCatalogSort: value }).catch((cause) =>
+            showWarning(
+              `Could not save library sort: ${cause instanceof Error ? cause.message : String(cause)}`,
+            ),
+          )
+        }
         sortLabel="Sort by"
       />
       {loading ? (
@@ -212,7 +228,10 @@ export default function LibraryScreen() {
           onLongPressBook={setSelectedBook}
           onRefresh={() => void refreshLocalBooks()}
           ListEmptyComponent={
-            <Text className="mt-20 px-8 text-center text-sm text-neutral-500">
+            <Text
+              className="mt-20 px-8 text-center text-sm"
+              style={{ color: colors.textMuted }}
+            >
               {downloaded.length
                 ? "No books match this format."
                 : "Books in your selected folder will appear here."}

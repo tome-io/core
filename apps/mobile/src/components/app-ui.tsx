@@ -3,6 +3,7 @@ import { colors, radii } from '@tomeio/design';
 import {
   KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   Text,
   TextInput,
@@ -12,6 +13,13 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ComponentProps, ReactNode } from 'react';
+
+import {
+  IosNativeAction,
+  IosNativeSearchField,
+  IosNativeSelect,
+  type IosNativeOption,
+} from '@/components/ios-native-controls';
 
 export { colors, radii };
 
@@ -27,6 +35,7 @@ export function usePageGutter() {
 
 export function usePageBottomPadding(basePadding = 40) {
   const { width } = useWindowDimensions();
+  if (Platform.OS === 'ios') return Math.max(basePadding, MOBILE_NAV_HEIGHT + 24);
   return width < 700 ? MOBILE_NAV_HEIGHT + 24 : basePadding;
 }
 
@@ -64,12 +73,14 @@ export function SettingsOption({
   label,
   detail,
   icon,
+  headerAction,
   compact,
   children,
 }: {
   label: string;
   detail?: string;
   icon?: FeatherName;
+  headerAction?: ReactNode;
   compact: boolean;
   children: ReactNode;
 }) {
@@ -87,8 +98,9 @@ export function SettingsOption({
             </Text>
           ) : null}
         </View>
+        {headerAction}
       </View>
-      <View style={compact ? undefined : { width: 270 }}>{children}</View>
+      <View style={compact ? { width: '100%' } : { width: 270 }}>{children}</View>
     </View>
   );
 }
@@ -98,15 +110,59 @@ export function SelectField({
   onPress,
   icon,
   dense = false,
+  options,
+  selectedValue,
+  onSelect,
 }: {
   label: string;
-  onPress: () => void;
+  onPress?: () => void;
   icon?: FeatherName;
   dense?: boolean;
+  options?: readonly IosNativeOption<string>[];
+  selectedValue?: string;
+  onSelect?: (value: string) => void;
 }) {
+  if (Platform.OS === 'ios') {
+    const systemImage = icon === 'folder' ? 'folder' : icon === 'home' ? 'house' : undefined;
+    if (options && selectedValue !== undefined && onSelect) {
+      if (!options.length) {
+        return (
+          <IosNativeAction
+            label={label}
+            systemImage={systemImage}
+            onPress={() => {}}
+            disabled
+            fullWidth
+          />
+        );
+      }
+      return (
+        <IosNativeSelect
+          value={label}
+          selectedValue={selectedValue}
+          options={options}
+          onSelect={onSelect}
+          systemImage={systemImage}
+          dense={dense}
+          style={{ width: '100%' }}
+        />
+      );
+    }
+    if (onPress) {
+      return (
+        <IosNativeAction
+          label={label}
+          systemImage={systemImage}
+          onPress={onPress}
+          fullWidth
+        />
+      );
+    }
+  }
+
   return (
     <Pressable
-      onPress={onPress}
+      onPress={onPress!}
       accessibilityRole="button"
       className={`${dense ? 'h-12' : 'h-14'} w-full flex-row items-center gap-3 px-5 active:opacity-80`}
       style={{ backgroundColor: colors.surfaceRaised, borderRadius: radii.pill }}
@@ -124,8 +180,24 @@ export function SearchField({
   value,
   onChangeText,
   placeholder,
+  onSearch,
+  autoFocus,
+  onSubmitEditing,
   ...props
-}: Pick<TextInputProps, 'value' | 'onChangeText' | 'placeholder'> & TextInputProps) {
+}: Pick<TextInputProps, 'value' | 'onChangeText' | 'placeholder'> &
+  TextInputProps & { onSearch?: () => void }) {
+  if (Platform.OS === 'ios') {
+    return (
+      <IosNativeSearchField
+        value={value ?? ''}
+        onChangeText={onChangeText ?? (() => {})}
+        placeholder={placeholder ?? ''}
+        autoFocus={autoFocus}
+        onSearch={onSearch ?? (onSubmitEditing ? () => onSubmitEditing({} as any) : undefined)}
+      />
+    );
+  }
+
   return (
     <View
       className="h-12 min-w-0 flex-1 flex-row items-center px-4"
@@ -135,6 +207,8 @@ export function SearchField({
         {...props}
         value={value}
         onChangeText={onChangeText}
+        autoFocus={autoFocus}
+        onSubmitEditing={onSubmitEditing}
         placeholder={placeholder}
         placeholderTextColor={colors.textMuted}
         className="h-12 flex-1 text-sm"
@@ -154,6 +228,17 @@ export function FilterChip({
   selected: boolean;
   onPress: () => void;
 }) {
+  if (Platform.OS === 'ios') {
+    return (
+      <IosNativeAction
+        label={label}
+        onPress={onPress}
+        prominent={selected}
+        compact
+      />
+    );
+  }
+
   return (
     <Pressable
       onPress={onPress}
@@ -179,6 +264,18 @@ export function FilterChip({
 }
 
 export function SectionAction({ label, onPress }: { label: string; onPress: () => void }) {
+  if (Platform.OS === 'ios') {
+    return (
+      <IosNativeAction
+        label={label}
+        systemImage="chevron.right"
+        iconPlacement="trailing"
+        onPress={onPress}
+        compact
+      />
+    );
+  }
+
   return (
     <Pressable
       onPress={onPress}
@@ -198,23 +295,28 @@ export function SectionAction({ label, onPress }: { label: string; onPress: () =
 
 export function SectionHeader({
   title,
+  subtitle,
   actionLabel,
   onAction,
 }: {
   title: string;
+  subtitle?: ReactNode;
   actionLabel?: string;
   onAction?: () => void;
 }) {
   const gutter = usePageGutter();
   return (
     <View className="mb-3 flex-row items-center" style={{ paddingHorizontal: gutter }}>
-      <Text
-        numberOfLines={1}
-        className="flex-1 pr-3 text-[15px] font-semibold uppercase tracking-[1.4px]"
-        style={{ color: colors.textMuted }}
-      >
-        {title}
-      </Text>
+      <View className="min-w-0 flex-1 pr-3">
+        <Text
+          numberOfLines={1}
+          className="text-[15px] font-semibold uppercase tracking-[1.4px]"
+          style={{ color: colors.textMuted }}
+        >
+          {title}
+        </Text>
+        {subtitle ? <View className="mt-1.5">{subtitle}</View> : null}
+      </View>
       {actionLabel && onAction ? <SectionAction label={actionLabel} onPress={onAction} /> : null}
     </View>
   );
@@ -275,13 +377,58 @@ export function PillButton({
   onPress,
   variant = 'overlay',
   disabled,
+  fullWidth = false,
+  compact = false,
 }: {
   label: string;
   icon?: FeatherName;
   onPress: () => void;
-  variant?: 'overlay' | 'accent' | 'success' | 'outline' | 'ghost';
+  variant?: 'overlay' | 'accent' | 'success' | 'danger' | 'outline' | 'ghost';
   disabled?: boolean;
+  fullWidth?: boolean;
+  compact?: boolean;
 }) {
+  if (Platform.OS === 'ios') {
+    const systemImage =
+      icon === 'home'
+        ? 'house'
+        : icon === 'folder'
+          ? 'folder'
+          : icon === 'download'
+            ? 'arrow.down.circle'
+            : icon === 'upload'
+              ? 'arrow.up.circle'
+              : icon === 'file-plus'
+                ? 'doc.badge.plus'
+                : icon === 'plus'
+                  ? 'plus'
+                  : icon === 'refresh-cw'
+                    ? 'arrow.clockwise'
+                    : icon === 'settings'
+                      ? 'gearshape'
+                      : icon === 'share-2'
+                        ? 'square.and.arrow.up'
+                        : icon === 'trash-2'
+                          ? 'trash'
+                          : icon === 'log-in' || icon === 'log-out'
+                            ? 'rectangle.portrait.and.arrow.right'
+                            : icon === 'external-link'
+                              ? 'arrow.up.right.square'
+                              : undefined;
+    return (
+      <IosNativeAction
+        label={label}
+        systemImage={systemImage}
+        onPress={onPress}
+        disabled={disabled}
+        fullWidth={fullWidth}
+        compact={compact}
+        prominent={variant === 'accent' || variant === 'success'}
+        destructive={variant === 'danger'}
+      />
+    );
+  }
+
   const backgroundColor =
     variant === 'accent'
       ? colors.accent
@@ -290,7 +437,8 @@ export function PillButton({
         : variant === 'overlay'
           ? colors.surfaceRaised
           : 'transparent';
-  const foregroundColor = variant === 'accent' ? colors.onAccent : colors.text;
+  const foregroundColor =
+    variant === 'accent' ? colors.onAccent : variant === 'danger' ? colors.danger : colors.text;
   return (
     <Pressable
       onPress={onPress}
@@ -299,8 +447,14 @@ export function PillButton({
       style={{
         borderRadius: radii.pill,
         backgroundColor,
-        borderColor: variant === 'outline' ? colors.textMuted : 'transparent',
-        borderWidth: variant === 'outline' ? 1 : 0,
+        borderColor:
+          variant === 'danger'
+            ? colors.danger
+            : variant === 'outline'
+              ? colors.textMuted
+              : 'transparent',
+        borderWidth: variant === 'outline' || variant === 'danger' ? 1 : 0,
+        width: fullWidth ? '100%' : undefined,
       }}
     >
       {icon ? <Feather name={icon} size={18} color={foregroundColor} /> : null}

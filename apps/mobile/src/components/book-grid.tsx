@@ -85,8 +85,8 @@ export function BookGrid<T extends CardBook>({
       <BookCard
         book={item}
         width={cardWidth}
-        onPress={onPressBook}
-        onLongPress={onLongPressBook}
+        onPress={() => onPressBook(item)}
+        onLongPress={onLongPressBook ? () => onLongPressBook(item) : undefined}
       />
     ),
     [cardWidth, onLongPressBook, onPressBook]

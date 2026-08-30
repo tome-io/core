@@ -1,5 +1,5 @@
 import type { PropsWithChildren } from 'react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { Animated, type StyleProp, type ViewStyle } from 'react-native';
 import { useReducedMotion } from 'react-native-reanimated';
 
@@ -8,7 +8,7 @@ export function SkeletonPulse({
   style,
 }: PropsWithChildren<{ style?: StyleProp<ViewStyle> }>) {
   const reduceMotion = useReducedMotion();
-  const opacity = useRef(new Animated.Value(reduceMotion ? 0.72 : 0.48)).current;
+  const [opacity] = useState(() => new Animated.Value(reduceMotion ? 0.72 : 0.48));
 
   useEffect(() => {
     if (reduceMotion) {

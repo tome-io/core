@@ -3,11 +3,12 @@ import type { BookMetadata } from '@tomeio/domain';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Linking, Pressable, Text, View } from 'react-native';
+import { Linking, Platform, Pressable, Text, View } from 'react-native';
 
 import { BookGrid, BookGridSkeleton, GridLoadingMore } from '@/components/book-grid';
 import type { CardBook } from '@/components/book-card';
 import { colors } from '@/components/app-ui';
+import { IosNativeBackButton } from '@/components/ios-native-controls';
 import { useExtensions } from '@/context/extensions-context';
 import { bookPriceLabel, bookSourceUrl } from '@/lib/book-offers';
 
@@ -27,6 +28,7 @@ function catalogBook(book: BookMetadata, extensionId: string): CatalogBook {
     cover: book.coverUrl || '',
     year: book.publishedYear,
     rating: book.rating,
+    seriesPosition: book.seriesPosition,
     priceLabel: bookPriceLabel(book),
     sourceUrl: bookSourceUrl(book),
     extensionId,
@@ -60,7 +62,7 @@ export default function CategoryScreen() {
         language: 'en',
       });
     },
-    [extensionId, extensions.catalog, subject]
+    [extensionId, extensions, subject]
   );
 
   const loadFirstPage = useCallback(async () => {
@@ -84,11 +86,12 @@ export default function CategoryScreen() {
     } finally {
       if (requestGeneration.current === generation) setLoading(false);
     }
-  }, [requestPage]);
+  }, [extensionId, requestPage]);
 
   useEffect(() => {
-    loadFirstPage();
+    const initialLoad = setTimeout(loadFirstPage, 0);
     return () => {
+      clearTimeout(initialLoad);
       requestGeneration.current += 1;
     };
   }, [loadFirstPage]);
@@ -124,6 +127,7 @@ export default function CategoryScreen() {
           id: book.metadata.id,
           extensionId: book.extensionId,
           extensionBook: JSON.stringify(book.metadata),
+          sourceCover: book.cover,
         },
       });
     },
@@ -146,7 +150,7 @@ export default function CategoryScreen() {
     <GridLoadingMore />
   ) : error && books.length ? (
     <View className="items-center gap-2 py-5">
-      <Text className="text-xs text-red-400">{error}</Text>
+      <Text className="text-xs" style={{ color: colors.danger }}>{error}</Text>
       <Pressable onPress={loadMore}>
         <Text className="text-xs font-semibold" style={{ color: colors.accent }}>Retry</Text>
       </Pressable>
@@ -156,18 +160,24 @@ export default function CategoryScreen() {
   return (
     <View className="flex-1" style={{ backgroundColor: BG }}>
       <View className="h-16 px-4 flex-row items-center gap-3">
-        <Pressable
-          onPress={goBack}
-          accessibilityLabel="Go back"
-          accessibilityRole="button"
-          className="h-10 w-10 shrink-0 rounded-full items-center justify-center bg-[#17171c]"
-        >
-          <Feather name="chevron-left" color="#d4d4d8" size={21} />
-        </Pressable>
+        {Platform.OS === 'ios' ? (
+          <IosNativeBackButton onPress={goBack} />
+        ) : (
+          <Pressable
+            onPress={goBack}
+            accessibilityLabel="Go back"
+            accessibilityRole="button"
+            className="h-10 w-10 shrink-0 rounded-full items-center justify-center"
+            style={{ backgroundColor: colors.surface }}
+          >
+            <Feather name="chevron-left" color={colors.text} size={21} />
+          </Pressable>
+        )}
         <Text
           numberOfLines={1}
           ellipsizeMode="tail"
-          className="min-w-0 flex-1 text-lg font-semibold text-neutral-100"
+          className="min-w-0 flex-1 text-lg font-semibold"
+          style={{ color: colors.text }}
         >
           {title || subject}
         </Text>
@@ -197,7 +207,7 @@ export default function CategoryScreen() {
         <BookGridSkeleton />
       ) : error && books.length === 0 ? (
         <View className="flex-1 items-center justify-center gap-2 px-8">
-          <Text className="text-sm text-red-400 text-center">{error}</Text>
+          <Text className="text-sm text-center" style={{ color: colors.danger }}>{error}</Text>
           <Pressable onPress={loadFirstPage}>
             <Text className="text-sm font-semibold" style={{ color: colors.accent }}>Retry</Text>
           </Pressable>
@@ -209,7 +219,10 @@ export default function CategoryScreen() {
           onEndReached={loadMore}
           ListFooterComponent={footer}
           ListEmptyComponent={
-            <Text className="text-sm text-neutral-500 text-center mt-12">
+            <Text
+              className="text-sm text-center mt-12"
+              style={{ color: colors.textMuted }}
+            >
               No books available.
             </Text>
           }

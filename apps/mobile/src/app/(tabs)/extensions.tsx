@@ -37,6 +37,8 @@ import {
   SelectField,
   usePageBottomPadding,
 } from '@/components/app-ui';
+import { AppBottomSheet } from '@/components/app-bottom-sheet';
+import { AppErrorDialog } from '@/components/app-error-dialog';
 import { useExtensions } from '@/context/extensions-context';
 import { isSafLocation, pickDownloadFolder } from '@/lib/download';
 import { beginFolderPicker, endFolderPicker } from '@/lib/folder-picker-lock';
@@ -61,6 +63,7 @@ const RESOURCE_FILTERS: { label: string; value: ResourceFilter }[] = [
   { label: 'Search', value: 'search' },
   { label: 'Metadata', value: 'meta' },
   { label: 'Resolution', value: 'resolve' },
+  { label: 'Reviews', value: 'reviews' },
   { label: 'Downloads', value: 'acquisition' },
   { label: 'Readers', value: 'reader' },
   { label: 'Library actions', value: 'libraryAction' },
@@ -72,6 +75,7 @@ const RESOURCE_LABELS: Record<ExtensionResourceName, string> = {
   search: 'Search',
   meta: 'Metadata',
   resolve: 'Resolution',
+  reviews: 'Reviews',
   acquisition: 'Downloads',
   reader: 'Reader sync',
   libraryAction: 'Library actions',
@@ -93,13 +97,6 @@ const BRANDING: Record<string, ExtensionBranding> = {
     mark: 'OL',
     logo: require('../../../assets/images/extensions/open-library.png'),
     logoScale: 0.88,
-  },
-  'org.tomeio.internet-archive': {
-    color: '#f2f2f2',
-    icon: 'archive',
-    mark: 'IA',
-    logo: require('../../../assets/images/extensions/internet-archive.png'),
-    logoScale: 0.68,
   },
   'org.tomeio.project-gutenberg': {
     color: '#dce8ec',
@@ -147,12 +144,10 @@ function ExtensionLogo({
   const branding = brandingFor(manifest);
   const logoSize = Math.round(size * (branding.logoScale ?? 0.82));
   const remoteLogo = branding.logo ? undefined : manifest.icon;
-  const [remoteLogoFailed, setRemoteLogoFailed] = useState(false);
-
-  useEffect(() => setRemoteLogoFailed(false), [remoteLogo]);
+  const [failedRemoteLogo, setFailedRemoteLogo] = useState<string | null>(null);
 
   const logoSource = branding.logo ??
-    (remoteLogo && !remoteLogoFailed ? { uri: remoteLogo } : undefined);
+    (remoteLogo && failedRemoteLogo !== remoteLogo ? { uri: remoteLogo } : undefined);
 
   return (
     <View
@@ -168,7 +163,7 @@ function ExtensionLogo({
         <Image
           source={logoSource}
           contentFit="contain"
-          onError={() => setRemoteLogoFailed(true)}
+          onError={() => remoteLogo && setFailedRemoteLogo(remoteLogo)}
           accessibilityLabel={`${manifest.name} logo`}
           style={{ width: logoSize, height: logoSize }}
         />
@@ -206,6 +201,8 @@ function ExtensionCard({
   const cardPadding = wide ? 24 : 16;
   const cardRadius = wide ? 36 : 28;
   const logoRadius = cardRadius - cardPadding;
+  const canConfigure = !!manifest.config?.length && (installed || !onInstall);
+  const hasActions = canConfigure || !!installed || !!onInstall;
 
   return (
     <View
@@ -228,21 +225,29 @@ function ExtensionCard({
           <View className="flex-row flex-wrap items-baseline gap-x-2">
             <Text
               numberOfLines={2}
-              className={
-                wide ? 'text-2xl font-light text-white' : 'text-lg font-medium text-white'
-              }
+              className={wide ? 'text-2xl font-light' : 'text-lg font-medium'}
+              style={{ color: colors.text }}
             >
               {manifest.name}
             </Text>
-            <Text className="text-xs text-neutral-500">v{manifest.version}</Text>
+            <Text className="text-xs" style={{ color: colors.textMuted }}>
+              v{manifest.version}
+            </Text>
           </View>
-          <Text className="mt-1 text-[11px] text-neutral-500">
+          <Text className="mt-1 text-[11px]" style={{ color: colors.textMuted }}>
             Book · {resources.join(' · ')}
           </Text>
-          <Text numberOfLines={wide ? 2 : 3} className="mt-2 text-sm leading-5 text-neutral-300">
+          <Text
+            numberOfLines={wide ? 2 : 3}
+            className="mt-2 text-sm leading-5"
+            style={{ color: colors.text }}
+          >
             {manifest.description}
           </Text>
-          <Text className="mt-2 text-[10px] font-semibold uppercase tracking-wider text-neutral-600">
+          <Text
+            className="mt-2 text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: colors.textMuted }}
+          >
             {installed?.source === 'community'
               ? 'Community'
               : installed
@@ -255,58 +260,45 @@ function ExtensionCard({
         </View>
       </View>
 
-      <View
-        className={`${wide ? 'w-72' : 'w-full'} flex-row flex-wrap items-center justify-center gap-2`}
-      >
-        {!!manifest.config?.length && (installed || !onInstall) ? (
-          <Pressable
-            onPress={onConfigure}
-            accessibilityLabel={`Configure ${manifest.name}`}
-            className="h-12 flex-row items-center justify-center gap-2 px-6 active:opacity-75"
-            style={{
-              backgroundColor: colors.success,
-              borderRadius: 24,
-              flexBasis: 156,
-              flexGrow: 1,
-            }}
-          >
-            <Feather name="settings" size={19} color="white" />
-            <Text className="text-sm font-semibold text-white">Configure</Text>
-          </Pressable>
-        ) : null}
-        <Pressable
-          onPress={installed ? onRemove : onInstall}
-          disabled={!installed && !onInstall}
-          className="h-12 items-center justify-center border-2 px-6 active:opacity-75 disabled:opacity-45"
-          style={{
-            borderColor: colors.textMuted,
-            borderRadius: 24,
-            flexBasis: 156,
-            flexGrow: 1,
-          }}
-        >
-          <Text className="text-sm font-semibold" style={{ color: colors.textMuted }}>
-            {installed ? 'Uninstall' : onInstall ? 'Install' : 'Bundled'}
-          </Text>
-        </Pressable>
-        {installed ? (
-          <Pressable
-            onPress={onShare}
-            className="h-12 flex-row items-center justify-center gap-3 border-2 px-6 active:opacity-70"
-            style={{
-              borderColor: colors.textMuted,
-              borderRadius: 24,
-              flexBasis: 156,
-              flexGrow: 1,
-            }}
-          >
-            <Feather name="share-2" size={19} color={colors.text} />
-            <Text className="text-sm font-bold" style={{ color: colors.text }}>
-              Share add-on
-            </Text>
-          </Pressable>
-        ) : null}
-      </View>
+      {hasActions ? (
+        <View className={`${wide ? 'w-72' : 'w-full'} gap-2`}>
+          {canConfigure ? (
+            <PillButton
+              label="Configure"
+              icon="settings"
+              variant="accent"
+              onPress={onConfigure}
+              fullWidth
+            />
+          ) : null}
+          {installed ? (
+            <>
+              <PillButton
+                label="Uninstall"
+                icon="trash-2"
+                variant="danger"
+                onPress={onRemove}
+                fullWidth
+              />
+              <PillButton
+                label="Share add-on"
+                icon="share-2"
+                variant="outline"
+                onPress={onShare}
+                fullWidth
+              />
+            </>
+          ) : onInstall ? (
+            <PillButton
+              label="Install"
+              icon="download"
+              variant="accent"
+              onPress={onInstall}
+              fullWidth
+            />
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -314,9 +306,11 @@ function ExtensionCard({
 function ConfigurationSheet({
   manifest,
   onClose,
+  onError,
 }: {
   manifest: ExtensionManifest | null;
   onClose: () => void;
+  onError: (title: string, cause: unknown) => void;
 }) {
   const extensions = useExtensions();
   const [values, setValues] = useState<Record<string, ExtensionConfigValue>>({});
@@ -326,24 +320,24 @@ function ConfigurationSheet({
   useEffect(() => {
     if (!manifest) return;
     let active = true;
-    setValues({});
-    setLoading(true);
-    extensions
-      .configuration(manifest)
-      .then((configuration) => active && setValues(configuration))
-      .catch((cause) => {
-        if (active) {
-          Alert.alert(
-            'Could not load configuration',
-            cause instanceof Error ? cause.message : String(cause)
-          );
-        }
-      })
-      .finally(() => active && setLoading(false));
+    void (async () => {
+      await Promise.resolve();
+      if (!active) return;
+      setValues({});
+      setLoading(true);
+      try {
+        const configuration = await extensions.configuration(manifest);
+        if (active) setValues(configuration);
+      } catch (cause) {
+        if (active) onError('Could not load configuration', cause);
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
     return () => {
       active = false;
     };
-  }, [extensions.configuration, manifest]);
+  }, [extensions, manifest, onError]);
 
   const save = async () => {
     if (!manifest) return;
@@ -352,10 +346,7 @@ function ConfigurationSheet({
       await extensions.configure(manifest, values);
       onClose();
     } catch (cause) {
-      Alert.alert(
-        'Could not save configuration',
-        cause instanceof Error ? cause.message : String(cause)
-      );
+      onError('Could not save configuration', cause);
     } finally {
       setSaving(false);
     }
@@ -378,17 +369,14 @@ function ConfigurationSheet({
         setValues((existing) => ({ ...existing, [fieldKey]: picked.uri }));
       }
     } catch (cause) {
-      Alert.alert(
-        'Folder picker failed',
-        cause instanceof Error ? cause.message : String(cause)
-      );
+      onError('Folder picker failed', cause);
     } finally {
       endFolderPicker();
     }
   };
 
   return (
-    <AppDialog
+    <AppBottomSheet
       visible={!!manifest}
       title={manifest ? `Configure ${manifest.name}` : 'Configure add-on'}
       onClose={onClose}
@@ -399,10 +387,10 @@ function ConfigurationSheet({
         </View>
       ) : (
         <ScrollView
-          className="max-h-[560px]"
-          style={{ flexShrink: 1 }}
-          contentContainerClassName="gap-4"
+          className="flex-1 px-5"
+          contentContainerClassName="gap-4 pb-10"
           keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
           {manifest?.config?.map((field) => {
             const value = values[field.key] ?? field.default ?? '';
@@ -413,7 +401,7 @@ function ConfigurationSheet({
                   : 'Choose folder';
               return (
                 <View key={field.key} className="gap-2">
-                  <Text className="text-xs text-neutral-400">
+                  <Text className="text-xs" style={{ color: colors.textMuted }}>
                     {field.title}
                     {field.required ? ' *' : ''}
                   </Text>
@@ -432,13 +420,14 @@ function ConfigurationSheet({
                   onPress={() =>
                     setValues((current) => ({ ...current, [field.key]: !Boolean(value) }))
                   }
-                  className="h-12 rounded-xl border border-[#30303a] px-4 flex-row items-center justify-between"
+                  className="h-12 rounded-xl border px-4 flex-row items-center justify-between"
+                  style={{ borderColor: colors.border }}
                 >
-                  <Text className="text-sm text-neutral-200">{field.title}</Text>
+                  <Text className="text-sm" style={{ color: colors.text }}>{field.title}</Text>
                   <Feather
                     name={value ? 'check-circle' : 'circle'}
                     size={20}
-                    color={value ? colors.accent : '#666674'}
+                    color={value ? colors.accent : colors.textMuted}
                   />
                 </Pressable>
               );
@@ -446,7 +435,7 @@ function ConfigurationSheet({
             if (field.type === 'select') {
               return (
                 <View key={field.key} className="gap-2">
-                  <Text className="text-xs text-neutral-400">
+                  <Text className="text-xs" style={{ color: colors.textMuted }}>
                     {field.title}
                     {field.required ? ' *' : ''}
                   </Text>
@@ -470,7 +459,7 @@ function ConfigurationSheet({
             }
             return (
               <View key={field.key} className="gap-2">
-                <Text className="text-xs text-neutral-400">
+                <Text className="text-xs" style={{ color: colors.textMuted }}>
                   {field.title}
                   {field.required ? ' *' : ''}
                 </Text>
@@ -487,7 +476,12 @@ function ConfigurationSheet({
                   keyboardType={field.type === 'number' ? 'numeric' : 'default'}
                   autoCapitalize="none"
                   autoCorrect={false}
-                  className="h-12 rounded-xl border border-[#30303a] bg-[#202029] px-4 text-white"
+                  className="h-12 rounded-xl border px-4"
+                  style={{
+                    backgroundColor: colors.surfaceRaised,
+                    borderColor: colors.border,
+                    color: colors.text,
+                  }}
                 />
               </View>
             );
@@ -506,7 +500,7 @@ function ConfigurationSheet({
           </Pressable>
         </ScrollView>
       )}
-    </AppDialog>
+    </AppBottomSheet>
   );
 }
 
@@ -571,14 +565,6 @@ function FilterDialog({
 
 export default function ExtensionsScreen() {
   const extensions = useExtensions();
-  useFocusEffect(
-    useCallback(() => {
-      const now = Date.now();
-      if (now - lastExtensionRefreshAt < EXTENSION_REFRESH_INTERVAL_MS) return;
-      lastExtensionRefreshAt = now;
-      void extensions.refreshCommunity().catch(() => undefined);
-    }, [extensions.refreshCommunity])
-  );
   const { width } = useWindowDimensions();
   const bottomPadding = usePageBottomPadding(42);
   const wide = width >= 1050;
@@ -591,6 +577,44 @@ export default function ExtensionsScreen() {
   const [installing, setInstalling] = useState(false);
   const [configurationManifest, setConfigurationManifest] =
     useState<ExtensionManifest | null>(null);
+  const [errorDialog, setErrorDialog] = useState<{
+    title: string;
+    message: string;
+  } | null>(null);
+  const showError = useCallback((title: string, cause: unknown) => {
+    setErrorDialog({
+      title,
+      message: cause instanceof Error ? cause.message : String(cause),
+    });
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      const now = Date.now();
+      if (now - lastExtensionRefreshAt < EXTENSION_REFRESH_INTERVAL_MS) return;
+      lastExtensionRefreshAt = now;
+      void extensions.refreshCommunity().catch((cause) =>
+        showError('Could not refresh add-ons', cause)
+      );
+    }, [extensions, showError])
+  );
+
+  useEffect(() => {
+    const messages = [
+      extensions.error,
+      extensions.updateError
+        ? `Add-on update check failed: ${extensions.updateError}`
+        : null,
+    ].filter((message): message is string => !!message);
+    if (!messages.length) return;
+    const timeout = setTimeout(() => {
+      setErrorDialog({
+        title: 'Add-ons need attention',
+        message: messages.join('\n\n'),
+      });
+    }, 0);
+    return () => clearTimeout(timeout);
+  }, [extensions.error, extensions.updateError]);
 
   const entries = useMemo(() => {
     const bundled = extensions.bundled.map((manifest) => ({
@@ -635,10 +659,7 @@ export default function ExtensionsScreen() {
         setConfigurationManifest(installed.manifest);
       }
     } catch (cause) {
-      Alert.alert(
-        'Add-on install failed',
-        cause instanceof Error ? cause.message : String(cause)
-      );
+      showError('Add-on install failed', cause);
     } finally {
       setInstalling(false);
     }
@@ -656,10 +677,7 @@ export default function ExtensionsScreen() {
         setConfigurationManifest(installed.manifest);
       }
     } catch (cause) {
-      Alert.alert(
-        'Add-on install failed',
-        cause instanceof Error ? cause.message : String(cause)
-      );
+      showError('Add-on install failed', cause);
     } finally {
       setInstalling(false);
     }
@@ -685,6 +703,9 @@ export default function ExtensionsScreen() {
                 SCOPE_FILTERS.find((option) => option.value === scope)?.label ?? 'Installed'
               }
               onPress={() => setFilterPicker('scope')}
+              options={SCOPE_FILTERS}
+              selectedValue={scope}
+              onSelect={(value) => setScope(value as ScopeFilter)}
             />
           </View>
           <View style={{ width: wide ? 210 : undefined, flex: wide ? undefined : 1 }}>
@@ -694,6 +715,9 @@ export default function ExtensionsScreen() {
                 RESOURCE_FILTERS.find((option) => option.value === resource)?.label ?? 'All'
               }
               onPress={() => setFilterPicker('resource')}
+              options={RESOURCE_FILTERS}
+              selectedValue={resource}
+              onSelect={(value) => setResource(value as ResourceFilter)}
             />
           </View>
           <PillButton
@@ -701,6 +725,7 @@ export default function ExtensionsScreen() {
             icon="plus"
             variant="success"
             onPress={() => setAddOpen(true)}
+            compact
           />
           {wide ? <View className="flex-1" /> : null}
           <View style={{ width: wide ? 280 : '100%' }}>
@@ -708,14 +733,6 @@ export default function ExtensionsScreen() {
           </View>
         </View>
 
-        {extensions.error ? (
-          <Text className="mb-4 text-xs text-red-400">{extensions.error}</Text>
-        ) : null}
-        {extensions.updateError ? (
-          <Text className="mb-4 text-xs text-amber-400">
-            Add-on update check failed: {extensions.updateError}
-          </Text>
-        ) : null}
         {!extensions.ready ? (
           <View className="h-48 items-center justify-center">
             <ActivityIndicator color={colors.accent} />
@@ -740,12 +757,7 @@ export default function ExtensionsScreen() {
                     title: manifest.name,
                     message: installed.repositoryUrl,
                     url: installed.repositoryUrl,
-                  }).catch((cause) =>
-                    Alert.alert(
-                      'Could not share add-on',
-                      cause instanceof Error ? cause.message : String(cause)
-                    )
-                  );
+                  }).catch((cause) => showError('Could not share add-on', cause));
                 }}
                 onRemove={() =>
                   Alert.alert('Remove add-on?', manifest.name, [
@@ -755,10 +767,7 @@ export default function ExtensionsScreen() {
                       style: 'destructive',
                       onPress: () =>
                         void extensions.remove(manifest.id).catch((cause) =>
-                          Alert.alert(
-                            'Could not remove add-on',
-                            cause instanceof Error ? cause.message : String(cause)
-                          )
+                          showError('Could not remove add-on', cause)
                         ),
                     },
                   ])
@@ -768,8 +777,10 @@ export default function ExtensionsScreen() {
           </View>
         ) : (
           <View className="h-52 items-center justify-center gap-3">
-            <Feather name="package" size={34} color="#555560" />
-            <Text className="text-sm text-neutral-500">No add-ons match these filters.</Text>
+            <Feather name="package" size={34} color={colors.textMuted} />
+            <Text className="text-sm" style={{ color: colors.textMuted }}>
+              No add-ons match these filters.
+            </Text>
           </View>
         )}
       </ScrollView>
@@ -779,7 +790,7 @@ export default function ExtensionsScreen() {
         title="Add add-on"
         onClose={() => !installing && setAddOpen(false)}
       >
-        <Text className="mb-4 text-sm leading-5 text-neutral-400">
+        <Text className="mb-4 text-sm leading-5" style={{ color: colors.textMuted }}>
           Paste a trusted GitHub repository or manifest URL. These third-party add-ons are not
           reviewed. Reviewed add-ons are available under the Community filter.
         </Text>
@@ -793,8 +804,13 @@ export default function ExtensionsScreen() {
           keyboardType="url"
           returnKeyType="done"
           placeholder="https://github.com/owner/repository"
-          placeholderTextColor="#6f6f7a"
-          className="h-12 rounded-xl border border-[#30303a] bg-[#202029] px-4 text-white"
+          placeholderTextColor={colors.textMuted}
+          className="h-12 rounded-xl border px-4"
+          style={{
+            backgroundColor: colors.surfaceRaised,
+            borderColor: colors.border,
+            color: colors.text,
+          }}
         />
         <View className="mt-4 flex-row justify-end gap-3">
           <Pressable
@@ -802,24 +818,25 @@ export default function ExtensionsScreen() {
             disabled={installing}
             className="h-11 rounded-xl px-5 items-center justify-center"
           >
-            <Text className="font-semibold text-neutral-300">Cancel</Text>
+            <Text className="font-semibold" style={{ color: colors.text }}>Cancel</Text>
           </Pressable>
           <Pressable
             onPress={() => void install()}
             disabled={installing || !repositoryUrl.trim()}
-            className="h-11 min-w-[104px] rounded-xl bg-[#25ba73] px-5 items-center justify-center disabled:opacity-50"
+            className="h-11 min-w-[104px] rounded-xl px-5 items-center justify-center disabled:opacity-50"
+            style={{ backgroundColor: colors.accent }}
           >
             {installing ? (
-              <ActivityIndicator color="white" />
+              <ActivityIndicator color={colors.onAccent} />
             ) : (
-              <Text className="font-bold text-white">Install</Text>
+              <Text className="font-bold" style={{ color: colors.onAccent }}>Install</Text>
             )}
           </Pressable>
         </View>
       </AppDialog>
 
       <FilterDialog
-        picker={filterPicker}
+        picker={Platform.OS === 'ios' ? null : filterPicker}
         scope={scope}
         resource={resource}
         onScope={setScope}
@@ -828,8 +845,15 @@ export default function ExtensionsScreen() {
       />
 
       <ConfigurationSheet
+        key={configurationManifest?.id ?? 'closed'}
         manifest={configurationManifest}
         onClose={() => setConfigurationManifest(null)}
+        onError={showError}
+      />
+      <AppErrorDialog
+        title={errorDialog?.title ?? 'Add-on error'}
+        message={errorDialog?.message ?? null}
+        onClose={() => setErrorDialog(null)}
       />
     </View>
   );

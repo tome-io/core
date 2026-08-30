@@ -19,6 +19,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Switch,
   Text,
   TextInput,
   useWindowDimensions,
@@ -28,6 +29,8 @@ import {
 } from "react-native";
 
 import { AppErrorDialog } from "@/components/app-error-dialog";
+import { AppBottomSheet } from "@/components/app-bottom-sheet";
+import { AppTextSheet } from "@/components/app-text-sheet";
 import {
   AppDialog,
   colors,
@@ -48,9 +51,12 @@ import {
   useLibraryUiStatus,
 } from "@/context/library-context";
 import { useSettings } from "@/context/settings-context";
+import { useLibraryFileMirror } from "@/context/library-file-mirror-context";
 import {
+  describeFolderLocation,
   folderLocationLabel,
   isExternalFolderLocation,
+  isSafLocation,
   pickDownloadFolder,
 } from "@/lib/download";
 import { beginFolderPicker, endFolderPicker } from "@/lib/folder-picker-lock";
@@ -101,6 +107,9 @@ const BASE_SECTIONS: { id: SettingsSectionId; label: string }[] = [
 
 const APP_VERSION =
   Application.nativeApplicationVersion ?? Constants.expoConfig?.version ?? null;
+
+const LIBRARY_MIRROR_INFORMATION =
+  "Tomeio keeps supported ebook files matched between the primary library and the on-device mirror. It checks immediately when mirroring is enabled, after provider downloads, and whenever Tomeio returns to the foreground. Files added, updated, or deleted in either folder are applied to the other. The first match combines both folders and uses the newer file when the same path differs. On later matches, the primary library resolves simultaneous changes. Tomeio never mirrors metadata, covers, saved-book records, reading progress, hidden files, or MoonReader data folders.";
 
 const LAUNCHER_ICONS: {
   id: LauncherIcon;
@@ -199,7 +208,11 @@ function ProviderPicker({
         Choose one active provider. Add-ons are installed and configured from
         the Add-ons page.
       </Text>
-      <ScrollView className="max-h-[500px]" contentContainerClassName="gap-2">
+      <ScrollView
+        className="max-h-[500px]"
+        contentContainerClassName="gap-2"
+        showsVerticalScrollIndicator={false}
+      >
         {options.map((manifest) => {
           const selected = manifest.id === selectedId;
           return (
@@ -335,6 +348,8 @@ function FolderField({
   onReset,
   resetLabel,
   resetIcon,
+  emptyDetail,
+  onInspectionError,
 }: {
   location: string | null;
   emptyLabel: string;
@@ -342,17 +357,50 @@ function FolderField({
   onReset?: () => void;
   resetLabel: string;
   resetIcon: ComponentProps<typeof Feather>["name"];
+  emptyDetail: string;
+  onInspectionError: (cause: unknown) => void;
 }) {
-  const label = !location ? emptyLabel : folderLocationLabel(location);
+  const [description, setDescription] = useState<{
+    location: string;
+    label: string;
+    detail: string;
+  } | null>(null);
+  useEffect(() => {
+    let active = true;
+    if (!location) return;
+    describeFolderLocation(location)
+      .then((value) => {
+        if (active) setDescription({ location, ...value });
+      })
+      .catch((cause) => {
+        if (!active) return;
+        setDescription({
+          location,
+          label: folderLocationLabel(location),
+          detail: "Folder access needs attention",
+        });
+        onInspectionError(cause);
+      });
+    return () => {
+      active = false;
+    };
+  }, [location, onInspectionError]);
+  const currentDescription = description?.location === location ? description : null;
+  const label = !location ? emptyLabel : (currentDescription?.label ?? folderLocationLabel(location));
+  const detail = !location ? emptyDetail : (currentDescription?.detail ?? "Inspecting storage provider…");
   return (
-    <View className="gap-2">
+    <View className="w-full gap-2">
       <SelectField label={label} icon="folder" onPress={onChoose} />
+      <Text className="px-2 text-xs leading-[18px]" style={{ color: colors.textMuted }}>
+        {detail}
+      </Text>
       {onReset ? (
         <PillButton
           label={resetLabel}
           icon={resetIcon}
           variant="overlay"
           onPress={onReset}
+          fullWidth
         />
       ) : null}
     </View>
@@ -640,7 +688,7 @@ function HostedSyncDialog({
           </Text>
         ) : null}
         {error ? (
-          <Text className="text-sm leading-5 text-red-400">{error}</Text>
+          <Text className="text-sm leading-5" style={{ color: colors.danger }}>{error}</Text>
         ) : null}
         {credentialStep ? (
           <PillButton
@@ -842,11 +890,14 @@ export default function SettingsScreen() {
   const [libraryImport, setLibraryImport] =
     useState<LibraryImportPreview | null>(null);
   const [libraryImportBusy, setLibraryImportBusy] = useState(false);
+  const [libraryMirrorInformation, setLibraryMirrorInformation] = useState(false);
+  const [libraryMirrorProgress, setLibraryMirrorProgress] = useState(false);
   const [libraryImportSummaries, setLibraryImportSummaries] = useState<
     Record<string, string>
   >({});
   const extensions = useExtensions();
   const { settings, update } = useSettings();
+  const libraryMirror = useLibraryFileMirror();
   const { downloaded } = useLibraryCatalog();
   const { refreshLocalBooks, synchronizeLibrary } = useLibraryActions();
   const { scanning, activity, lastSyncedAt } = useLibraryUiStatus();
@@ -862,6 +913,21 @@ export default function SettingsScreen() {
       message: cause instanceof Error ? cause.message : String(cause),
     });
   }, []);
+  const showFolderInspectionError = useCallback(
+    (cause: unknown) => showError("Could not inspect folder", cause),
+    [showError],
+  );
+  const shownMirrorError = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (
+      libraryMirrorProgress ||
+      !libraryMirror.error ||
+      shownMirrorError.current === libraryMirror.error
+    ) return;
+    shownMirrorError.current = libraryMirror.error;
+    showError("Book folder mirror failed", new Error(libraryMirror.error));
+  }, [libraryMirror.error, libraryMirrorProgress, showError]);
 
   const enabledManifests = useMemo(
     () => [
@@ -969,6 +1035,21 @@ export default function SettingsScreen() {
           : settings.folderPickerLocations[setting],
       );
       if (!picked) return;
+      const otherSetting: FolderLocationSetting =
+        setting === "localLibraryLocation"
+          ? "libraryMirrorLocation"
+          : "localLibraryLocation";
+      if (picked.uri === settings[otherSetting]) {
+        throw new Error("Choose two different folders for the primary library and device mirror.");
+      }
+      if (setting === "libraryMirrorLocation") {
+        const description = await describeFolderLocation(picked.uri);
+        if (description.kind === "cloud") {
+          throw new Error(
+            "The mirror folder must be on this device. Choose the /Books folder or another folder in on-device storage.",
+          );
+        }
+      }
       await update({
         [setting]: picked.uri,
         folderPickerLocations: {
@@ -985,7 +1066,50 @@ export default function SettingsScreen() {
 
   const resetFolder = async (setting: FolderLocationSetting) => {
     if (settings[setting]) await forgetNativeDirectory(settings[setting]);
-    await update({ [setting]: null });
+    await update({ [setting]: null, libraryMirrorEnabled: false });
+  };
+
+  const setLibraryMirrorEnabled = async (enabled: boolean) => {
+    if (
+      enabled &&
+      (!isSafLocation(settings.localLibraryLocation) ||
+        !isSafLocation(settings.libraryMirrorLocation))
+    ) {
+      showError(
+        "Choose both book folders",
+        new Error(
+          "Select an Android document-provider folder for both the primary library and the on-device mirror first.",
+        ),
+      );
+      return;
+    }
+    try {
+      if (enabled && settings.libraryMirrorLocation) {
+        const description = await describeFolderLocation(settings.libraryMirrorLocation);
+        if (description.kind === "cloud") {
+          showError(
+            "Choose an on-device mirror",
+            new Error(
+              "The selected mirror is cloud storage. Choose the /Books folder or another folder stored on this device.",
+            ),
+          );
+          return;
+        }
+      }
+      await update({ libraryMirrorEnabled: enabled });
+      setLibraryMirrorProgress(enabled);
+    } catch (cause) {
+      showError("Could not update book folder mirror", cause);
+    }
+  };
+
+  const syncLibraryMirrorNow = async () => {
+    setLibraryMirrorProgress(true);
+    try {
+      await libraryMirror.syncNow();
+    } catch {
+      // The progress sheet presents the mirror failure with its current context.
+    }
   };
 
   const setProvider = async (role: ProviderRole, id: string) => {
@@ -1147,6 +1271,12 @@ export default function SettingsScreen() {
             <SelectField
               label={selectedDiscovery?.name ?? "No provider available"}
               onPress={() => setProviderPicker("discovery")}
+              options={discoveryProviders.map((manifest) => ({
+                label: manifest.name,
+                value: manifest.id,
+              }))}
+              selectedValue={extensions.discoveryExtensionId ?? ""}
+              onSelect={(id) => void setProvider("discovery", id)}
             />
           </SettingsOption>
           <SettingsOption
@@ -1157,6 +1287,12 @@ export default function SettingsScreen() {
             <SelectField
               label={selectedSearch?.name ?? "No provider available"}
               onPress={() => setProviderPicker("search")}
+              options={searchProviders.map((manifest) => ({
+                label: manifest.name,
+                value: manifest.id,
+              }))}
+              selectedValue={extensions.searchExtensionId ?? ""}
+              onSelect={(id) => void setProvider("search", id)}
             />
           </SettingsOption>
           <SettingsOption
@@ -1167,6 +1303,12 @@ export default function SettingsScreen() {
             <SelectField
               label={selectedAcquisition?.name ?? "No provider available"}
               onPress={() => setProviderPicker("acquisition")}
+              options={acquisitionProviders.map((manifest) => ({
+                label: manifest.name,
+                value: manifest.id,
+              }))}
+              selectedValue={extensions.acquisitionExtensionId ?? ""}
+              onSelect={(id) => void setProvider("acquisition", id)}
             />
           </SettingsOption>
         </SettingsSection>
@@ -1180,22 +1322,102 @@ export default function SettingsScreen() {
         >
           <SettingsOption
             compact={compactOptions}
-            label="Book library folder"
-            detail="Indexes local ebooks and stores provider downloads."
+            label="Primary library folder"
+            detail="The authoritative library Tomeio indexes and uses for provider downloads. This can be Google Drive or an on-device folder."
           >
             <FolderField
               location={settings.localLibraryLocation}
-              emptyLabel="App-private Documents/downloads"
+              emptyLabel="Choose a primary library folder"
+              emptyDetail="Not configured · Select the folder Tomeio should index"
               onChoose={() => void chooseFolder("localLibraryLocation")}
               onReset={
                 settings.localLibraryLocation
                   ? () => void resetFolder("localLibraryLocation")
                   : undefined
               }
-              resetLabel="Use app folder"
-              resetIcon="home"
+              resetLabel="Remove library folder"
+              resetIcon="x"
+              onInspectionError={showFolderInspectionError}
             />
           </SettingsOption>
+          {Platform.OS === "android" ? (
+            <>
+              <SettingsOption
+                compact={compactOptions}
+                label="On-device mirror folder"
+                detail="Choose the device folder scanned by Moon+ Reader, such as /Books. Tomeio stores only mirrored ebook files here."
+              >
+                <FolderField
+                  location={settings.libraryMirrorLocation}
+                  emptyLabel="Choose an on-device folder"
+                  emptyDetail="Not configured · Select the folder Moon+ Reader scans"
+                  onChoose={() => void chooseFolder("libraryMirrorLocation")}
+                  onReset={
+                    settings.libraryMirrorLocation
+                      ? () => void resetFolder("libraryMirrorLocation")
+                      : undefined
+                  }
+                  resetLabel="Remove mirror folder"
+                  resetIcon="x"
+                  onInspectionError={showFolderInspectionError}
+                />
+              </SettingsOption>
+              <SettingsOption
+                compact={compactOptions}
+                label="Keep book folders matched"
+                detail="Optional two-way mirror for supported ebook files."
+                headerAction={
+                  <Pressable
+                    onPress={() => setLibraryMirrorInformation(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="About book folder mirroring"
+                    className="h-10 w-10 items-center justify-center rounded-full active:opacity-75"
+                    style={{ backgroundColor: colors.surfaceRaised }}
+                  >
+                    <Feather name="info" size={20} color={colors.textMuted} />
+                  </Pressable>
+                }
+              >
+                <View className="w-full gap-3">
+                  <View
+                    className="min-h-14 flex-row items-center justify-between rounded-full border px-5"
+                    style={{
+                      borderColor: settings.libraryMirrorEnabled
+                        ? colors.accent
+                        : colors.border,
+                      backgroundColor: settings.libraryMirrorEnabled
+                        ? colors.accentMuted
+                        : colors.surfaceRaised,
+                    }}
+                  >
+                    <Text className="text-sm font-semibold" style={{ color: colors.text }}>
+                      {settings.libraryMirrorEnabled ? "Mirroring on" : "Mirroring off"}
+                    </Text>
+                    <Switch
+                      value={settings.libraryMirrorEnabled}
+                      disabled={libraryMirror.state === "running"}
+                      onValueChange={(value) => void setLibraryMirrorEnabled(value)}
+                      trackColor={{ false: colors.border, true: colors.accent }}
+                      thumbColor={colors.text}
+                      accessibilityLabel="Keep primary and on-device book folders matched"
+                    />
+                  </View>
+                  {settings.libraryMirrorEnabled ? (
+                    <PillButton
+                      label={libraryMirror.state === "running" ? "View matching progress" : "Match now"}
+                      icon={libraryMirror.state === "running" ? "activity" : "refresh-cw"}
+                      variant="overlay"
+                      onPress={() => {
+                        if (libraryMirror.state === "running") setLibraryMirrorProgress(true);
+                        else void syncLibraryMirrorNow();
+                      }}
+                      fullWidth
+                    />
+                  ) : null}
+                </View>
+              </SettingsOption>
+            </>
+          ) : null}
         </SettingsSection>
 
         <SettingsSection
@@ -1222,6 +1444,7 @@ export default function SettingsScreen() {
                 variant="overlay"
                 disabled={hostedAuthBusy}
                 onPress={() => void signOutHostedSync()}
+                fullWidth
               />
             ) : (
               <PillButton
@@ -1230,6 +1453,7 @@ export default function SettingsScreen() {
                 variant="accent"
                 disabled={Platform.OS === "web"}
                 onPress={() => setHostedSyncDialog(true)}
+                fullWidth
               />
             )}
           </SettingsOption>
@@ -1240,7 +1464,7 @@ export default function SettingsScreen() {
               detail={
                 lastSyncedAt
                   ? `Last synced ${new Date(lastSyncedAt).toLocaleString()}`
-                  : "Sync your library and reading list across Tomeio devices, with shared progress from KOReader and Moon+ Reader."
+                  : "Sync your library and saved books across Tomeio devices, with shared progress from KOReader and Moon+ Reader."
               }
             >
               <PillButton
@@ -1249,6 +1473,7 @@ export default function SettingsScreen() {
                 variant="accent"
                 disabled={hostedSyncBusy || hostedAuthBusy}
                 onPress={() => void syncHostedNow()}
+                fullWidth
               />
             </SettingsOption>
           ) : null}
@@ -1282,6 +1507,7 @@ export default function SettingsScreen() {
                   variant="overlay"
                   disabled={libraryImportBusy || Platform.OS === "web"}
                   onPress={() => void chooseLibraryBackup(available)}
+                  fullWidth
                 />
               </SettingsOption>
             ))}
@@ -1289,8 +1515,111 @@ export default function SettingsScreen() {
         ) : null}
       </ScrollView>
 
+      <AppTextSheet
+        visible={libraryMirrorInformation}
+        title="Book folder mirroring"
+        text={LIBRARY_MIRROR_INFORMATION}
+        onClose={() => setLibraryMirrorInformation(false)}
+      />
+      <AppBottomSheet
+        visible={libraryMirrorProgress}
+        title="Matching book folders"
+        onClose={() => setLibraryMirrorProgress(false)}
+      >
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerClassName="gap-5 px-5 pb-10"
+        >
+          <View
+            className="gap-2 rounded-2xl border p-4"
+            style={{ borderColor: colors.border, backgroundColor: colors.surfaceRaised }}
+          >
+            <View className="flex-row items-center gap-3">
+              <View
+                className="h-11 w-11 items-center justify-center rounded-full"
+                style={{ backgroundColor: colors.accentMuted }}
+              >
+                {libraryMirror.state === "running" ? (
+                  <ActivityIndicator size="small" color={colors.accent} />
+                ) : (
+                  <Feather
+                    name={libraryMirror.state === "error" ? "alert-circle" : "check"}
+                    size={21}
+                    color={libraryMirror.state === "error" ? colors.danger : colors.accent}
+                  />
+                )}
+              </View>
+              <View className="min-w-0 flex-1 gap-1">
+                <Text className="text-base font-semibold" style={{ color: colors.text }}>
+                  {libraryMirror.state === "running"
+                    ? libraryMirror.progress?.phase === "scanning"
+                      ? "Reading both folders"
+                      : libraryMirror.progress?.phase === "finalizing"
+                        ? "Verifying the result"
+                        : "Matching ebook files"
+                    : libraryMirror.state === "error"
+                      ? "Matching stopped"
+                      : "Folders matched"}
+                </Text>
+                <Text className="text-xs leading-[18px]" style={{ color: colors.textMuted }}>
+                  Primary library ↔ On-device mirror
+                </Text>
+              </View>
+            </View>
+
+            {libraryMirror.state === "running" && libraryMirror.progress?.total ? (
+              <View className="mt-2 gap-2">
+                <View
+                  className="h-2 overflow-hidden rounded-full"
+                  style={{ backgroundColor: colors.border }}
+                >
+                  <View
+                    className="h-full rounded-full"
+                    style={{
+                      backgroundColor: colors.accent,
+                      width: `${Math.round(
+                        (libraryMirror.progress.completed / libraryMirror.progress.total) * 100,
+                      )}%`,
+                    }}
+                  />
+                </View>
+                <Text className="text-xs" style={{ color: colors.textMuted }}>
+                  {libraryMirror.progress.completed} of {libraryMirror.progress.total} checked
+                </Text>
+              </View>
+            ) : null}
+          </View>
+
+          <View className="gap-2 px-1">
+            <Text className="text-sm leading-5" style={{ color: colors.text }}>
+              {libraryMirror.state === "running"
+                ? (libraryMirror.progress?.detail ?? "Preparing the folder comparison…")
+                : libraryMirror.state === "error"
+                  ? (libraryMirror.error ?? "The folders could not be matched.")
+                  : (libraryMirror.detail ?? "Both folders contain the same ebook files.")}
+            </Text>
+            {libraryMirror.state === "running" && libraryMirror.progress?.currentFile ? (
+              <Text numberOfLines={3} className="text-xs leading-[18px]" style={{ color: colors.textMuted }}>
+                {libraryMirror.progress.currentFile}
+              </Text>
+            ) : null}
+            <Text className="text-xs leading-[18px]" style={{ color: colors.textMuted }}>
+              Hidden files, MoonReader data, metadata, covers, and reading progress are excluded.
+            </Text>
+          </View>
+
+          <PillButton
+            label={libraryMirror.state === "running" ? "Continue in background" : "Done"}
+            icon={libraryMirror.state === "running" ? "minimize-2" : "check"}
+            variant={libraryMirror.state === "error" ? "overlay" : "accent"}
+            onPress={() => setLibraryMirrorProgress(false)}
+            fullWidth
+          />
+        </ScrollView>
+      </AppBottomSheet>
+
       <ProviderPicker
-        role={providerPicker}
+        role={Platform.OS === "ios" ? null : providerPicker}
         options={
           providerPicker === "discovery"
             ? discoveryProviders

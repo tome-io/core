@@ -2,6 +2,7 @@ import { Feather } from '@expo/vector-icons';
 import { useState } from 'react';
 import {
   Pressable,
+  Platform,
   ScrollView,
   type StyleProp,
   Text,
@@ -10,6 +11,7 @@ import {
 } from 'react-native';
 
 import { AppDialog, colors, radii, usePageGutter } from '@/components/app-ui';
+import { IosNativeSelect } from '@/components/ios-native-controls';
 
 export interface CatalogOption<T extends string> {
   label: string;
@@ -53,8 +55,8 @@ export function CatalogToolbar<TFilter extends string, TSort extends string>({
     <View className="gap-4 pb-2 pt-3">
       {!!title && (
         <Text
-          className="text-2xl font-semibold text-neutral-100"
-          style={{ paddingHorizontal: gutter }}
+          className="text-2xl font-semibold"
+          style={{ paddingHorizontal: gutter, color: colors.text }}
         >
           {title}
         </Text>
@@ -64,17 +66,23 @@ export function CatalogToolbar<TFilter extends string, TSort extends string>({
           label={filterLabel}
           value={selectedFilterOption?.label ?? selectedFilter}
           onPress={() => setOpenPicker('filter')}
+          options={filters}
+          selectedValue={selectedFilter}
+          onSelect={onFilter}
           style={{ flex: 1 }}
         />
         <CatalogSelect
           label={sortLabel}
           value={selectedSortOption?.label ?? selectedSort}
           onPress={() => setOpenPicker('sort')}
+          options={sorts}
+          selectedValue={selectedSort}
+          onSelect={onSort}
           style={{ flex: 1 }}
         />
       </View>
       <CatalogOptionsDialog
-        visible={openPicker !== null}
+        visible={Platform.OS !== 'ios' && openPicker !== null}
         title={openPicker === 'filter' ? filterLabel : sortLabel}
         options={pickerOptions}
         selectedValue={selectedValue}
@@ -140,17 +148,36 @@ export function CatalogOptionsDialog<T extends string>({
   );
 }
 
-export function CatalogSelect({
+export function CatalogSelect<T extends string>({
   label,
   value,
   onPress,
+  options,
+  selectedValue,
+  onSelect,
   style,
 }: {
   label: string;
   value: string;
   onPress: () => void;
+  options?: readonly CatalogOption<T>[];
+  selectedValue?: T;
+  onSelect?: (value: T) => void;
   style?: StyleProp<ViewStyle>;
 }) {
+  if (Platform.OS === 'ios' && options?.length && selectedValue !== undefined && onSelect) {
+    return (
+      <IosNativeSelect
+        value={value}
+        options={options}
+        selectedValue={selectedValue}
+        onSelect={onSelect}
+        dense
+        style={style}
+      />
+    );
+  }
+
   return (
     <Pressable
       onPress={onPress}
@@ -159,17 +186,13 @@ export function CatalogSelect({
       className="h-12 min-w-0 flex-row items-center gap-3 px-4 active:opacity-75"
       style={[{ backgroundColor: colors.surfaceRaised, borderRadius: radii.pill }, style]}
     >
-      <View className="min-w-0 flex-1">
-        <Text
-          className="text-[9px] font-semibold uppercase tracking-wider"
-          style={{ color: colors.textMuted }}
-        >
-          {label}
-        </Text>
-        <Text numberOfLines={1} className="text-sm font-medium" style={{ color: colors.text }}>
-          {value}
-        </Text>
-      </View>
+      <Text
+        numberOfLines={1}
+        className="min-w-0 flex-1 text-sm font-medium"
+        style={{ color: colors.text }}
+      >
+        {value}
+      </Text>
       <Feather name="chevron-down" size={17} color={colors.textMuted} />
     </Pressable>
   );

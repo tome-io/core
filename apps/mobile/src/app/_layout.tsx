@@ -1,10 +1,10 @@
 import "../global.css";
 
 import { colors } from "@tomeio/design";
-import { DarkTheme, Stack, ThemeProvider } from "expo-router";
+import { DarkTheme, Stack, ThemeProvider, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useWindowDimensions, View } from "react-native";
+import { Platform, useWindowDimensions, View } from "react-native";
 import {
   initialWindowMetrics,
   SafeAreaProvider,
@@ -16,6 +16,7 @@ import { LibraryActivityToast } from "@/components/library-activity-toast";
 import { DownloadProvider } from "@/context/download-context";
 import { ExtensionsProvider } from "@/context/extensions-context";
 import { HomeNavigationProvider } from "@/context/home-navigation-context";
+import { LibraryFileMirrorProvider } from "@/context/library-file-mirror-context";
 import { LibraryProvider } from "@/context/library-context";
 import { SettingsContext } from "@/context/settings-context";
 import {
@@ -27,7 +28,15 @@ import {
 
 export default function RootLayout() {
   const { width } = useWindowDimensions();
+  const pathname = usePathname();
   const useBottomNavigation = width < 700;
+  const useNativeNavigation = Platform.OS === "ios";
+  const isBookOverview = pathname.startsWith("/book/");
+  const showSidebar = !useNativeNavigation && !useBottomNavigation;
+  const showBottomNavigation =
+    !useNativeNavigation &&
+    useBottomNavigation &&
+    !pathname.startsWith("/book/");
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [ready, setReady] = useState(false);
   const settingsRef = useRef(settings);
@@ -77,51 +86,59 @@ export default function RootLayout() {
         <SettingsContext.Provider value={value}>
           <ExtensionsProvider>
             <LibraryProvider>
-              <DownloadProvider>
-                <HomeNavigationProvider>
-                  <StatusBar style="light" />
-                  <SafeAreaView
-                    className="flex-1"
-                    edges={["top", "right", "bottom", "left"]}
-                    style={{ backgroundColor: colors.background }}
-                  >
-                    <View
+              <LibraryFileMirrorProvider>
+                <DownloadProvider>
+                  <HomeNavigationProvider>
+                    <StatusBar style="light" />
+                    <SafeAreaView
                       className="flex-1"
-                      style={{
-                        flexDirection: useBottomNavigation ? "column" : "row",
-                      }}
+                      edges={
+                        isBookOverview
+                          ? ["right", "left"]
+                          : useNativeNavigation
+                            ? ["top", "right", "left"]
+                            : ["top", "right", "bottom", "left"]
+                      }
+                      style={{ backgroundColor: colors.background }}
                     >
-                      {!useBottomNavigation && <Sidebar />}
                       <View
                         className="flex-1"
-                        style={{ backgroundColor: colors.background }}
+                        style={{
+                          flexDirection: useBottomNavigation ? "column" : "row",
+                        }}
                       >
-                        <Stack
-                          screenOptions={{
-                            headerShown: false,
-                            animation: "none",
-                          }}
-                        />
-                      </View>
-                      {useBottomNavigation && (
+                        {showSidebar && <Sidebar />}
                         <View
-                          pointerEvents="box-none"
-                          style={{
-                            position: "absolute",
-                            right: 0,
-                            bottom: 0,
-                            left: 0,
-                            zIndex: 20,
-                          }}
+                          className="flex-1"
+                          style={{ backgroundColor: colors.background }}
                         >
-                          <Sidebar compact />
+                          <Stack
+                            screenOptions={{
+                              headerShown: false,
+                              animation: "none",
+                            }}
+                          />
                         </View>
-                      )}
-                    </View>
-                    <LibraryActivityToast />
-                  </SafeAreaView>
-                </HomeNavigationProvider>
-              </DownloadProvider>
+                        {showBottomNavigation && (
+                          <View
+                            pointerEvents="box-none"
+                            style={{
+                              position: "absolute",
+                              right: 0,
+                              bottom: 0,
+                              left: 0,
+                              zIndex: 20,
+                            }}
+                          >
+                            <Sidebar compact />
+                          </View>
+                        )}
+                      </View>
+                      <LibraryActivityToast />
+                    </SafeAreaView>
+                  </HomeNavigationProvider>
+                </DownloadProvider>
+              </LibraryFileMirrorProvider>
             </LibraryProvider>
           </ExtensionsProvider>
         </SettingsContext.Provider>

@@ -1,11 +1,15 @@
 import { Image } from 'expo-image';
-import { useCallback } from 'react';
+import { useCallback, type ReactNode } from 'react';
 import { FlatList, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { colors, SectionHeader, usePageGutter } from '@/components/app-ui';
 import type { DiscoveryBook, FeedBook } from '@/lib/openlibrary';
 import { RatingChip } from './rating-chip';
+import { SeriesPositionChip } from './series-position-chip';
 import { SkeletonPulse } from './skeleton-pulse';
+
+const POSTER_WIDTH = 124;
+const RAIL_GAP = 16;
 
 export function toDiscoveryBook(b: FeedBook, genre = 'Open Library'): DiscoveryBook {
   return {
@@ -18,13 +22,16 @@ export function toDiscoveryBook(b: FeedBook, genre = 'Open Library'): DiscoveryB
     genre,
     rating: b.rating,
     ratingsCount: b.ratingsCount,
+    seriesPosition: b.seriesPosition,
+    priceLabel: b.priceLabel,
+    sourceUrl: b.sourceUrl,
   };
 }
 
 export function PosterCard<T extends FeedBook>({
   book,
   onPress,
-  width = 124,
+  width = POSTER_WIDTH,
 }: {
   book: T;
   onPress: (book: T) => void;
@@ -63,6 +70,7 @@ export function PosterCard<T extends FeedBook>({
           </View>
         )}
         <RatingChip rating={book.rating} />
+        <SeriesPositionChip position={book.seriesPosition} />
         {book.sourceUrl && book.priceLabel ? (
           <Pressable
             accessibilityLabel={`${book.priceLabel}; open source`}
@@ -112,7 +120,7 @@ export function PosterCard<T extends FeedBook>({
   );
 }
 
-export function PosterSkeleton({ width = 124 }: { width?: number }) {
+export function PosterSkeleton({ width = POSTER_WIDTH }: { width?: number }) {
   return (
     <View style={{ width }}>
       <View
@@ -140,7 +148,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   fallbackTitle: {
-    color: '#737373',
+    color: colors.textMuted,
     fontSize: 11,
     fontWeight: '600',
     textAlign: 'center',
@@ -164,7 +172,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.84)',
   },
   priceText: {
-    color: '#ffffff',
+    color: colors.text,
     fontSize: 10,
     fontWeight: '700',
   },
@@ -177,7 +185,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   progressText: {
-    color: '#fff',
+    color: colors.text,
     fontSize: 9,
     fontWeight: '700',
   },
@@ -215,6 +223,7 @@ const styles = StyleSheet.create({
 /** Stremio-style horizontal rail with a section title. */
 export function Rail<T extends FeedBook>({
   title,
+  subtitle,
   books,
   loading = false,
   error,
@@ -224,6 +233,7 @@ export function Rail<T extends FeedBook>({
   emptyLabel = 'No books available.',
 }: {
   title: string;
+  subtitle?: ReactNode;
   books: T[];
   loading?: boolean;
   error?: string | null;
@@ -239,7 +249,12 @@ export function Rail<T extends FeedBook>({
   );
   return (
     <View className="mb-8">
-      <SectionHeader title={title} actionLabel={onSeeAll ? 'See all' : undefined} onAction={onSeeAll} />
+      <SectionHeader
+        title={title}
+        subtitle={subtitle}
+        actionLabel={onSeeAll ? 'See all' : undefined}
+        onAction={onSeeAll}
+      />
       {loading ? (
         <SkeletonPulse>
           <ScrollView
@@ -255,7 +270,7 @@ export function Rail<T extends FeedBook>({
         </SkeletonPulse>
       ) : error ? (
         <View className="h-20 justify-center items-start gap-1" style={{ paddingHorizontal: gutter }}>
-          <Text numberOfLines={2} className="text-xs text-red-400">
+          <Text numberOfLines={2} className="text-xs" style={{ color: colors.danger }}>
             {error}
           </Text>
           {onRetry && (
@@ -271,7 +286,11 @@ export function Rail<T extends FeedBook>({
           data={books}
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: gutter, gap: 16 }}
+          snapToInterval={POSTER_WIDTH + RAIL_GAP}
+          snapToAlignment="start"
+          decelerationRate="fast"
+          disableIntervalMomentum
+          contentContainerStyle={{ paddingHorizontal: gutter, gap: RAIL_GAP }}
           keyExtractor={(book) => book.id}
           initialNumToRender={6}
           maxToRenderPerBatch={4}
@@ -280,7 +299,7 @@ export function Rail<T extends FeedBook>({
         />
       ) : (
         <View className="h-20 justify-center" style={{ paddingHorizontal: gutter }}>
-          <Text className="text-xs text-neutral-500">{emptyLabel}</Text>
+          <Text className="text-xs" style={{ color: colors.textMuted }}>{emptyLabel}</Text>
         </View>
       )}
     </View>
@@ -289,15 +308,17 @@ export function Rail<T extends FeedBook>({
 
 export function ProviderAttribution({
   attribution,
+  align = 'end',
 }: {
   attribution: { label: string; url: string; imageUrl?: string };
+  align?: 'start' | 'end';
 }) {
   return (
     <Pressable
       onPress={() => void Linking.openURL(attribution.url)}
       accessibilityRole="link"
       accessibilityLabel={attribution.label}
-      className="self-end"
+      className={align === 'start' ? 'self-start' : 'self-end'}
     >
       {attribution.imageUrl ? (
         <Image

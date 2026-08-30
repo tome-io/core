@@ -18,6 +18,7 @@ import type { LibraryBook } from '@/lib/library';
 type BuiltInLibraryAction =
   | 'openWith'
   | 'files'
+  | 'cover'
   | 'delete'
   | 'remove'
   | 'read'
@@ -38,9 +39,10 @@ interface ActionsProps {
   addonActions?: AddonLibraryAction[];
   onOpenWith: () => void;
   onShowInFiles: () => void;
+  onCover?: () => void;
   onDelete: () => void;
   onRemove: () => void;
-  onMarkRead: () => void;
+  onMarkRead?: () => void;
   onRefreshMetadata: () => void;
 }
 
@@ -51,6 +53,7 @@ export function LibraryBookActions({
   addonActions = [],
   onOpenWith,
   onShowInFiles,
+  onCover,
   onDelete,
   onRemove,
   onMarkRead,
@@ -72,6 +75,9 @@ export function LibraryBookActions({
     icon: keyof typeof Feather.glyphMap;
     destructive?: boolean;
   }[] = [
+    ...(onCover
+      ? [{ key: 'cover' as const, label: 'Choose cover', icon: 'image' as const }]
+      : []),
     ...addonActions,
     ...(hasLocalFile
       ? [
@@ -109,15 +115,22 @@ export function LibraryBookActions({
           },
         ]
       : []),
-    { key: 'read', label: book.isRead ? 'Finished' : 'Mark as finished', icon: 'check-circle' },
+    ...(onMarkRead
+      ? [{
+          key: 'read' as const,
+          label: book.isRead ? 'Finished' : 'Mark as finished',
+          icon: 'check-circle' as const,
+        }]
+      : []),
     { key: 'metadata', label: 'Refresh metadata', icon: 'refresh-cw' },
   ];
   const handlers: Record<BuiltInLibraryAction, () => void> = {
     openWith: onOpenWith,
     files: onShowInFiles,
+    cover: onCover ?? (() => {}),
     delete: onDelete,
     remove: onRemove,
-    read: onMarkRead,
+    read: onMarkRead ?? (() => {}),
     metadata: onRefreshMetadata,
   };
 
@@ -126,7 +139,7 @@ export function LibraryBookActions({
       {actions.map((action) => {
         const disabled = !!busyAction || (action.key === 'read' && book.isRead === true);
         const subtitle = action.key === 'read' && book.isRead ? 'Already finished' : '';
-        const color = action.destructive ? '#f87171' : '#d4d4d8';
+        const color = action.destructive ? colors.danger : colors.text;
 
         return (
           <Pressable
@@ -139,8 +152,11 @@ export function LibraryBookActions({
             disabled={disabled}
             accessibilityRole="button"
             accessibilityLabel={action.label}
-            className="min-h-12 flex-row items-center gap-3 rounded-xl border border-[#2a2a32] px-3 active:opacity-70 disabled:opacity-40"
-            style={compact ? { minWidth: 164, flexGrow: 1 } : undefined}
+            className="min-h-12 flex-row items-center gap-3 rounded-xl border px-3 active:opacity-70 disabled:opacity-40"
+            style={[
+              { borderColor: colors.border },
+              compact ? { minWidth: 164, flexGrow: 1 } : undefined,
+            ]}
           >
             {busyAction === action.key ? (
               <ActivityIndicator size="small" color={colors.accent} />
@@ -151,7 +167,11 @@ export function LibraryBookActions({
               <Text className="text-xs font-semibold" style={{ color }}>
                 {action.label}
               </Text>
-              {!!subtitle && <Text className="mt-0.5 text-[10px] text-neutral-500">{subtitle}</Text>}
+              {!!subtitle && (
+                <Text className="mt-0.5 text-[10px]" style={{ color: colors.textMuted }}>
+                  {subtitle}
+                </Text>
+              )}
             </View>
           </Pressable>
         );
@@ -182,7 +202,7 @@ export function LibraryActionsSheet({
         <Pressable className="absolute inset-0" onPress={onClose} accessibilityLabel="Close actions" />
         <View
           className={landscape ? 'absolute right-0 top-0 bottom-0 w-[360px]' : 'absolute left-0 right-0 bottom-0'}
-          style={{ backgroundColor: '#141419' }}
+          style={{ backgroundColor: colors.surface }}
         >
           <SafeAreaView
             edges={landscape ? ['top', 'right', 'bottom'] : ['left', 'right', 'bottom']}
@@ -190,16 +210,27 @@ export function LibraryActionsSheet({
           >
             <View className="px-5 pb-5 pt-4">
               <View className="mb-5 flex-row items-center gap-3">
-                <View className="h-16 w-11 overflow-hidden rounded-md bg-[#232329]">
+                <View
+                  className="h-16 w-11 overflow-hidden rounded-md"
+                  style={{ backgroundColor: colors.surfaceRaised }}
+                >
                   {!!book.cover && (
                     <Image source={{ uri: book.cover }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
                   )}
                 </View>
                 <View className="flex-1">
-                  <Text numberOfLines={2} className="text-base font-semibold text-neutral-100">
+                  <Text
+                    numberOfLines={2}
+                    className="text-base font-semibold"
+                    style={{ color: colors.text }}
+                  >
                     {book.title}
                   </Text>
-                  <Text numberOfLines={1} className="mt-1 text-xs text-neutral-500">
+                  <Text
+                    numberOfLines={1}
+                    className="mt-1 text-xs"
+                    style={{ color: colors.textMuted }}
+                  >
                     {book.author}
                   </Text>
                 </View>
@@ -207,12 +238,116 @@ export function LibraryActionsSheet({
                   onPress={onClose}
                   accessibilityRole="button"
                   accessibilityLabel="Close actions"
-                  className="h-9 w-9 items-center justify-center rounded-full bg-[#202027]"
+                  className="h-9 w-9 items-center justify-center rounded-full"
+                  style={{ backgroundColor: colors.surfaceRaised }}
                 >
-                  <Feather name="x" size={18} color="#d4d4d8" />
+                  <Feather name="x" size={18} color={colors.text} />
                 </Pressable>
               </View>
               <LibraryBookActions book={book} {...actions} />
+            </View>
+          </SafeAreaView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+export function ReadBookSheet({
+  book,
+  visible,
+  readerActions,
+  onOpenWith,
+  onClose,
+}: {
+  book: LibraryBook;
+  visible: boolean;
+  readerActions: AddonLibraryAction[];
+  onOpenWith: () => void;
+  onClose: () => void;
+}) {
+  const { width, height } = useWindowDimensions();
+  const landscape = width > height;
+  const actions = [
+    ...readerActions,
+    {
+      key: 'other-app' as const,
+      label: 'Read in another app',
+      icon: 'share-2' as const,
+      onPress: onOpenWith,
+    },
+  ];
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      navigationBarTranslucent
+      onRequestClose={onClose}
+    >
+      <View className="flex-1" style={{ backgroundColor: 'rgba(0,0,0,0.64)' }}>
+        <Pressable className="absolute inset-0" onPress={onClose} accessibilityLabel="Close reader options" />
+        <View
+          className={landscape ? 'absolute right-0 top-0 bottom-0 w-[360px]' : 'absolute left-0 right-0 bottom-0'}
+          style={{ backgroundColor: colors.surface }}
+        >
+          <SafeAreaView
+            edges={landscape ? ['top', 'right', 'bottom'] : ['left', 'right', 'bottom']}
+            className={landscape ? 'flex-1' : ''}
+          >
+            <View className="px-5 pb-5 pt-4">
+              <View className="mb-5 flex-row items-center gap-3">
+                <View
+                  className="h-16 w-11 overflow-hidden rounded-md"
+                  style={{ backgroundColor: colors.surfaceRaised }}
+                >
+                  {!!book.cover && (
+                    <Image source={{ uri: book.cover }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+                  )}
+                </View>
+                <View className="min-w-0 flex-1">
+                  <Text className="text-lg font-semibold" style={{ color: colors.text }}>
+                    Read with
+                  </Text>
+                  <Text
+                    numberOfLines={1}
+                    className="mt-1 text-xs"
+                    style={{ color: colors.textMuted }}
+                  >
+                    {book.title}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={onClose}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close reader options"
+                  className="h-9 w-9 items-center justify-center rounded-full"
+                  style={{ backgroundColor: colors.surfaceRaised }}
+                >
+                  <Feather name="x" size={18} color={colors.text} />
+                </Pressable>
+              </View>
+
+              <View className="gap-2">
+                {actions.map((action) => (
+                  <Pressable
+                    key={action.key}
+                    onPress={action.onPress}
+                    accessibilityRole="button"
+                    accessibilityLabel={action.label}
+                    className="min-h-14 flex-row items-center gap-3 rounded-xl border px-4 active:opacity-70"
+                    style={{ borderColor: colors.border, backgroundColor: colors.surfaceRaised }}
+                  >
+                    <Feather name={action.icon} size={19} color={colors.text} />
+                    <Text className="flex-1 text-sm font-semibold" style={{ color: colors.text }}>
+                      {action.label}
+                    </Text>
+                    <Feather name="chevron-right" size={18} color={colors.textMuted} />
+                  </Pressable>
+                ))}
+              </View>
             </View>
           </SafeAreaView>
         </View>

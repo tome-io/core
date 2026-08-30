@@ -1,6 +1,4 @@
-import { Text, View } from "react-native";
-
-import { AppDialog, colors, PillButton } from "./app-ui";
+import { AppTextSheet } from './app-text-sheet';
 
 export function AppErrorDialog({
   title,
@@ -12,13 +10,12 @@ export function AppErrorDialog({
   onClose: () => void;
 }) {
   return (
-    <AppDialog visible={message != null} title={title} onClose={onClose}>
-      <View className="gap-5">
-        <Text className="text-sm leading-6" style={{ color: colors.textMuted }}>
-          {message}
-        </Text>
-        <PillButton label="Dismiss" variant="accent" onPress={onClose} />
-      </View>
-    </AppDialog>
+    <AppTextSheet
+      visible={message != null}
+      title={title}
+      text={message ?? ''}
+      onClose={onClose}
+      muted
+    />
   );
 }

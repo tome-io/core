@@ -6,16 +6,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Keyboard,
   Linking,
+  Platform,
   Pressable,
   Text,
-  TextInput,
   useWindowDimensions,
   View,
 } from 'react-native';
 
 import { BookGrid, BookGridSkeleton, GridLoadingMore } from '@/components/book-grid';
 import type { CardBook } from '@/components/book-card';
-import { colors, usePageGutter } from '@/components/app-ui';
+import { colors, SearchField, usePageGutter } from '@/components/app-ui';
+import { IosNativeBackButton } from '@/components/ios-native-controls';
 import {
   CatalogOptionsDialog,
   CatalogSelect,
@@ -51,6 +52,7 @@ function searchBook(book: BookMetadata, extensionId: string): SearchBook {
     cover: book.coverUrl || '',
     year: book.publishedYear,
     rating: book.rating,
+    seriesPosition: book.seriesPosition,
     priceLabel: bookPriceLabel(book),
     sourceUrl: bookSourceUrl(book),
     extensionId,
@@ -125,12 +127,15 @@ export default function SearchScreen() {
 
   useEffect(() => {
     const routeQuery = typeof params.q === 'string' ? params.q : '';
-    setQuery((current) => (current === routeQuery ? current : routeQuery));
-    const cleanQuery = routeQuery.trim();
-    if (cleanQuery.length < 2) return;
-    const generation = ++searchGeneration.current;
-    setLoadingMore(false);
-    void runSearch(cleanQuery, '', generation);
+    const timeout = setTimeout(() => {
+      setQuery((current) => (current === routeQuery ? current : routeQuery));
+      const cleanQuery = routeQuery.trim();
+      if (cleanQuery.length < 2) return;
+      const generation = ++searchGeneration.current;
+      setLoadingMore(false);
+      void runSearch(cleanQuery, '', generation);
+    }, 0);
+    return () => clearTimeout(timeout);
   }, [params.q, runSearch]);
 
   const submitSearch = useCallback(() => {
@@ -201,6 +206,7 @@ export default function SearchScreen() {
           id: book.metadata.id,
           extensionId: book.extensionId,
           extensionBook: JSON.stringify(book.metadata),
+          sourceCover: book.cover,
         },
       });
     },
@@ -211,7 +217,7 @@ export default function SearchScreen() {
     <GridLoadingMore />
   ) : error && books.length ? (
     <View className="items-center gap-2 py-5">
-      <Text className="text-xs text-red-400">{error}</Text>
+      <Text className="text-xs" style={{ color: colors.danger }}>{error}</Text>
       <Pressable onPress={loadMore}>
         <Text className="text-xs font-semibold" style={{ color: colors.accent }}>
           Retry
@@ -234,58 +240,41 @@ export default function SearchScreen() {
           paddingHorizontal: gutter,
         }}
       >
-        <Pressable
-          onPress={() => router.dismissTo('/home')}
-          accessibilityLabel="Back to home"
-          className="h-12 w-12 shrink-0 items-center justify-center rounded-full"
-          style={{ backgroundColor: colors.surfaceRaised }}
-        >
-          <Feather name="chevron-left" size={22} color={colors.textMuted} />
-        </Pressable>
-        <View
-          className="h-12 min-w-0 flex-1 flex-row items-center rounded-full"
-          style={{ backgroundColor: colors.surfaceRaised }}
-        >
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            onSubmitEditing={submitSearch}
-            returnKeyType="search"
-            autoFocus={!params.q}
-            placeholder="Search books, authors or ISBNs"
-            placeholderTextColor={colors.textMuted}
-            className="h-12 min-w-0 flex-1 pl-5 pr-2 text-[15px] font-medium text-white"
-          />
-          {query.length ? (
-            <Pressable
-              onPress={clearSearch}
-              accessibilityLabel="Clear search"
-              accessibilityRole="button"
-              className="h-12 w-10 items-center justify-center"
-            >
-              <Feather name="x" size={19} color={colors.textMuted} />
-            </Pressable>
-          ) : null}
+        {Platform.OS === 'ios' ? (
+          <IosNativeBackButton onPress={() => router.dismissTo('/home')} />
+        ) : (
           <Pressable
-            onPress={submitSearch}
-            disabled={query.trim().length < 2 || loading}
-            accessibilityLabel="Search"
-            accessibilityRole="button"
-            accessibilityState={{ disabled: query.trim().length < 2 || loading }}
-            className="h-12 w-12 items-center justify-center disabled:opacity-40"
+            onPress={() => router.dismissTo('/home')}
+            accessibilityLabel="Back to home"
+            className="h-12 w-12 shrink-0 items-center justify-center rounded-full"
+            style={{ backgroundColor: colors.surfaceRaised }}
           >
-            <Feather name="search" size={20} color={colors.textMuted} />
+            <Feather name="chevron-left" size={22} color={colors.textMuted} />
           </Pressable>
-        </View>
+        )}
+        <SearchField
+          value={query}
+          onChangeText={(value) => {
+            if (value) setQuery(value);
+            else clearSearch();
+          }}
+          onSearch={submitSearch}
+          returnKeyType="search"
+          autoFocus={!params.q}
+          placeholder="Search books, authors or ISBNs"
+        />
         <CatalogSelect
           label="Format"
           value={selectedFormat.label}
           onPress={() => setFormatPickerOpen(true)}
+          options={FORMATS}
+          selectedValue={format}
+          onSelect={selectFormat}
           style={{ width: width >= 700 ? 148 : 112, flexShrink: 0 }}
         />
       </View>
       <CatalogOptionsDialog
-        visible={formatPickerOpen}
+        visible={Platform.OS !== 'ios' && formatPickerOpen}
         title="Format"
         options={FORMATS}
         selectedValue={format}
@@ -317,7 +306,7 @@ export default function SearchScreen() {
         <BookGridSkeleton />
       ) : error && books.length === 0 ? (
         <View className="flex-1 items-center justify-center px-8">
-          <Text className="text-sm text-red-400 text-center">{error}</Text>
+          <Text className="text-sm text-center" style={{ color: colors.danger }}>{error}</Text>
         </View>
       ) : books.length ? (
         <BookGrid
@@ -328,16 +317,22 @@ export default function SearchScreen() {
         />
       ) : searchedFor ? (
         <View className="flex-1 items-center justify-center">
-          <Text className="text-sm text-neutral-500">No results for “{searchedFor}”.</Text>
+          <Text className="text-sm" style={{ color: colors.textMuted }}>
+            No results for “{searchedFor}”.
+          </Text>
         </View>
       ) : (
         <View className="flex-1 items-center justify-center pb-16">
-          <Text className="text-xl font-medium text-neutral-500 mb-10">Search anything</Text>
+          <Text className="text-xl font-medium mb-10" style={{ color: colors.textMuted }}>
+            Search anything
+          </Text>
           <View className="flex-row gap-12">
             {SEARCH_HINTS.map((hint) => (
               <View key={hint.label} className="items-center gap-3 w-20">
                 <Feather name={hint.icon} size={38} color={colors.textMuted} />
-                <Text className="text-sm text-neutral-500 text-center">{hint.label}</Text>
+                <Text className="text-sm text-center" style={{ color: colors.textMuted }}>
+                  {hint.label}
+                </Text>
               </View>
             ))}
           </View>

@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
-import { Text } from 'react-native';
+import { Text, type StyleProp, type TextStyle } from 'react-native';
+
+import { colors } from '@/components/app-ui';
 
 const NAMED_ENTITIES: Record<string, string> = {
   amp: '&',
@@ -107,13 +109,19 @@ export function DescriptionText({
   value,
   numberOfLines,
   className,
+  style,
 }: {
   value: string;
   numberOfLines?: number;
   className?: string;
+  style?: StyleProp<TextStyle>;
 }) {
   return (
-    <Text numberOfLines={numberOfLines} className={className}>
+    <Text
+      numberOfLines={numberOfLines}
+      className={className}
+      style={[{ color: colors.text }, style]}
+    >
       {markdownChildren(normalizeDescription(value))}
     </Text>
   );
