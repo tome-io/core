@@ -10,6 +10,8 @@ import type {
 } from '@tomeio/extension-runtime';
 import type { ExtensionDeviceOperation } from '@tomeio/extension-protocol';
 
+import { listNativeDirectoryEntries } from '../../modules/expo-progress-folder/src';
+
 const INSPECTION_BATCH_SIZE = 24;
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRY_BYTES = 32 * 1024 * 1024;
@@ -154,11 +156,34 @@ async function scanDirectory(
   if (visited.has(directory) || depth > maxDepth) return;
   visited.add(directory);
   const contentUris = directory.startsWith('content:');
-  const children = contentUris
-    ? await FileSystem.StorageAccessFramework.readDirectoryAsync(directory)
-    : (await FileSystem.readDirectoryAsync(directory)).map(
-        (name) => `${directory.replace(/\/$/, '')}/${name}`
-      );
+  if (contentUris) {
+    const entries = await listNativeDirectoryEntries(directory);
+    for (const entry of entries) {
+      if (entry.isDirectory) {
+        await scanDirectory(
+          entry.uri,
+          depth + 1,
+          maxDepth,
+          filenames,
+          extensions,
+          visited,
+          output
+        );
+        continue;
+      }
+      if (!matchesFile(entry.name, filenames, extensions)) continue;
+      output.push({
+        uri: entry.uri,
+        filename: entry.name,
+        size: finiteNumber(entry.size),
+        modificationTime: finiteNumber(entry.modifiedAt),
+      });
+    }
+    return;
+  }
+  const children = (await FileSystem.readDirectoryAsync(directory)).map(
+    (name) => `${directory.replace(/\/$/, '')}/${name}`
+  );
   for (const { uri, info } of await inspectUris(children)) {
     if (!info.exists) continue;
     if (info.isDirectory) {

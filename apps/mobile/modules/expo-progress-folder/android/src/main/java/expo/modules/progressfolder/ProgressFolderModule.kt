@@ -35,6 +35,18 @@ class ProgressFolderModule : Module() {
       }
     }
 
+    AsyncFunction("listDirectoryEntries") Coroutine { directoryUri: String ->
+      try {
+        withTimeout(DIRECTORY_TIMEOUT_MS) {
+          awaitDirectoryEntries(Uri.parse(directoryUri))
+        }
+      } catch (_: TimeoutCancellationException) {
+        throw IllegalStateException(
+          "The file provider did not finish loading the folder within 20 seconds."
+        )
+      }
+    }
+
     AsyncFunction("readTextFile") Coroutine { fileUri: String ->
       try {
         withTimeout(FILE_TIMEOUT_MS) {
@@ -121,7 +133,7 @@ class ProgressFolderModule : Module() {
   }
 
   private data class DirectorySnapshot(
-    val files: List<Map<String, Any?>>,
+    val entries: List<Map<String, Any?>>,
     val loading: Boolean,
     val providerError: String?
   )
@@ -130,7 +142,19 @@ class ProgressFolderModule : Module() {
     ?: throw IllegalStateException("The Android application context is unavailable.")
 
   private fun directoryDocumentUri(treeUri: Uri): Uri {
-    val documentId = DocumentsContract.getTreeDocumentId(treeUri)
+    if (treeUri.scheme != "content") {
+      throw IllegalArgumentException("Only Android document-provider folders can be read here.")
+    }
+    val treeDocumentId = try {
+      DocumentsContract.getTreeDocumentId(treeUri)
+    } catch (_: IllegalArgumentException) {
+      throw IllegalArgumentException("The selected location is not an Android document-provider folder.")
+    }
+    val documentId = if (DocumentsContract.isDocumentUri(context(), treeUri)) {
+      DocumentsContract.getDocumentId(treeUri)
+    } else {
+      treeDocumentId
+    }
     return DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
   }
 
@@ -149,7 +173,7 @@ class ProgressFolderModule : Module() {
       DocumentsContract.Document.COLUMN_SIZE,
       DocumentsContract.Document.COLUMN_LAST_MODIFIED
     )
-    val files = mutableListOf<Map<String, Any?>>()
+    val entries = mutableListOf<Map<String, Any?>>()
     val cursor = resolver.query(childrenUri, projection, null, null, null)
       ?: throw IllegalStateException("The file provider did not return the folder contents.")
 
@@ -174,9 +198,8 @@ class ProgressFolderModule : Module() {
 
       while (it.moveToNext()) {
         val mimeType = it.getString(typeColumn)
-        if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) continue
         val childId = it.getString(idColumn)
-        files.add(
+        entries.add(
           mapOf(
             "name" to it.getString(nameColumn),
             "uri" to DocumentsContract.buildDocumentUriUsingTree(
@@ -185,15 +208,24 @@ class ProgressFolderModule : Module() {
             ).toString(),
             "size" to if (it.isNull(sizeColumn)) null else it.getLong(sizeColumn),
             "modifiedAt" to if (it.isNull(modifiedColumn)) null else it.getLong(modifiedColumn),
-            "mimeType" to mimeType
+            "mimeType" to mimeType,
+            "isDirectory" to (mimeType == DocumentsContract.Document.MIME_TYPE_DIR)
           )
         )
       }
-      return DirectorySnapshot(files, loading, providerError)
+      return DirectorySnapshot(entries, loading, providerError)
     }
   }
 
   private suspend fun awaitDirectoryFiles(treeUri: Uri): List<Map<String, Any?>> {
+    return awaitDirectoryEntries(treeUri)
+      .filter { (it["isDirectory"] as? Boolean) != true }
+      .map { entry ->
+        entry.toMutableMap().apply { remove("isDirectory") }
+      }
+  }
+
+  private suspend fun awaitDirectoryEntries(treeUri: Uri): List<Map<String, Any?>> {
     while (true) {
       val snapshot = runInterruptible(Dispatchers.IO) { queryDirectory(treeUri) }
       if (!snapshot.loading) {
@@ -202,7 +234,7 @@ class ProgressFolderModule : Module() {
             "The file provider could not load the progress folder: ${snapshot.providerError}"
           )
         }
-        return snapshot.files.sortedBy { it["name"] as? String ?: "" }
+        return snapshot.entries.sortedBy { it["name"] as? String ?: "" }
       }
       delay(DIRECTORY_RETRY_DELAY_MS)
     }
@@ -390,7 +422,7 @@ class ProgressFolderModule : Module() {
       ),
       "persistedReadPermission" to (persistedPermission?.isReadPermission == true),
       "persistedWritePermission" to (persistedPermission?.isWritePermission == true),
-      "directChildCount" to snapshot.files.size,
+      "directChildCount" to snapshot.entries.size,
       "providerLoading" to snapshot.loading,
       "providerError" to snapshot.providerError
     )

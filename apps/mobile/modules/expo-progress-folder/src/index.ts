@@ -97,7 +97,7 @@ export function listNativeDirectoryEntries(
   const module = requireProgressFolderModule();
   if (!module.listDirectoryEntries) {
     throw new Error(
-      'Scanning an iOS folder requires a rebuilt Tomeio app. Run `bun run mobile:ios` from the repository root.'
+      'Scanning a selected folder requires a rebuilt Tomeio app. Rebuild the native app for this device.'
     );
   }
   return module.listDirectoryEntries(directoryUri);

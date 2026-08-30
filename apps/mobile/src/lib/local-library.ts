@@ -104,35 +104,6 @@ async function scanNativeDirectory(
   }
 }
 
-async function scanSafDirectory(
-  directoryUri: string,
-  visited: Set<string>,
-  files: LocalFileBook[]
-): Promise<void> {
-  if (visited.has(directoryUri)) return;
-  visited.add(directoryUri);
-
-  const children = await FileSystem.StorageAccessFramework.readDirectoryAsync(directoryUri);
-  const ignoredDirectories = children.filter((uri) => {
-    const name = filenameFromUri(uri).toLowerCase();
-    return name === '.moonreader' || name === '.moon+' || name === 'moonreader';
-  });
-  const entries = await inspectUris(
-    children.filter((uri) => !ignoredDirectories.includes(uri))
-  );
-  for (const { childUri, info } of entries) {
-    if (!info.exists) continue;
-    if (info.isDirectory) {
-      await scanSafDirectory(childUri, visited, files);
-      continue;
-    }
-    const size = finiteNumber(info.size);
-    const modificationTime = finiteNumber(info.modificationTime);
-    const book = toLocalFile(childUri, size, modificationTime);
-    if (book) files.push(book);
-  }
-}
-
 async function scanFileDirectory(
   directoryUri: string,
   visited: Set<string>,
@@ -170,10 +141,8 @@ export async function scanLocalLibrary(directoryUri: string | null): Promise<Loc
 
   const files: LocalFileBook[] = [];
   const warnings: string[] = [];
-  if (isNativeFolderLocation(root)) {
+  if (isNativeFolderLocation(root) || root.startsWith('content:')) {
     await scanNativeDirectory(root, new Set(), files);
-  } else if (root.startsWith('content:')) {
-    await scanSafDirectory(root, new Set(), files);
   } else {
     const info = await FileSystem.getInfoAsync(root);
     if (!info.exists) return { books: [], warnings };
