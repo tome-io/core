@@ -639,8 +639,13 @@ async function readResponse(response: Response, type: 'json' | 'text'): Promise<
 
 function rejectedResponseMessage(result: Record<string, unknown>): string {
   const status = Number(result.status);
-  const error = record(record(result.body)?.error);
-  const providerMessage = typeof error?.message === 'string' ? error.message.trim() : '';
+  const providerError = record(result.body)?.error;
+  const providerMessage =
+    typeof providerError === 'string'
+      ? providerError.trim()
+      : typeof record(providerError)?.message === 'string'
+        ? String(record(providerError)?.message).trim()
+        : '';
   return providerMessage
     ? `HTTP ${status}: ${providerMessage.slice(0, 300)}`
     : `HTTP ${status} did not satisfy the workflow`;
@@ -738,7 +743,7 @@ async function executeRequest(
       }
     }
   }
-  throw new Error(`Every declarative request candidate failed. ${failures.slice(-3).join(' | ')}`);
+  throw new Error(`Every declarative request candidate failed. ${failures.slice(0, 3).join(' | ')}`);
 }
 
 async function executeResource(

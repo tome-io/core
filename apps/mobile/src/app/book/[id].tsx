@@ -1173,9 +1173,7 @@ export default function BookDetailScreen() {
         unavailableProviders={unavailableCoverProviders}
         preference={libraryActionBook?.coverPreference ?? 'auto'}
         busy={coverBusy}
-        onClose={() => {
-          if (!coverBusy) setCoverPickerOpen(false);
-        }}
+        onClose={() => setCoverPickerOpen(false)}
         onChoose={(preference) => void chooseCover(preference)}
         onRefresh={() => void loadCoverSources(true)}
       />
@@ -1321,10 +1319,9 @@ function CoverPicker({
             </View>
             <Pressable
               onPress={onClose}
-              disabled={busy}
               accessibilityRole="button"
               accessibilityLabel="Close cover settings"
-              className="h-9 w-9 items-center justify-center rounded-full disabled:opacity-40"
+              className="h-9 w-9 items-center justify-center rounded-full"
               style={{ backgroundColor: colors.surfaceRaised }}
             >
               <Feather name="x" size={18} color="#d4d4d8" />

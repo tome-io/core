@@ -124,6 +124,67 @@ test('surfaces a declarative provider error message without exposing request det
   );
 });
 
+test('preserves the useful provider error when later mirrors return invalid responses', async () => {
+  const mirrorManifest: ExtensionManifest = {
+    ...manifest,
+    permissions: {
+      hosts: [
+        'https://raw.githubusercontent.com',
+        'https://primary.example.com',
+        'https://mirror-one.example.com',
+        'https://mirror-two.example.com',
+        'https://mirror-three.example.com',
+      ],
+    },
+  };
+  const mirrorDefinition: ExtensionWorkflowDefinition = {
+    workflowVersion: 1,
+    resources: {
+      search: {
+        steps: [
+          {
+            id: 'search',
+            request: {
+              urls: [
+                'https://primary.example.com/search',
+                'https://mirror-one.example.com/search',
+                'https://mirror-two.example.com/search',
+                'https://mirror-three.example.com/search',
+              ],
+            },
+          },
+        ],
+        output: { items: [] },
+      },
+    },
+  };
+  const loader = new ExtensionLoader({
+    bundled: new Map(),
+    fetchFn: async (input) => {
+      const url = String(input);
+      if (url.includes('raw.githubusercontent.com')) {
+        return Response.json(mirrorDefinition);
+      }
+      if (url.includes('primary.example.com')) {
+        return Response.json(
+          { error: 'Incorrect email or password' },
+          { status: 400 }
+        );
+      }
+      return new Response('<html>Unavailable</html>', {
+        status: 200,
+        headers: { 'Content-Type': 'text/html' },
+      });
+    },
+  });
+  const extension = await loader.load(mirrorManifest);
+
+  await assert.rejects(
+    () => extension.search!({ query: 'dune' }),
+    /HTTP 400: Incorrect email or password/
+  );
+});
+
 test('retries a transient declarative GET failure', async () => {
   let providerAttempts = 0;
   const loader = new ExtensionLoader({
