@@ -115,6 +115,29 @@ export interface ExtensionLibraryImport {
   platforms?: ExtensionPlatform[];
 }
 
+/** A host-rendered setup flow for an external reader's account connection. */
+export interface ExtensionReaderSetup {
+  id: string;
+  title: string;
+  description?: string;
+  icon?: string;
+  platforms?: ExtensionPlatform[];
+}
+
+export interface ExtensionReaderSetupRequest {
+  setupId: string;
+  action: 'status' | 'connect' | 'disconnect';
+}
+
+export interface ExtensionReaderSetupResult {
+  connected: boolean;
+  endpoint?: string;
+  createdAt?: number;
+  lastUsedAt?: number;
+  instructions: string[];
+  warnings?: string[];
+}
+
 export type ExtensionTransport =
   | {
       kind: 'bundled';
@@ -168,6 +191,7 @@ export interface ExtensionManifest {
   attribution?: ExtensionAttribution;
   libraryActions?: ExtensionLibraryAction[];
   libraryImports?: ExtensionLibraryImport[];
+  readerSetups?: ExtensionReaderSetup[];
   transport: ExtensionTransport;
   permissions?: {
     hosts?: string[];
@@ -484,6 +508,10 @@ export interface BookExtension {
     request: ExtensionReaderSyncRequest,
     context?: ExtensionInvocationContext
   ): Promise<ExtensionReaderSyncResult>;
+  readerSetup?(
+    request: ExtensionReaderSetupRequest,
+    context?: ExtensionInvocationContext
+  ): Promise<ExtensionReaderSetupResult>;
 }
 
 export class InvalidExtensionManifestError extends Error {
@@ -1041,6 +1069,65 @@ export function parseExtensionManifest(input: unknown): ExtensionManifest {
     );
   }
 
+  const readerSetups = Array.isArray(value.readerSetups)
+    ? value.readerSetups.map((candidate, index): ExtensionReaderSetup => {
+        const setup = record(candidate);
+        if (!setup) {
+          throw new InvalidExtensionManifestError(`Invalid reader setup at index ${index}.`);
+        }
+        const setupId = requiredString(setup, 'id');
+        const rawPlatforms = setup.platforms;
+        const platforms = Array.isArray(rawPlatforms)
+          ? rawPlatforms.filter(
+              (platform): platform is ExtensionPlatform =>
+                platform === 'android' ||
+                platform === 'ios' ||
+                platform === 'web' ||
+                platform === 'desktop'
+            )
+          : undefined;
+        if (
+          rawPlatforms != null &&
+          (!Array.isArray(rawPlatforms) || platforms?.length !== rawPlatforms.length)
+        ) {
+          throw new InvalidExtensionManifestError(
+            `Reader setup "${setupId}" declares an unsupported platform.`
+          );
+        }
+        return {
+          id: setupId,
+          title: requiredString(setup, 'title'),
+          ...(typeof setup.description === 'string'
+            ? { description: setup.description }
+            : {}),
+          ...(typeof setup.icon === 'string' ? { icon: setup.icon } : {}),
+          ...(platforms ? { platforms } : {}),
+        };
+      })
+    : undefined;
+  if (
+    readerSetups &&
+    new Set(readerSetups.map((setup) => setup.id)).size !== readerSetups.length
+  ) {
+    throw new InvalidExtensionManifestError('Reader setup ids must be unique.');
+  }
+  if (
+    readerSetups?.length &&
+    !resources.some((resource) => resource.name === 'reader')
+  ) {
+    throw new InvalidExtensionManifestError(
+      'Manifests with readerSetups must declare the reader resource.'
+    );
+  }
+  if (
+    readerSetups?.length &&
+    parsedTransport.kind !== 'host'
+  ) {
+    throw new InvalidExtensionManifestError(
+      'Reader setup is available only to reviewed host integrations.'
+    );
+  }
+
   const permissions = record(value.permissions);
   const hosts = permissions?.hosts;
   if (hosts != null && !Array.isArray(hosts)) {
@@ -1159,6 +1246,7 @@ export function parseExtensionManifest(input: unknown): ExtensionManifest {
   if (attribution) manifest.attribution = attribution;
   if (libraryActions) manifest.libraryActions = libraryActions;
   if (libraryImports) manifest.libraryImports = libraryImports;
+  if (readerSetups) manifest.readerSetups = readerSetups;
   if (parsedHosts || parsedDevice || parsedAndroidPackages) {
     manifest.permissions = {
       ...(parsedHosts ? { hosts: parsedHosts } : {}),

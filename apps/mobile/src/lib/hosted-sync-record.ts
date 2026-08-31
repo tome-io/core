@@ -70,7 +70,7 @@ export interface HostedProgressRecord {
   } | null;
   percentage: number;
   metadata: Record<string, unknown> | null;
-  source: 'tomeio' | 'koreader' | 'moonreader';
+  source: 'tomeio' | 'koreader' | 'moonreader' | 'kobo';
   updatedAt: number;
   serverUpdatedAt: number;
   removedAt: number | null;

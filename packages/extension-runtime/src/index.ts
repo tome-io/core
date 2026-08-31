@@ -326,7 +326,7 @@ export class ExtensionRegistry {
     const manifest = parseExtensionManifest(definition.manifest);
     if (manifest.transport.kind === 'bundled' || manifest.transport.kind === 'script') {
       throw new ExtensionInstallError(
-        'Community add-ons must use HTTP, declarative, or reviewed device transports.'
+        'Community add-ons must use HTTP, declarative, or reviewed host/device transports.'
       );
     }
     if (

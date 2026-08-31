@@ -16,7 +16,7 @@ Tomeio itself.
 - `resolve`: provider-neutral handoff from a discovered book to provider candidates;
 - `reviews`: paginated, provider-neutral reader reviews for a book reference;
 - `acquisition`: downloadable or externally openable editions for a provider-owned id;
-- `reader`: imported reading progress from a reader integration;
+- `reader`: imported reading progress or reviewed account setup for a reader integration;
 - `libraryAction`: host-rendered actions on library and detail screens;
 - `libraryImport`: host-rendered backup imports owned by an installed reader integration.
 
@@ -91,6 +91,11 @@ entry creates a normal local installation and may require configuration before i
 enabled. Moon+ Reader is the first community entry. Its manifest, local-file action, and
 `.mrpro` import workflow live in `tome-io/extensions`; live progress synchronization is
 provided by Tomeio Sync rather than by the extension.
+
+The Kobo community add-on uses the same split. Its reviewed host setup creates a
+revocable, account-scoped Kobo endpoint; Tomeio Sync implements the Kobo wire protocol.
+The add-on never receives the account token. Kobo integration is metadata/progress-only
+and does not transfer book or cover files.
 
 Third-party add-ons are installed from a trusted HTTPS GitHub repository or direct
 manifest URL and are not listed in community discovery. A repository resolves to

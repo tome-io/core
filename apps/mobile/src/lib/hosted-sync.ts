@@ -37,6 +37,7 @@ import {
 } from "./hosted-sync-record";
 
 const SESSION_KEY = "tomeio.hosted-sync.session.v1";
+const KOBO_ENDPOINT_KEY_PREFIX = "tomeio.hosted-sync.kobo-endpoint.v1";
 const SERVICE_ORIGIN = (
   process.env.EXPO_PUBLIC_SYNC_URL ?? "https://sync.tomeio.app"
 ).replace(/\/$/u, "");
@@ -77,6 +78,13 @@ export interface HostedSyncBookChange {
 export interface HostedSyncAccount {
   id: string;
   email: string;
+}
+
+export interface HostedKoboConnection {
+  connected: boolean;
+  endpoint?: string;
+  createdAt?: number;
+  lastUsedAt?: number;
 }
 
 interface HostedSyncSession {
@@ -133,6 +141,16 @@ interface SyncCheckpoint {
   acknowledgements: Record<string, string>;
   localRevision?: string;
   remoteWindowRevision?: string;
+  remoteVersion?: number;
+}
+
+interface HostedSyncStatus {
+  versions: {
+    progress: number;
+    library: number;
+    readingList: number;
+  };
+  serverTime: number;
 }
 
 const HOSTED_DOCUMENT_ALIAS_PREFIX =
@@ -155,6 +173,10 @@ export class HostedSyncError extends Error {
     super(message);
     this.name = "HostedSyncError";
   }
+}
+
+function koboEndpointKey(accountId: string): string {
+  return `${KOBO_ENDPOINT_KEY_PREFIX}.${accountId}`;
 }
 
 async function ensureSecureStorage(): Promise<void> {
@@ -460,6 +482,90 @@ export async function logoutHostedSync(): Promise<void> {
   }
   await authenticatedRequest("/v1/auth/logout", { method: "POST" });
   await SecureStore.deleteItemAsync(SESSION_KEY);
+  await SecureStore.deleteItemAsync(koboEndpointKey(session.account.id));
+}
+
+function hostedKoboConnection(
+  value: unknown,
+  endpoint?: string | null,
+): HostedKoboConnection {
+  if (!value || typeof value !== "object") {
+    throw new Error("The sync service returned an invalid Kobo connection.");
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.connected !== "boolean") {
+    throw new Error("The sync service returned an invalid Kobo connection.");
+  }
+  const createdAt = record.createdAt;
+  const lastUsedAt = record.lastUsedAt;
+  if (
+    (createdAt != null && typeof createdAt !== "number") ||
+    (lastUsedAt != null && typeof lastUsedAt !== "number")
+  ) {
+    throw new Error("The sync service returned invalid Kobo connection dates.");
+  }
+  return {
+    connected: record.connected,
+    ...(record.connected && endpoint ? { endpoint } : {}),
+    ...(typeof createdAt === "number" ? { createdAt } : {}),
+    ...(typeof lastUsedAt === "number" ? { lastUsedAt } : {}),
+  };
+}
+
+export async function getHostedKoboConnection(): Promise<HostedKoboConnection> {
+  const session = await loadSession();
+  if (session == null) {
+    throw new Error("Sign in to Tomeio Sync before connecting Kobo.");
+  }
+  const [response, savedEndpoint] = await Promise.all([
+    authenticatedRequest<unknown>("/v1/readers/kobo"),
+    SecureStore.getItemAsync(koboEndpointKey(session.account.id)),
+  ]);
+  const connection = hostedKoboConnection(response, savedEndpoint);
+  if (!connection.connected && savedEndpoint != null) {
+    await SecureStore.deleteItemAsync(koboEndpointKey(session.account.id));
+  }
+  return connection;
+}
+
+export async function connectHostedKobo(): Promise<HostedKoboConnection> {
+  const session = await loadSession();
+  if (session == null) {
+    throw new Error("Sign in to Tomeio Sync before connecting Kobo.");
+  }
+  const response = await authenticatedRequest<Record<string, unknown>>(
+    "/v1/readers/kobo",
+    { method: "POST" },
+  );
+  const endpoint = response.endpoint;
+  if (typeof endpoint !== "string") {
+    throw new Error("The sync service did not return a Kobo endpoint.");
+  }
+  const parsed = new URL(endpoint);
+  const serviceOrigin = new URL(SERVICE_ORIGIN).origin;
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.origin !== serviceOrigin ||
+    !/^\/kobo\/[A-Za-z0-9_-]+$/u.test(parsed.pathname)
+  ) {
+    throw new Error("The sync service returned an invalid Kobo endpoint.");
+  }
+  await SecureStore.setItemAsync(koboEndpointKey(session.account.id), endpoint, {
+    keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
+  });
+  return hostedKoboConnection(response, endpoint);
+}
+
+export async function disconnectHostedKobo(): Promise<HostedKoboConnection> {
+  const session = await loadSession();
+  if (session == null) {
+    throw new Error("Sign in to Tomeio Sync before disconnecting Kobo.");
+  }
+  const response = await authenticatedRequest<unknown>("/v1/readers/kobo", {
+    method: "DELETE",
+  });
+  await SecureStore.deleteItemAsync(koboEndpointKey(session.account.id));
+  return hostedKoboConnection(response);
 }
 
 async function md5(value: string): Promise<string> {
@@ -509,6 +615,12 @@ async function loadCheckpoint(
   ) {
     throw new Error(`The stored ${stream} remote revision is invalid.`);
   }
+  if (
+    value.remoteVersion != null &&
+    (!Number.isSafeInteger(value.remoteVersion) || value.remoteVersion < 0)
+  ) {
+    throw new Error(`The stored ${stream} remote version is invalid.`);
+  }
   return {
     cursor: value.cursor ?? null,
     acknowledgements: value.acknowledgements,
@@ -516,6 +628,41 @@ async function loadCheckpoint(
     ...(value.remoteWindowRevision
       ? { remoteWindowRevision: value.remoteWindowRevision }
       : {}),
+    ...(value.remoteVersion != null
+      ? { remoteVersion: value.remoteVersion }
+      : {}),
+  };
+}
+
+function hostedSyncStatus(value: unknown): HostedSyncStatus {
+  if (!value || typeof value !== "object") {
+    throw new Error("The sync service returned an invalid change status.");
+  }
+  const record = value as Record<string, unknown>;
+  const versions = record.versions;
+  if (!versions || typeof versions !== "object") {
+    throw new Error("The sync service returned invalid change versions.");
+  }
+  const values = versions as Record<string, unknown>;
+  if (
+    !Number.isSafeInteger(values.progress) ||
+    (values.progress as number) < 0 ||
+    !Number.isSafeInteger(values.library) ||
+    (values.library as number) < 0 ||
+    !Number.isSafeInteger(values.readingList) ||
+    (values.readingList as number) < 0 ||
+    !Number.isSafeInteger(record.serverTime) ||
+    (record.serverTime as number) < 0
+  ) {
+    throw new Error("The sync service returned invalid change versions.");
+  }
+  return {
+    versions: {
+      progress: values.progress as number,
+      library: values.library as number,
+      readingList: values.readingList as number,
+    },
+    serverTime: record.serverTime as number,
   };
 }
 
@@ -854,11 +1001,22 @@ function collectionRecordFromHosted(
 async function performHostedCollectionSync(
   accountId: string,
   collection: SyncedCollection,
+  remoteVersion: number,
+  statusServerTime: number,
   getLocalIdentifiers: () => Promise<Map<string, HostedDocumentIds | null>>,
   notify: (progress: HostedSyncProgress) => void,
 ): Promise<{ imported: number; pushed: number; serverTime: number }> {
   const stream = `collection:${collection}`;
   const checkpoint = await loadCheckpoint(accountId, stream);
+  const localBeforePull = await loadCollectionSyncRecords(collection);
+  const localRevision = await syncRecordsRevision(localBeforePull);
+  if (
+    checkpoint.localRevision === localRevision &&
+    checkpoint.remoteVersion === remoteVersion
+  ) {
+    console.info("[hosted-sync] collection version unchanged", { collection });
+    return { imported: 0, pushed: 0, serverTime: statusServerTime };
+  }
   notify({
     phase:
       collection === "library" ? "pulling-library" : "pulling-reading-list",
@@ -871,8 +1029,6 @@ async function performHostedCollectionSync(
     records: HostedCollectionRecord[];
     serverTime: number;
   }>(incrementalPath(`/v1/collections/${collection}`, checkpoint.cursor));
-  const localBeforePull = await loadCollectionSyncRecords(collection);
-  const localRevision = await syncRecordsRevision(localBeforePull);
   const windowRevision = await remoteWindowRevision(remote.records);
   const remoteIsUnchanged =
     remote.records.length === 0 ||
@@ -884,6 +1040,7 @@ async function performHostedCollectionSync(
       local: localBeforePull.length,
     });
     checkpoint.cursor = Math.max(0, remote.serverTime - 1);
+    checkpoint.remoteVersion = remoteVersion;
     if (remote.records.length) checkpoint.remoteWindowRevision = windowRevision;
     await saveCheckpoint(accountId, stream, checkpoint);
     return { imported: 0, pushed: 0, serverTime: remote.serverTime };
@@ -996,6 +1153,7 @@ async function performHostedCollectionSync(
   // Keep a one-millisecond overlap so a concurrent write that shares the
   // response timestamp cannot fall between incremental windows.
   checkpoint.cursor = Math.max(0, remote.serverTime - 1);
+  checkpoint.remoteVersion = remoteVersion;
   checkpoint.localRevision = await syncRecordsRevision(
     await loadCollectionSyncRecords(collection),
   );
@@ -1012,40 +1170,76 @@ async function performHostedProgressSync(
   accountId: string,
   notify: (progress: HostedSyncProgress) => void,
 ): Promise<HostedSyncResult> {
+  const status = hostedSyncStatus(
+    await authenticatedRequest<unknown>("/v1/sync/status"),
+  );
   const checkpoint = await loadCheckpoint(accountId, "progress");
-  notify({ phase: "pulling-progress", message: "Checking reading progress…" });
-  const remote = await authenticatedRequest<{
-    records: HostedProgressRecord[];
-    serverTime: number;
-  }>(incrementalPath("/v1/progress", checkpoint.cursor));
   const localBeforePull = await loadProgressSyncRecords();
   const localRevision = await syncRecordsRevision(localBeforePull);
-  const windowRevision = await remoteWindowRevision(remote.records);
-  const remoteIsUnchanged =
-    remote.records.length === 0 ||
-    checkpoint.remoteWindowRevision === windowRevision;
   let localIdentifiersPromise:
     | Promise<Map<string, HostedDocumentIds | null>>
     | undefined;
   const getLocalIdentifiers = () =>
     (localIdentifiersPromise ??= localDocumentIdentifiers());
-  if (checkpoint.localRevision === localRevision && remoteIsUnchanged) {
-    console.info("[hosted-sync] progress unchanged", {
-      remote: remote.records.length,
-      local: localBeforePull.length,
-    });
-    checkpoint.cursor = Math.max(0, remote.serverTime - 1);
-    if (remote.records.length) checkpoint.remoteWindowRevision = windowRevision;
-    await saveCheckpoint(accountId, "progress", checkpoint);
+  if (
+    checkpoint.localRevision === localRevision &&
+    checkpoint.remoteVersion === status.versions.progress
+  ) {
+    console.info("[hosted-sync] progress version unchanged");
     const library = await performHostedCollectionSync(
       accountId,
       "library",
+      status.versions.library,
+      status.serverTime,
       getLocalIdentifiers,
       notify,
     );
     const readingList = await performHostedCollectionSync(
       accountId,
       "reading-list",
+      status.versions.readingList,
+      status.serverTime,
+      getLocalIdentifiers,
+      notify,
+    );
+    return {
+      importedRecords: library.imported + readingList.imported,
+      pushedRecords: library.pushed + readingList.pushed,
+      unmatchedRecords: 0,
+      syncedAt: Math.max(status.serverTime, library.serverTime, readingList.serverTime),
+    };
+  }
+  notify({ phase: "pulling-progress", message: "Checking reading progress…" });
+  const remote = await authenticatedRequest<{
+    records: HostedProgressRecord[];
+    serverTime: number;
+  }>(incrementalPath("/v1/progress", checkpoint.cursor));
+  const windowRevision = await remoteWindowRevision(remote.records);
+  const remoteIsUnchanged =
+    remote.records.length === 0 ||
+    checkpoint.remoteWindowRevision === windowRevision;
+  if (checkpoint.localRevision === localRevision && remoteIsUnchanged) {
+    console.info("[hosted-sync] progress unchanged", {
+      remote: remote.records.length,
+      local: localBeforePull.length,
+    });
+    checkpoint.cursor = Math.max(0, remote.serverTime - 1);
+    checkpoint.remoteVersion = status.versions.progress;
+    if (remote.records.length) checkpoint.remoteWindowRevision = windowRevision;
+    await saveCheckpoint(accountId, "progress", checkpoint);
+    const library = await performHostedCollectionSync(
+      accountId,
+      "library",
+      status.versions.library,
+      status.serverTime,
+      getLocalIdentifiers,
+      notify,
+    );
+    const readingList = await performHostedCollectionSync(
+      accountId,
+      "reading-list",
+      status.versions.readingList,
+      status.serverTime,
       getLocalIdentifiers,
       notify,
     );
@@ -1184,6 +1378,7 @@ async function performHostedProgressSync(
     });
   });
   checkpoint.cursor = Math.max(0, remote.serverTime - 1);
+  checkpoint.remoteVersion = status.versions.progress;
   checkpoint.localRevision = await syncRecordsRevision(
     await loadProgressSyncRecords(),
   );
@@ -1195,12 +1390,16 @@ async function performHostedProgressSync(
   const library = await performHostedCollectionSync(
     accountId,
     "library",
+    status.versions.library,
+    status.serverTime,
     getLocalIdentifiers,
     notify,
   );
   const readingList = await performHostedCollectionSync(
     accountId,
     "reading-list",
+    status.versions.readingList,
+    status.serverTime,
     getLocalIdentifiers,
     notify,
   );

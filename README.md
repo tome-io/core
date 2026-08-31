@@ -68,7 +68,7 @@ Tomeio add-ons expose capability resources:
 - `meta` — book details and metadata enrichment.
 - `resolve` — provider-neutral search-to-download handoff.
 - `acquisition` — downloadable formats or external open actions.
-- `reader` — external reader progress.
+- `reader` — external reader progress and reviewed connection setup.
 - `libraryAction` — buttons rendered and controlled by Tomeio.
 
 The official extensions are Open Library and Project Gutenberg. Open Library also provides
