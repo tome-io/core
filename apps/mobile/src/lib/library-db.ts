@@ -1444,6 +1444,31 @@ export async function markCatalogBookRead(bookKey: string): Promise<void> {
   });
 }
 
+export async function persistCatalogBookProgress(
+  book: LibraryBook,
+): Promise<void> {
+  if (typeof book.progress !== "number" || !Number.isFinite(book.progress)) {
+    throw new Error("Reading progress must be a finite percentage.");
+  }
+  await withDatabaseWrite(async (database) => {
+    const exists = await database.getFirstAsync<{ present: number }>(
+      "SELECT 1 AS present FROM catalog_books WHERE book_key = ?",
+      book.key,
+    );
+    if (!exists)
+      throw new Error("This book is not present in the library catalog.");
+    await upsertReadingProgress(
+      database,
+      {
+        ...book,
+        progress: Math.max(0, Math.min(100, book.progress)),
+      },
+      "tomeio",
+      book.lastReadAt ?? Date.now(),
+    );
+  });
+}
+
 export function syncAliases(book: LibraryBook): string[] {
   const format = book.format || book.local?.format || "";
   return [

@@ -37,6 +37,7 @@ import {
   loadMoonReaderCatalog,
   loadProgressSyncCatalog,
   markCatalogBookRead,
+  persistCatalogBookProgress,
   persistCatalogBook,
   persistLocalBook,
   removeLibrarySyncBook,
@@ -118,6 +119,11 @@ interface LibraryActionsValue {
     preference: BookCoverPreference,
   ) => Promise<void>;
   markAsRead: (book: LibraryBook) => Promise<void>;
+  recordReadingProgress: (
+    book: LibraryBook,
+    progress: number,
+    readingTimeMs: number,
+  ) => Promise<void>;
   removeLocalFile: (book: LibraryBook) => Promise<void>;
   removeLibraryBook: (book: LibraryBook) => Promise<void>;
   isOnReadingList: (key: string) => boolean;
@@ -169,6 +175,7 @@ const LibraryActionsContext = createContext<LibraryActionsValue>({
   cacheBookCoverSource: async () => {},
   setBookCoverPreference: async () => {},
   markAsRead: async () => {},
+  recordReadingProgress: async () => {},
   removeLocalFile: async () => {},
   removeLibraryBook: async () => {},
   isOnReadingList: () => false,
@@ -1050,6 +1057,30 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     [commit, schedulePendingChanges],
   );
 
+  const recordReadingProgress = useCallback(
+    async (book: LibraryBook, progress: number, readingTimeMs: number) => {
+      const updated: LibraryBook = {
+        ...book,
+        progress: Math.max(book.progress ?? 0, Math.max(0, Math.min(100, progress))),
+        readingTimeMs: Math.max(book.readingTimeMs ?? 0, readingTimeMs),
+        lastReadAt: Date.now(),
+      };
+      if (updated.progress >= 100) updated.isRead = true;
+      await persistCatalogBookProgress(updated);
+      const applyProgress = (item: LibraryBook) =>
+        item.key === updated.key ? { ...item, ...updated } : item;
+      setLocalBooks((current) => current.map(applyProgress));
+      setMoonReaderBooks((current) => current.map(applyProgress));
+      setProgressSyncBooks((current) => current.map(applyProgress));
+      await commit((current) => ({
+        downloaded: current.downloaded.map(applyProgress),
+        readingList: current.readingList.map(applyProgress),
+      }));
+      schedulePendingChanges(updated, ["progress"]);
+    },
+    [commit, schedulePendingChanges],
+  );
+
   const removeLocalFile = useCallback(
     async (book: LibraryBook) => {
       if (!book.local?.uri)
@@ -1729,6 +1760,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       cacheBookCoverSource,
       setBookCoverPreference,
       markAsRead,
+      recordReadingProgress,
       removeLocalFile,
       removeLibraryBook,
       isOnReadingList,
@@ -1740,6 +1772,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       removeLocalFile,
       isOnReadingList,
       markAsRead,
+      recordReadingProgress,
       recordDownload,
       refreshBookMetadata,
       refreshBookCoverSources,

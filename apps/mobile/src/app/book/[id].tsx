@@ -89,6 +89,7 @@ import {
   type LibraryBook,
 } from '@/lib/library';
 import { loadLocalCatalogBook } from '@/lib/library-db';
+import { canReadInTomeio } from '@/lib/readium-engine';
 import {
   getWorkDetails,
   type DiscoveryBook,
@@ -1115,8 +1116,6 @@ export default function BookDetailScreen() {
       ),
     [addonActions]
   );
-  const openReadOptions = useCallback(() => setReadOptionsOpen(true), []);
-
   const goBack = useCallback(() => {
     if (router.canGoBack()) router.back();
     else router.replace('/home');
@@ -1200,6 +1199,25 @@ export default function BookDetailScreen() {
     : libraryActionBook;
   const hasOpenAction =
     Platform.OS !== 'web' && !!openableLibraryBook && localFileAvailable;
+  const opensInTomeio = !!openableLibraryBook && canReadInTomeio(openableLibraryBook);
+  const openInTomeio = () => {
+    if (!openableLibraryBook || !canReadInTomeio(openableLibraryBook)) return;
+    setReadOptionsOpen(false);
+    router.push({
+      pathname: '/read/[id]',
+      params: {
+        id: openableLibraryBook.key,
+        book: JSON.stringify(openableLibraryBook),
+      },
+    } as any);
+  };
+  const openReadOptions = () => {
+    if (Platform.OS === 'ios' && opensInTomeio) {
+      openInTomeio();
+      return;
+    }
+    setReadOptionsOpen(true);
+  };
   const viewUrl = !localFileAvailable
     ? (extensionBook ? bookSourceUrl(extensionBook) : undefined) ??
       (libraryActionBook?.extension?.book
@@ -1902,6 +1920,7 @@ export default function BookDetailScreen() {
         <ReadBookSheet
           book={openableLibraryBook}
           visible={readOptionsOpen}
+          onReadInTomeio={opensInTomeio ? openInTomeio : undefined}
           readerActions={readerAddonActions.map((action) => ({
             ...action,
             label: action.label.replace(/^Open in /, 'Read in '),
