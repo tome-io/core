@@ -151,6 +151,8 @@ export default function ReadScreen() {
   const [highlights, setHighlights] = useState<ReaderHighlight[]>([]);
   const [toc, setToc] = useState<ReaderTocItem[]>([]);
   const [progress, setProgress] = useState(book?.progress ?? 0);
+  const [position, setPosition] = useState<number | null>(null);
+  const [positionCount, setPositionCount] = useState(0);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [tocVisible, setTocVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -187,6 +189,8 @@ export default function ReadScreen() {
       setProgress(
         readerProgress(stored.book.locator) ?? currentBook.progress ?? 0,
       );
+      setPosition(stored.book.locator?.locations?.position ?? null);
+      setPositionCount(0);
       const prepared = await prepareReadiumFile(currentBook, stored.book.locator);
       if (active) setFile(prepared);
     })().catch((cause) => {
@@ -248,6 +252,7 @@ export default function ReadScreen() {
   const handleLocationChange = useCallback(
     (locator: Locator) => {
       locatorRef.current = asReaderLocator(locator);
+      setPosition(locator.locations.position ?? null);
       const nextProgress = readerProgress(locatorRef.current);
       if (nextProgress != null) setProgress(nextProgress);
       if (stateTimerRef.current) clearTimeout(stateTimerRef.current);
@@ -262,6 +267,7 @@ export default function ReadScreen() {
 
   const handlePublicationReady = useCallback((publication: PublicationReadyEvent) => {
     setToc(flattenToc(publication.tableOfContents));
+    setPositionCount(publication.positions.length);
   }, []);
 
   const updatePreferences = useCallback((next: ReaderPreferences) => {
@@ -342,6 +348,11 @@ export default function ReadScreen() {
     progress < 10 && progress % 1 !== 0 ? 1 : 0,
   )}%`;
   const remainingLabel = timeLeftLabel(currentReadingTime(), progress);
+  const positionLabel = position
+    ? positionCount
+      ? `${position} / ${positionCount}`
+      : String(position)
+    : '—';
   const footerBottom = safeAreaInsets.bottom + 4;
   const readerBottomInset = footerBottom + READER_FOOTER_HEIGHT;
 
@@ -506,15 +517,22 @@ export default function ReadScreen() {
               }}
             />
           </View>
-          <View className="mt-1 flex-row items-center justify-between">
+          <View className="mt-1 flex-row items-center">
             <Text
-              className="text-[10px] font-medium"
+              numberOfLines={1}
+              className="flex-1 text-[10px] font-medium"
               style={{ color: `${themeColors.textColor}AA` }}
             >
               {remainingLabel}
             </Text>
             <Text
-              className="text-[10px] font-medium"
+              className="flex-1 text-center text-[10px] font-medium"
+              style={{ color: `${themeColors.textColor}AA` }}
+            >
+              {positionLabel}
+            </Text>
+            <Text
+              className="flex-1 text-right text-[10px] font-medium"
               style={{ color: `${themeColors.textColor}AA` }}
             >
               {progressLabel}
