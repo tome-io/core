@@ -1,0 +1,7 @@
+name = "tomeio-catalog"
+main = "src/index.ts"
+compatibility_date = "2026-08-28"
+routes = [{ pattern = "catalog.tomeio.app", custom_domain = true }]
+
+[vars]
+EGRESS_PROXY_URL = "https://takeabunch.lukestephens.co.za/.well-known/tomeio-catalog-egress/v1/fetch"
