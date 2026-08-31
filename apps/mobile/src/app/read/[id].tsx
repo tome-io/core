@@ -341,10 +341,12 @@ export default function ReadScreen() {
           Platform.OS === 'ios'
             ? {
                 headerShown: controlsVisible,
-                headerTransparent: true,
+                headerTransparent: false,
                 headerTitle: progressLabel,
                 headerBackVisible: false,
                 headerShadowVisible: false,
+                headerStyle: { backgroundColor: themeColors.backgroundColor },
+                headerTintColor: themeColors.textColor,
                 scrollEdgeEffects: { top: 'hidden', bottom: 'hidden' },
               }
             : { headerShown: false }
