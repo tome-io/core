@@ -66,6 +66,22 @@ function parseBook(value?: string): LibraryBook | null {
   }
 }
 
+function sameRouteValue(left?: string | null, right?: string | null): boolean {
+  if (!left || !right) return false;
+  const comparable = (value: string) => {
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  };
+  return comparable(left) === comparable(right);
+}
+
+function bookSource(book: LibraryBook | null): string | null {
+  return book?.local?.uri ?? book?.fileUri ?? null;
+}
+
 function flattenToc(items: Link[], depth = 0): ReaderTocItem[] {
   return items.flatMap((item) => [
     ...(item.title ? [{ href: item.href, title: item.title, depth }] : []),
@@ -88,9 +104,17 @@ export default function ReadScreen() {
   const { readingList } = useLibraryReadingList();
   const { recordReadingProgress } = useLibraryActions();
   const book = useMemo(
-    () =>
-      [...downloaded, ...readingList].find((candidate) => candidate.key === params.id) ??
-      routeBook,
+    () => {
+      const candidates = [...downloaded, ...readingList];
+      return (
+        candidates.find((candidate) => sameRouteValue(candidate.key, params.id)) ??
+        candidates.find((candidate) => sameRouteValue(candidate.key, routeBook?.key)) ??
+        candidates.find((candidate) =>
+          sameRouteValue(bookSource(candidate), bookSource(routeBook)),
+        ) ??
+        routeBook
+      );
+    },
     [downloaded, params.id, readingList, routeBook],
   );
   const readerSourceKey = book
