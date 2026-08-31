@@ -379,18 +379,23 @@ export default function ReadScreen() {
       ) : null}
 
       {file && !error ? (
-        <ReadiumView
-          ref={readerRef}
-          file={file}
-          preferences={readiumPreferences(preferences)}
-          decorations={readiumDecorations(highlights)}
-          selectionActions={[{ id: 'highlight', label: 'Highlight' }]}
-          style={{ flex: 1 }}
-          onLocationChange={handleLocationChange}
-          onPublicationReady={handlePublicationReady}
-          onSelectionAction={handleSelectionAction}
-          onDecorationActivated={handleDecorationActivated}
-        />
+        <SafeAreaView
+          edges={Platform.OS === 'ios' ? ['bottom'] : []}
+          style={{ flex: 1, backgroundColor: themeColors.backgroundColor }}
+        >
+          <ReadiumView
+            ref={readerRef}
+            file={file}
+            preferences={readiumPreferences(preferences)}
+            decorations={readiumDecorations(highlights)}
+            selectionActions={[{ id: 'highlight', label: 'Highlight' }]}
+            style={{ flex: 1 }}
+            onLocationChange={handleLocationChange}
+            onPublicationReady={handlePublicationReady}
+            onSelectionAction={handleSelectionAction}
+            onDecorationActivated={handleDecorationActivated}
+          />
+        </SafeAreaView>
       ) : (
         <View className="flex-1 items-center justify-center gap-4 px-8">
           {error ? (
@@ -476,32 +481,6 @@ export default function ReadScreen() {
             />
           </View>
         </SafeAreaView>
-      ) : null}
-
-      {file && !error ? (
-        <View
-          pointerEvents="none"
-          style={{ position: 'absolute', right: 16, bottom: 8, left: 16 }}
-        >
-          <View
-            className="mb-1 h-0.5 overflow-hidden rounded-full"
-            style={{ backgroundColor: `${themeColors.textColor}22` }}
-          >
-            <View
-              style={{
-                width: `${Math.max(0, Math.min(100, progress))}%`,
-                height: '100%',
-                backgroundColor: themeColors.textColor,
-              }}
-            />
-          </View>
-          <Text
-            className="text-right text-[10px] font-medium"
-            style={{ color: `${themeColors.textColor}AA` }}
-          >
-            {progressLabel}
-          </Text>
-        </View>
       ) : null}
 
       <ReaderSettingsSheet
