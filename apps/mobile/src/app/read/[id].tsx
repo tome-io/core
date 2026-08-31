@@ -151,7 +151,6 @@ export default function ReadScreen() {
   const [highlights, setHighlights] = useState<ReaderHighlight[]>([]);
   const [toc, setToc] = useState<ReaderTocItem[]>([]);
   const [progress, setProgress] = useState(book?.progress ?? 0);
-  const [controlsVisible, setControlsVisible] = useState(true);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [tocVisible, setTocVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -348,15 +347,12 @@ export default function ReadScreen() {
 
   return (
     <View className="flex-1" style={{ backgroundColor: themeColors.backgroundColor }}>
-      <StatusBar
-        hidden={!controlsVisible}
-        style={preferences.theme === 'dark' ? 'light' : 'dark'}
-      />
+      <StatusBar style={preferences.theme === 'dark' ? 'light' : 'dark'} />
       <Stack.Screen
         options={
           Platform.OS === 'ios'
             ? {
-                headerShown: controlsVisible,
+                headerShown: true,
                 headerTransparent: false,
                 headerTitle: '',
                 headerBackVisible: false,
@@ -368,7 +364,7 @@ export default function ReadScreen() {
             : { headerShown: false }
         }
       />
-      {Platform.OS === 'ios' && controlsVisible ? (
+      {Platform.OS === 'ios' ? (
         <>
           <Stack.Toolbar placement="left">
             <Stack.Toolbar.Button
@@ -443,34 +439,20 @@ export default function ReadScreen() {
       )}
 
       {file && !error ? (
-        <>
-          {/* KOReader reserves the top center for chrome and the bottom center for typography. */}
-          <Pressable
-            onPress={() => setControlsVisible((visible) => !visible)}
-            accessibilityLabel={controlsVisible ? 'Hide reader controls' : 'Show reader controls'}
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: '25%',
-              width: '50%',
-              height: '18%',
-            }}
-          />
-          <Pressable
-            onPress={() => setSettingsVisible(true)}
-            accessibilityLabel="Reading settings"
-            style={{
-              position: 'absolute',
-              bottom: 0,
-              left: '25%',
-              width: '50%',
-              height: '16%',
-            }}
-          />
-        </>
+        <Pressable
+          onPress={() => setSettingsVisible(true)}
+          accessibilityLabel="Reading settings"
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            left: '25%',
+            width: '50%',
+            height: '16%',
+          }}
+        />
       ) : null}
 
-      {Platform.OS === 'android' && controlsVisible && file && !error ? (
+      {Platform.OS === 'android' && file && !error ? (
         <SafeAreaView
           pointerEvents="box-none"
           edges={['top', 'left', 'right', 'bottom']}
