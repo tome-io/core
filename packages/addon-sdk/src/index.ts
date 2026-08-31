@@ -105,11 +105,13 @@ export function defineAddon(
     'reviews',
     'acquisition',
     'readerSync',
+    'readerSetup',
     'libraryAction',
     'libraryImport',
   ] as const) {
     if (!handlers[resource]) continue;
-    const manifestResource = resource === 'readerSync' ? 'reader' : resource;
+    const manifestResource =
+      resource === 'readerSync' || resource === 'readerSetup' ? 'reader' : resource;
     if (!declared.has(manifestResource)) {
       throw new AddonProtocolError(
         `Handler "${resource}" is not declared in ${manifest.id}'s resources.`

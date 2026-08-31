@@ -52,6 +52,19 @@ After the Worker is deployed and registration is enabled:
 
 No Tomeio KOReader plugin is required for progress sync.
 
+## Kobo setup
+
+Install the **Kobo eReader** community add-on, sign in to Tomeio Sync, and open its
+setup action under **Settings → Sync**. Tomeio generates a private endpoint. Connect
+the Kobo to a computer, edit `.kobo/Kobo/Kobo eReader.conf`, and set
+`[OneStoreServices] api_endpoint` to that endpoint before restarting the reader.
+
+The adapter synchronizes EPUB library metadata and reading progress through Kobo's
+built-in sync client. It does not upload EPUBs, PDFs, or covers. Because Kobo models
+custom-library entries as downloadable entitlements, metadata-only titles may appear
+unavailable on the reader. Official Kobo Store requests continue through the proxy by
+default.
+
 ## Moon+ Reader setup
 
 Moon+ Reader uses the same Tomeio Sync account through its built-in WebDAV support:

@@ -117,6 +117,11 @@ const BRANDING: Record<string, ExtensionBranding> = {
     mark: 'M+',
     logoScale: 1,
   },
+  'community.tomeio.kobo': {
+    color: '#bf0000',
+    icon: 'book-open',
+    mark: 'K',
+  },
 };
 
 function brandingFor(manifest: ExtensionManifest): ExtensionBranding {

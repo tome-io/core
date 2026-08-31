@@ -20,6 +20,9 @@ import type {
   ExtensionQuery,
   ExtensionReaderSyncRequest,
   ExtensionReaderSyncResult,
+  ExtensionReaderSetup,
+  ExtensionReaderSetupRequest,
+  ExtensionReaderSetupResult,
   ExtensionReviewsQuery,
 } from '@tomeio/extension-protocol';
 import { supportsExtensionProviderRole } from '@tomeio/extension-protocol';
@@ -57,6 +60,11 @@ export interface AvailableLibraryAction extends ExtensionLibraryAction {
 }
 
 export interface AvailableLibraryImport extends ExtensionLibraryImport {
+  extensionId: string;
+  extensionName: string;
+}
+
+export interface AvailableReaderSetup extends ExtensionReaderSetup {
   extensionId: string;
   extensionName: string;
 }
@@ -125,6 +133,11 @@ interface ExtensionsContextValue extends ExtensionRegistrySnapshot {
     extensionId: string,
     request: ExtensionReaderSyncRequest
   ): Promise<ExtensionReaderSyncResult>;
+  readerSetups(): AvailableReaderSetup[];
+  runReaderSetup(
+    extensionId: string,
+    request: ExtensionReaderSetupRequest
+  ): Promise<ExtensionReaderSetupResult>;
 }
 
 const EMPTY: ExtensionsContextValue = {
@@ -186,6 +199,10 @@ const EMPTY: ExtensionsContextValue = {
     throw new Error('Extensions provider is unavailable.');
   },
   readerSync: async () => {
+    throw new Error('Extensions provider is unavailable.');
+  },
+  readerSetups: () => [],
+  runReaderSetup: async () => {
     throw new Error('Extensions provider is unavailable.');
   },
 };
@@ -650,6 +667,41 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
           }))
       );
   }, [snapshot.thirdParty]);
+  const readerSetups = useCallback((): AvailableReaderSetup[] => {
+    const platform =
+      Platform.OS === 'android' || Platform.OS === 'ios' || Platform.OS === 'web'
+        ? Platform.OS
+        : 'desktop';
+    return snapshot.thirdParty
+      .filter((extension) => extension.enabled)
+      .flatMap((extension) =>
+        (extension.manifest.readerSetups ?? [])
+          .filter(
+            (setup) => !setup.platforms?.length || setup.platforms.includes(platform)
+          )
+          .map((setup) => ({
+            ...setup,
+            extensionId: extension.manifest.id,
+            extensionName: extension.manifest.name,
+          }))
+      );
+  }, [snapshot.thirdParty]);
+  const runReaderSetup = useCallback(
+    async (extensionId: string, request: ExtensionReaderSetupRequest) => {
+      const extension = await load(extensionId);
+      if (extension.manifest.transport.kind !== 'host' || !extension.readerSetup) {
+        throw new Error('Reader setup is available only to reviewed host integrations.');
+      }
+      const descriptor = extension.manifest.readerSetups?.find(
+        (candidate) => candidate.id === request.setupId
+      );
+      if (!descriptor) {
+        throw new Error(`Extension "${extension.manifest.name}" does not provide this setup.`);
+      }
+      return extension.readerSetup(request);
+    },
+    [load]
+  );
   const runLibraryImport = useCallback(
     async (extensionId: string, importId: string, sourceUri: string, filename: string) => {
       const extension = await load(extensionId);
@@ -776,6 +828,8 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       libraryImports,
       runLibraryImport,
       readerSync,
+      readerSetups,
+      runReaderSetup,
     }),
     [
       snapshot,
@@ -808,6 +862,8 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       libraryImports,
       runLibraryImport,
       readerSync,
+      readerSetups,
+      runReaderSetup,
     ]
   );
 

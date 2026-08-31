@@ -4,6 +4,7 @@ import Constants from "expo-constants";
 import { Image } from "expo-image";
 import {
   supportsExtensionProviderRole,
+  type ExtensionReaderSetupResult,
   type ExtensionManifest,
 } from "@tomeio/extension-protocol";
 import {
@@ -19,6 +20,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Share,
   Switch,
   Text,
   TextInput,
@@ -44,6 +46,7 @@ import {
 import {
   useExtensions,
   type AvailableLibraryImport,
+  type AvailableReaderSetup,
 } from "@/context/extensions-context";
 import {
   useLibraryActions,
@@ -860,6 +863,121 @@ function LibraryImportDialog({
   );
 }
 
+function ReaderSetupDialog({
+  setup,
+  result,
+  busy,
+  onAction,
+  onClose,
+}: {
+  setup: AvailableReaderSetup | null;
+  result: ExtensionReaderSetupResult | null;
+  busy: boolean;
+  onAction: (action: "connect" | "disconnect") => void;
+  onClose: () => void;
+}) {
+  return (
+    <AppDialog
+      visible={setup != null}
+      title={setup?.title ?? "Reader setup"}
+      onClose={onClose}
+    >
+      {setup ? (
+        <View className="gap-5">
+          <Text className="text-sm leading-6" style={{ color: colors.textMuted }}>
+            {setup.description ?? `Connect ${setup.extensionName} to Tomeio Sync.`}
+          </Text>
+          {result ? (
+            <>
+              <View
+                className="gap-3 rounded-2xl border p-4"
+                style={{ borderColor: colors.border, backgroundColor: colors.surfaceRaised }}
+              >
+                <Text className="text-sm font-semibold" style={{ color: colors.text }}>
+                  {result.connected ? "Kobo connection active" : "Kobo is not connected"}
+                </Text>
+                {result.endpoint ? (
+                  <Text selectable className="text-xs leading-5" style={{ color: colors.text }}>
+                    {result.endpoint}
+                  </Text>
+                ) : result.connected ? (
+                  <Text className="text-xs leading-5" style={{ color: colors.textMuted }}>
+                    This account already has a Kobo endpoint. Generate a new one to view it; the old endpoint will stop working.
+                  </Text>
+                ) : null}
+                {result.lastUsedAt ? (
+                  <Text className="text-xs" style={{ color: colors.textMuted }}>
+                    Last used {new Date(result.lastUsedAt).toLocaleString()}
+                  </Text>
+                ) : null}
+              </View>
+              <View className="gap-2 px-1">
+                {result.instructions.map((instruction, index) => (
+                  <Text key={instruction} className="text-xs leading-5" style={{ color: colors.textMuted }}>
+                    {index + 1}. {instruction}
+                  </Text>
+                ))}
+              </View>
+              {result.warnings?.length ? (
+                <View
+                  className="gap-2 rounded-2xl border p-4"
+                  style={{ borderColor: colors.border, backgroundColor: colors.surfaceRaised }}
+                >
+                  {result.warnings.map((warning) => (
+                    <Text key={warning} className="text-xs leading-5" style={{ color: colors.textMuted }}>
+                      {warning}
+                    </Text>
+                  ))}
+                </View>
+              ) : null}
+            </>
+          ) : (
+            <View className="items-center py-4">
+              <ActivityIndicator size="small" color={colors.accent} />
+            </View>
+          )}
+          <View className="gap-3">
+            {result?.endpoint ? (
+              <PillButton
+                label="Share private endpoint"
+                icon="share-2"
+                variant="overlay"
+                disabled={busy}
+                onPress={() => {
+                  void Share.share({ message: result.endpoint! });
+                }}
+              />
+            ) : null}
+            <PillButton
+              label={
+                busy
+                  ? "Updating…"
+                  : result?.connected
+                    ? "Generate new endpoint"
+                    : "Connect Kobo"
+              }
+              icon={busy ? undefined : "link"}
+              variant="accent"
+              disabled={busy || result == null}
+              onPress={() => onAction("connect")}
+            />
+            {result?.connected ? (
+              <PillButton
+                label="Disconnect Kobo"
+                icon="x"
+                variant="danger"
+                disabled={busy}
+                onPress={() => onAction("disconnect")}
+              />
+            ) : null}
+            <PillButton label="Close" variant="overlay" disabled={busy} onPress={onClose} />
+          </View>
+        </View>
+      ) : null}
+    </AppDialog>
+  );
+}
+
 export default function SettingsScreen() {
   const { width } = useWindowDimensions();
   const gutter = usePageGutter();
@@ -890,6 +1008,10 @@ export default function SettingsScreen() {
   const [libraryImport, setLibraryImport] =
     useState<LibraryImportPreview | null>(null);
   const [libraryImportBusy, setLibraryImportBusy] = useState(false);
+  const [readerSetup, setReaderSetup] = useState<AvailableReaderSetup | null>(null);
+  const [readerSetupResult, setReaderSetupResult] =
+    useState<ExtensionReaderSetupResult | null>(null);
+  const [readerSetupBusy, setReaderSetupBusy] = useState(false);
   const [libraryMirrorInformation, setLibraryMirrorInformation] = useState(false);
   const [libraryMirrorProgress, setLibraryMirrorProgress] = useState(false);
   const [libraryImportSummaries, setLibraryImportSummaries] = useState<
@@ -961,6 +1083,10 @@ export default function SettingsScreen() {
   );
   const libraryImports = useMemo(
     () => extensions.libraryImports(),
+    [extensions],
+  );
+  const readerSetups = useMemo(
+    () => extensions.readerSetups(),
     [extensions],
   );
   const sections = useMemo(
@@ -1145,6 +1271,39 @@ export default function SettingsScreen() {
       await synchronizeLibrary();
     } catch (cause) {
       showError("Tomeio Sync failed", cause);
+    }
+  };
+
+  const openReaderSetup = async (setup: AvailableReaderSetup) => {
+    setReaderSetup(setup);
+    setReaderSetupResult(null);
+    try {
+      setReaderSetupResult(
+        await extensions.runReaderSetup(setup.extensionId, {
+          setupId: setup.id,
+          action: "status",
+        }),
+      );
+    } catch (cause) {
+      setReaderSetup(null);
+      showError("Could not load reader setup", cause);
+    }
+  };
+
+  const updateReaderSetup = async (action: "connect" | "disconnect") => {
+    if (!readerSetup) return;
+    setReaderSetupBusy(true);
+    try {
+      const result = await extensions.runReaderSetup(readerSetup.extensionId, {
+        setupId: readerSetup.id,
+        action,
+      });
+      setReaderSetupResult(result);
+      if (action === "connect") await syncHostedNow();
+    } catch (cause) {
+      showError("Could not update Kobo connection", cause);
+    } finally {
+      setReaderSetupBusy(false);
     }
   };
 
@@ -1464,7 +1623,7 @@ export default function SettingsScreen() {
               detail={
                 lastSyncedAt
                   ? `Last synced ${new Date(lastSyncedAt).toLocaleString()}`
-                  : "Sync your library and saved books across Tomeio devices, with shared progress from KOReader and Moon+ Reader."
+                  : "Sync your library and saved books across Tomeio devices, with shared progress from KOReader, Moon+ Reader, and Kobo."
               }
             >
               <PillButton
@@ -1477,6 +1636,27 @@ export default function SettingsScreen() {
               />
             </SettingsOption>
           ) : null}
+          {readerSetups.map((setup) => (
+            <SettingsOption
+              key={`${setup.extensionId}:${setup.id}`}
+              compact={compactOptions}
+              label={setup.title}
+              detail={
+                hostedSyncAccount
+                  ? (setup.description ?? `Configure ${setup.extensionName}.`)
+                  : "Sign in to Tomeio Sync before connecting this reader."
+              }
+            >
+              <PillButton
+                label="Set up"
+                icon="link"
+                variant="overlay"
+                disabled={!hostedSyncAccount || hostedSyncBusy}
+                onPress={() => void openReaderSetup(setup)}
+                fullWidth
+              />
+            </SettingsOption>
+          ))}
         </SettingsSection>
 
         {libraryImports.length ? (
@@ -1665,6 +1845,18 @@ export default function SettingsScreen() {
         onImport={() => void confirmLibraryImport()}
         onClose={() => {
           if (!libraryImportBusy) setLibraryImport(null);
+        }}
+      />
+      <ReaderSetupDialog
+        setup={readerSetup}
+        result={readerSetupResult}
+        busy={readerSetupBusy}
+        onAction={(action) => void updateReaderSetup(action)}
+        onClose={() => {
+          if (!readerSetupBusy) {
+            setReaderSetup(null);
+            setReaderSetupResult(null);
+          }
         }}
       />
       <AppErrorDialog
