@@ -21,7 +21,7 @@ import {
   type ReadiumViewRef,
   type SelectionActionEvent,
 } from 'react-native-readium';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   ReaderSettingsSheet,
@@ -55,7 +55,6 @@ import {
 
 const HIGHLIGHT_COLOR = '#F0C94B';
 const PROGRESS_FLUSH_INTERVAL_MS = 10_000;
-const READER_FOOTER_HEIGHT = 28;
 
 function parseBook(value?: string): LibraryBook | null {
   if (!value) return null;
@@ -110,7 +109,6 @@ function asReaderLocator(locator: Locator): ReaderLocator {
 
 export default function ReadScreen() {
   const router = useRouter();
-  const safeAreaInsets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ id: string; book?: string }>();
   const routeBook = useMemo(() => parseBook(params.book), [params.book]);
   const { downloaded } = useLibraryCatalog();
@@ -342,8 +340,6 @@ export default function ReadScreen() {
     progress < 10 && progress % 1 !== 0 ? 1 : 0,
   )}%`;
   const remainingLabel = timeLeftLabel(currentReadingTime(), progress);
-  const footerBottom = safeAreaInsets.bottom + 4;
-  const readerBottomInset = footerBottom + READER_FOOTER_HEIGHT;
 
   return (
     <View className="flex-1" style={{ backgroundColor: themeColors.backgroundColor }}>
@@ -359,7 +355,6 @@ export default function ReadScreen() {
                 headerShadowVisible: false,
                 headerStyle: { backgroundColor: themeColors.backgroundColor },
                 headerTintColor: themeColors.textColor,
-                scrollEdgeEffects: { top: 'hidden', bottom: 'hidden' },
               }
             : { headerShown: false }
         }
@@ -394,7 +389,6 @@ export default function ReadScreen() {
         <View
           style={{
             flex: 1,
-            paddingBottom: readerBottomInset,
             backgroundColor: themeColors.backgroundColor,
           }}
         >
@@ -490,7 +484,7 @@ export default function ReadScreen() {
           style={{
             position: 'absolute',
             right: 16,
-            bottom: footerBottom,
+            bottom: 8,
             left: 16,
           }}
         >
