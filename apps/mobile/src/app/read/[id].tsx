@@ -355,6 +355,7 @@ export default function ReadScreen() {
                 headerShadowVisible: false,
                 headerStyle: { backgroundColor: themeColors.backgroundColor },
                 headerTintColor: themeColors.textColor,
+                scrollEdgeEffects: { top: 'soft', bottom: 'soft' },
               }
             : { headerShown: false }
         }
