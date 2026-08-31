@@ -82,17 +82,6 @@ function bookSource(book: LibraryBook | null): string | null {
   return book?.local?.uri ?? book?.fileUri ?? null;
 }
 
-function timeLeftLabel(readingTimeMs: number, progress: number): string {
-  if (progress >= 100) return 'Finished';
-  if (progress <= 0 || readingTimeMs < 60_000) return 'Estimating time left';
-  const remainingMs = readingTimeMs * ((100 - progress) / progress);
-  const remainingMinutes = Math.max(1, Math.ceil(remainingMs / 60_000));
-  if (remainingMinutes < 60) return `${remainingMinutes} min left`;
-  const hours = Math.floor(remainingMinutes / 60);
-  const minutes = remainingMinutes % 60;
-  return minutes ? `${hours}h ${minutes}m left` : `${hours}h left`;
-}
-
 function flattenToc(items: Link[], depth = 0): ReaderTocItem[] {
   return items.flatMap((item) => [
     ...(item.title ? [{ href: item.href, title: item.title, depth }] : []),
@@ -148,7 +137,6 @@ export default function ReadScreen() {
   );
   const [highlights, setHighlights] = useState<ReaderHighlight[]>([]);
   const [toc, setToc] = useState<ReaderTocItem[]>([]);
-  const [progress, setProgress] = useState(book?.progress ?? 0);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [tocVisible, setTocVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -182,9 +170,6 @@ export default function ReadScreen() {
       sessionStartedAtRef.current = Date.now();
       setPreferences(stored.preferences);
       setHighlights(stored.book.highlights);
-      setProgress(
-        readerProgress(stored.book.locator) ?? currentBook.progress ?? 0,
-      );
       const prepared = await prepareReadiumFile(currentBook, stored.book.locator);
       if (active) setFile(prepared);
     })().catch((cause) => {
@@ -246,8 +231,6 @@ export default function ReadScreen() {
   const handleLocationChange = useCallback(
     (locator: Locator) => {
       locatorRef.current = asReaderLocator(locator);
-      const nextProgress = readerProgress(locatorRef.current);
-      if (nextProgress != null) setProgress(nextProgress);
       if (stateTimerRef.current) clearTimeout(stateTimerRef.current);
       stateTimerRef.current = setTimeout(() => {
         const includeLibrary =
@@ -336,10 +319,6 @@ export default function ReadScreen() {
   }, [flushState, reportSaveError, router]);
 
   const themeColors = readerThemeColors(preferences.theme);
-  const progressLabel = `${Math.max(0, Math.min(100, progress)).toFixed(
-    progress < 10 && progress % 1 !== 0 ? 1 : 0,
-  )}%`;
-  const remainingLabel = timeLeftLabel(currentReadingTime(), progress);
 
   return (
     <View className="flex-1" style={{ backgroundColor: themeColors.backgroundColor }}>
@@ -355,7 +334,6 @@ export default function ReadScreen() {
                 headerShadowVisible: false,
                 headerStyle: { backgroundColor: themeColors.backgroundColor },
                 headerTintColor: themeColors.textColor,
-                scrollEdgeEffects: { top: 'soft', bottom: 'soft' },
               }
             : { headerShown: false }
         }
@@ -477,45 +455,6 @@ export default function ReadScreen() {
             />
           </View>
         </SafeAreaView>
-      ) : null}
-
-      {file && !error ? (
-        <View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            right: 16,
-            bottom: 8,
-            left: 16,
-          }}
-        >
-          <View
-            className="h-0.5 overflow-hidden rounded-full"
-            style={{ backgroundColor: `${themeColors.textColor}22` }}
-          >
-            <View
-              style={{
-                width: `${Math.max(0, Math.min(100, progress))}%`,
-                height: '100%',
-                backgroundColor: themeColors.textColor,
-              }}
-            />
-          </View>
-          <View className="mt-1 flex-row items-center justify-between">
-            <Text
-              className="text-[10px] font-medium"
-              style={{ color: `${themeColors.textColor}AA` }}
-            >
-              {remainingLabel}
-            </Text>
-            <Text
-              className="text-[10px] font-medium"
-              style={{ color: `${themeColors.textColor}AA` }}
-            >
-              {progressLabel}
-            </Text>
-          </View>
-        </View>
       ) : null}
 
       <ReaderSettingsSheet
