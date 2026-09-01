@@ -122,6 +122,52 @@ function normalizeBookState(state?: Partial<BookReaderState>): BookReaderState {
   };
 }
 
+export function canonicalReaderBookKey(bookKey: string): string {
+  try {
+    return decodeURIComponent(bookKey);
+  } catch {
+    return bookKey;
+  }
+}
+
+function bookStateForKey(
+  store: ReaderStateStore,
+  bookKey: string,
+): BookReaderState {
+  const canonicalKey = canonicalReaderBookKey(bookKey);
+  const matches = Object.entries(store.books).filter(
+    ([candidate]) => canonicalReaderBookKey(candidate) === canonicalKey,
+  );
+  if (matches.length === 0) return normalizeBookState(EMPTY_BOOK_STATE);
+
+  const highlights = new Map<string, ReaderHighlight>();
+  let locator: ReaderLocator | undefined;
+  let locatorProgress = -1;
+  let readingTimeMs = 0;
+  let lastOpenedAt: number | undefined;
+  for (const [, value] of matches) {
+    const state = normalizeBookState(value);
+    for (const highlight of state.highlights) {
+      highlights.set(highlight.id, highlight);
+    }
+    const progress = state.locator?.locations?.totalProgression ?? -1;
+    if (state.locator && progress >= locatorProgress) {
+      locator = state.locator;
+      locatorProgress = progress;
+    }
+    readingTimeMs = Math.max(readingTimeMs, state.readingTimeMs);
+    if (state.lastOpenedAt != null) {
+      lastOpenedAt = Math.max(lastOpenedAt ?? 0, state.lastOpenedAt);
+    }
+  }
+  return normalizeBookState({
+    ...(locator ? { locator } : {}),
+    highlights: [...highlights.values()],
+    readingTimeMs,
+    ...(lastOpenedAt == null ? {} : { lastOpenedAt }),
+  });
+}
+
 async function updateStore(
   update: (current: ReaderStateStore) => ReaderStateStore,
 ): Promise<void> {
@@ -142,8 +188,20 @@ export async function loadReaderState(bookKey: string): Promise<{
   const store = await loadStore();
   return {
     preferences: { ...DEFAULT_READER_PREFERENCES, ...store.preferences },
-    book: normalizeBookState(store.books[bookKey] ?? EMPTY_BOOK_STATE),
+    book: bookStateForKey(store, bookKey),
   };
+}
+
+export async function loadReaderLocators(
+  bookKeys: string[],
+): Promise<Map<string, ReaderLocator>> {
+  const store = await loadStore();
+  const locators = new Map<string, ReaderLocator>();
+  for (const bookKey of bookKeys) {
+    const locator = bookStateForKey(store, bookKey).locator;
+    if (locator) locators.set(bookKey, locator);
+  }
+  return locators;
 }
 
 export async function saveReaderPreferences(
@@ -156,16 +214,24 @@ export async function saveBookReaderState(
   bookKey: string,
   update: Partial<BookReaderState>,
 ): Promise<void> {
-  await updateStore((current) => ({
-    ...current,
-    books: {
-      ...current.books,
-      [bookKey]: normalizeBookState({
-        ...current.books[bookKey],
-        ...update,
-      }),
-    },
-  }));
+  await updateStore((current) => {
+    const canonicalKey = canonicalReaderBookKey(bookKey);
+    const books = Object.fromEntries(
+      Object.entries(current.books).filter(
+        ([candidate]) => canonicalReaderBookKey(candidate) !== canonicalKey,
+      ),
+    );
+    return {
+      ...current,
+      books: {
+        ...books,
+        [canonicalKey]: normalizeBookState({
+          ...bookStateForKey(current, bookKey),
+          ...update,
+        }),
+      },
+    };
+  });
 }
 
 export function readerProgress(locator?: ReaderLocator): number | undefined {

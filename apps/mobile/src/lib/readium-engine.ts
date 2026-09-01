@@ -27,9 +27,13 @@ function bookFormat(book: LibraryBook): string {
   return (book.local?.format ?? book.format ?? '').toLowerCase();
 }
 
+function isSupportedFormat(format: string): boolean {
+  return format === 'epub' || format === 'pdf';
+}
+
 export function canReadInTomeio(book: LibraryBook): boolean {
   return (
-    bookFormat(book) === 'epub' &&
+    isSupportedFormat(bookFormat(book)) &&
     book.availableLocally !== false &&
     book.moonReader?.availableLocally !== false &&
     !!(book.local?.uri ?? book.fileUri)
@@ -40,8 +44,9 @@ export async function prepareReadiumFile(
   book: LibraryBook,
   initialLocation?: ReaderLocator,
 ): Promise<ReadiumFile> {
-  if (bookFormat(book) !== 'epub') {
-    throw new Error('The Tomeio reader currently supports EPUB books only.');
+  const format = bookFormat(book);
+  if (!isSupportedFormat(format)) {
+    throw new Error('The Tomeio reader currently supports EPUB and PDF books only.');
   }
   const source = book.local?.uri ?? book.fileUri;
   if (!source || book.availableLocally === false) {
@@ -49,7 +54,7 @@ export async function prepareReadiumFile(
   }
   const url = await materializeNativeFolderFile(
     source,
-    book.local?.filename ?? `${book.title}.epub`,
+    book.local?.filename ?? `${book.title}.${format}`,
   );
   return {
     url,
@@ -74,14 +79,16 @@ export function toReadiumLocator(locator: ReaderLocator): Locator {
 
 export function readiumPreferences(
   preferences: ReaderPreferences,
+  isLandscape = false,
 ): Preferences {
   const colors = THEME_COLORS[preferences.theme];
+  const usesTwoPageSpread = isLandscape && !preferences.scroll;
   return {
     ...preferences,
     ...colors,
     typeScale: preferences.fontSize,
-    spread: 'auto',
-    columnCount: 'auto',
+    columnCount: usesTwoPageSpread ? '2' : '1',
+    spread: usesTwoPageSpread ? 'always' : 'never',
   };
 }
 

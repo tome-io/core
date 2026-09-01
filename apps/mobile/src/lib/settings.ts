@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export interface Settings {
+  preferredReadingEngine: PreferredReadingEngine;
   localLibraryLocation: string | null; // Local books and download destination
   libraryMirrorLocation: string | null; // Optional Android on-device book mirror
   libraryMirrorEnabled: boolean;
@@ -11,6 +12,8 @@ export interface Settings {
   savedCatalogSort: string;
 }
 
+export type PreferredReadingEngine = 'tomeio' | 'moon-reader';
+
 export type FolderLocationSetting = 'localLibraryLocation' | 'libraryMirrorLocation';
 
 const EMPTY_FOLDER_PICKER_LOCATIONS: Settings['folderPickerLocations'] = {
@@ -19,6 +22,7 @@ const EMPTY_FOLDER_PICKER_LOCATIONS: Settings['folderPickerLocations'] = {
 };
 
 export const DEFAULT_SETTINGS: Settings = {
+  preferredReadingEngine: 'tomeio',
   localLibraryLocation: null,
   libraryMirrorLocation: null,
   libraryMirrorEnabled: false,
@@ -50,6 +54,12 @@ export async function loadSettings(): Promise<Settings> {
       };
       if (!settings.localLibraryLocation && typeof parsed.downloadLocation === 'string') {
         settings.localLibraryLocation = parsed.downloadLocation;
+      }
+      if (
+        settings.preferredReadingEngine !== 'tomeio' &&
+        settings.preferredReadingEngine !== 'moon-reader'
+      ) {
+        settings.preferredReadingEngine = DEFAULT_SETTINGS.preferredReadingEngine;
       }
     }
   } catch {

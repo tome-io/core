@@ -1,5 +1,5 @@
 diff --git a/android/build.gradle b/android/build.gradle
-index fbd1d19..8a3536d 100644
+index 4eefaaf52dee0a732c4ac2fbabe2dff673f2317a..3ee57b4b42b071e2d559a629e81bb9b8f6dadc46 100644
 --- a/android/build.gradle
 +++ b/android/build.gradle
 @@ -39,7 +39,7 @@ android {
@@ -11,3 +11,856 @@ index fbd1d19..8a3536d 100644
        }
      }
    }
+diff --git a/android/src/main/java/com/reactnativereadium/HybridReadiumView.kt b/android/src/main/java/com/reactnativereadium/HybridReadiumView.kt
+index 8e86464fab397491f08c90acc26c002551e772ef..d41588a329adea8ff9d7484f3ab2b3784f04fe61 100644
+--- a/android/src/main/java/com/reactnativereadium/HybridReadiumView.kt
++++ b/android/src/main/java/com/reactnativereadium/HybridReadiumView.kt
+@@ -13,6 +13,7 @@ import com.reactnativereadium.reader.ReaderService
+ import com.reactnativereadium.reader.ReaderViewModel
+ import com.reactnativereadium.reader.SearchPageData
+ import com.reactnativereadium.reader.SelectionAction as FragmentSelectionAction
++import com.reactnativereadium.reader.VisibleReaderLocation
+ import com.reactnativereadium.utils.nitroPreferencesToEpub
+ import com.reactnativereadium.utils.nitroLocatorToReadium
+ import com.reactnativereadium.utils.nitroDecorationToReadium
+@@ -29,6 +30,7 @@ import kotlinx.coroutines.CoroutineScope
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.SupervisorJob
+ import kotlinx.coroutines.cancel
++import kotlinx.coroutines.delay
+ import kotlinx.coroutines.launch
+ 
+ class HybridReadiumView(private val context: android.content.Context) : HybridReadiumViewSpec() {
+@@ -56,6 +58,7 @@ class HybridReadiumView(private val context: android.content.Context) : HybridRe
+   private var isAttached = false
+   private var isDestroyed = false
+   private var frameCallback: Choreographer.FrameCallback? = null
++  private var lastLocatorHash: Int? = null
+ 
+   override val view: View get() = hostView
+ 
+@@ -239,6 +242,7 @@ class HybridReadiumView(private val context: android.content.Context) : HybridRe
+ 
+     hostView.removeAllViews()
+     fragment = null
++    lastLocatorHash = null
+     isFragmentAdded = false
+     isBuilding = false
+ 
+@@ -284,6 +288,7 @@ class HybridReadiumView(private val context: android.content.Context) : HybridRe
+         addFragment(frag)
+       }
+     }
++
+   }
+ 
+   private fun addFragment(frag: BaseReaderFragment) {
+@@ -342,7 +347,7 @@ class HybridReadiumView(private val context: android.content.Context) : HybridRe
+     preferences?.let { updatePreferences() }
+     decorations?.let { updateDecorations() }
+ 
+-    frag.channel.receive(frag) { event ->
++    frag.channel.receive(scope) { event ->
+       when (event) {
+         is ReaderViewModel.Event.LocatorUpdate -> {
+           onLocationChange?.invoke(readiumLocatorToNitro(event.locator))
+@@ -381,6 +386,31 @@ class HybridReadiumView(private val context: android.content.Context) : HybridRe
+         }
+       }
+     }
++
++    scope.launch {
++      try {
++        val event = frag.publicationReady()
++        Log.i(TAG, "publication ready positions=${event.positions.size}")
++        onPublicationReady?.invoke(PublicationReadyEvent(
++          tableOfContents = flattenReadiumLinks(event.tableOfContents).toTypedArray(),
++          positions = event.positions.map { readiumLocatorToNitro(it) }.toTypedArray(),
++          metadata = readiumMetadataToNitro(event.metadata)
++        ))
++      } catch (error: Exception) {
++        Log.e(TAG, "Failed to publish publication metadata", error)
++      }
++    }
++
++    scope.launch {
++      while (true) {
++        try {
++          emitLocationIfChanged(frag.currentVisibleLocation())
++        } catch (error: Exception) {
++          Log.w(TAG, "Failed to read visible locator: ${error.message}")
++        }
++        delay(500)
++      }
++    }
+   }
+ 
+   private fun setupLayout() {
+@@ -394,6 +424,29 @@ class HybridReadiumView(private val context: android.content.Context) : HybridRe
+     frameCallback?.let { Choreographer.getInstance().postFrameCallback(it) }
+   }
+ 
++  private fun emitLocationIfChanged(
++    location: VisibleReaderLocation?
++  ) {
++    location ?: return
++    val locator = location.locator
++    val locatorHash = location.hashCode()
++    if (locatorHash == lastLocatorHash) return
++
++    lastLocatorHash = locatorHash
++    Log.i(
++      TAG,
++      "locator changed href=${locator.href} position=${locator.locations.position} " +
++        "progression=${locator.locations.progression} " +
++        "totalProgression=${locator.locations.totalProgression} " +
++        "viewportPage=${location.viewportPosition}/${location.viewportPositionCount}"
++    )
++    onLocationChange?.invoke(readiumLocatorToNitro(
++      locator,
++      location.viewportPosition,
++      location.viewportPositionCount
++    ))
++  }
++
+   /**
+    * Gives [hostView] an id that FragmentManager will resolve back to it, and
+    * returns that id.
+diff --git a/android/src/main/java/com/reactnativereadium/reader/BaseReaderFragment.kt b/android/src/main/java/com/reactnativereadium/reader/BaseReaderFragment.kt
+index b76c499dbd0d0f810c38718b958e6dc538188d22..6dd5cacc44aed918ab05740aaeb544f722663b75 100644
+--- a/android/src/main/java/com/reactnativereadium/reader/BaseReaderFragment.kt
++++ b/android/src/main/java/com/reactnativereadium/reader/BaseReaderFragment.kt
+@@ -7,8 +7,6 @@ import androidx.lifecycle.lifecycleScope
+ import com.reactnativereadium.utils.EventChannel
+ import com.reactnativereadium.utils.LinkOrLocator
+ import kotlinx.coroutines.channels.Channel
+-import kotlinx.coroutines.flow.launchIn
+-import kotlinx.coroutines.flow.onEach
+ import kotlinx.coroutines.launch
+ import kotlinx.coroutines.delay
+ import org.readium.r2.navigator.Decoration
+@@ -18,6 +16,13 @@ import org.readium.r2.navigator.OverflowableNavigator
+ import org.readium.r2.navigator.SelectableNavigator
+ import org.readium.r2.shared.publication.Locator
+ import org.readium.r2.shared.publication.services.positions
++import kotlin.math.abs
++
++data class VisibleReaderLocation(
++  val locator: Locator,
++  val viewportPosition: Int? = null,
++  val viewportPositionCount: Int? = null
++)
+ 
+ /*
+  * Base reader fragment class
+@@ -38,6 +43,7 @@ abstract class BaseReaderFragment : Fragment() {
+ 
+   // Store decorations if they're set before navigator is ready
+   private var pendingDecorations: Map<String, List<Decoration>>? = null
++  private var publicationPositions: List<Locator> = emptyList()
+ 
+   // Check if navigator is ready to use
+   private val isNavigatorReady: Boolean
+@@ -59,35 +65,96 @@ abstract class BaseReaderFragment : Fragment() {
+   override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+     super.onViewCreated(view, savedInstanceState)
+ 
+-    val viewScope = viewLifecycleOwner.lifecycleScope
++    // Apply any pending decorations now that navigator is ready
++    pendingDecorations?.let { applyDecorations(it) }
+ 
+-    // Emit PublicationReady event with all metadata
+-    viewScope.launch {
+-      // positions() is a suspending function that returns List<Locator>
+-      val positions = try {
+-        model.publication.positions()
+-      } catch (e: Exception) {
+-        emptyList<Locator>()
+-      }
++    // Start monitoring text selection
++    startSelectionMonitoring()
++  }
+ 
+-      channel.send(
+-        ReaderViewModel.Event.PublicationReady(
+-          tableOfContents = model.publication.tableOfContents,
+-          positions = positions,
+-          metadata = model.publication.metadata
++  fun currentLocation(): Locator? =
++    if (isNavigatorReady) navigator.currentLocator.value else null
++
++  open suspend fun currentVisibleLocation(): VisibleReaderLocation? =
++    currentLocation()?.let { VisibleReaderLocation(it) }
++
++  protected fun positionLocatorFor(locator: Locator?): Locator? {
++    locator ?: return null
++    if (publicationPositions.isEmpty()) return locator
++
++    val resourcePositions = publicationPositions.filter { it.href == locator.href }
++    if (resourcePositions.isEmpty()) return locator
++    val progression = locator.locations.progression ?: return resourcePositions.first()
++    val canonical = resourcePositions.minByOrNull { candidate ->
++      abs((candidate.locations.progression ?: 0.0) - progression)
++    } ?: return locator
++
++    // A Readium position is a coarse, layout-independent location. Keep its
++    // stable position number, but never replace the exact visible progression
++    // used to resume and synchronize the reader.
++    return locator.copy(
++      locations = locator.locations.copy(
++        progression = progression,
++        position = canonical.locations.position,
++        totalProgression = interpolatedTotalProgression(
++          resourcePositions,
++          progression,
++          locator.locations.totalProgression ?: canonical.locations.totalProgression
+         )
+       )
+-    }
+-
+-    navigator.currentLocator
+-      .onEach { channel.send(ReaderViewModel.Event.LocatorUpdate(it)) }
+-      .launchIn(viewScope)
++    )
++  }
+ 
+-    // Apply any pending decorations now that navigator is ready
+-    pendingDecorations?.let { applyDecorations(it) }
++  private fun interpolatedTotalProgression(
++    positions: List<Locator>,
++    progression: Double,
++    fallback: Double?
++  ): Double? {
++    val ordered = positions.sortedBy { it.locations.progression ?: 0.0 }
++    val lower = ordered.lastOrNull { (it.locations.progression ?: 0.0) <= progression }
++    val upper = ordered.firstOrNull { (it.locations.progression ?: 0.0) >= progression }
++    val lowerProgression = lower?.locations?.progression
++    val upperProgression = upper?.locations?.progression
++    val lowerTotal = lower?.locations?.totalProgression
++    val upperTotal = upper?.locations?.totalProgression
++    if (
++      lowerProgression == null || upperProgression == null ||
++      lowerTotal == null || upperTotal == null ||
++      upperProgression <= lowerProgression
++    ) {
++      return fallback
++    }
++    val fraction = ((progression - lowerProgression) /
++      (upperProgression - lowerProgression)).coerceIn(0.0, 1.0)
++    return lowerTotal + ((upperTotal - lowerTotal) * fraction)
++  }
+ 
+-    // Start monitoring text selection
+-    startSelectionMonitoring()
++  suspend fun publicationReady(): ReaderViewModel.Event.PublicationReady {
++    var positions = emptyList<Locator>()
++    for (attempt in 0 until 5) {
++      positions = try {
++        model.publication.positions()
++      } catch (error: Exception) {
++        android.util.Log.w(
++          "BaseReaderFragment",
++          "positions attempt ${attempt + 1} failed",
++          error
++        )
++        emptyList()
++      }
++      if (positions.isNotEmpty()) break
++      if (attempt < 4) delay(400)
++    }
++    android.util.Log.i(
++      "BaseReaderFragment",
++      "publication ready positions=${positions.size}"
++    )
++    publicationPositions = positions
++    return ReaderViewModel.Event.PublicationReady(
++      tableOfContents = model.publication.tableOfContents,
++      positions = positions,
++      metadata = model.publication.metadata
++    )
+   }
+ 
+   override fun onHiddenChanged(hidden: Boolean) {
+diff --git a/android/src/main/java/com/reactnativereadium/reader/EpubReaderFragment.kt b/android/src/main/java/com/reactnativereadium/reader/EpubReaderFragment.kt
+index e1cbd64543ec4c7e39e989aff6f9adfd413fe5e5..18661a6e307de15fa97d32e3fe10a8025f7701a6 100644
+--- a/android/src/main/java/com/reactnativereadium/reader/EpubReaderFragment.kt
++++ b/android/src/main/java/com/reactnativereadium/reader/EpubReaderFragment.kt
+@@ -102,29 +102,39 @@ class EpubReaderFragment : VisualReaderFragment() {
+       if (this::navigator.isInitialized && navigator is EpubNavigatorFragment) {
+         (navigator as EpubNavigatorFragment).submitPreferences(userPreferences)
+         pendingPreferences = null
+-
+-        // Update position label color to match theme, similar to iOS implementation
+-        updatePositionLabelColor()
+       } else {
+         pendingPreferences = epubPreferences
+       }
+     }
+ 
+-    private fun updatePositionLabelColor() {
+-      // Priority 1: Use explicit textColor if set
+-      val color = userPreferences.textColor?.int
+-      // Priority 2: Use theme's content color
+-      ?: userPreferences.theme?.contentColor
+-      // Priority 3: Default to dark gray
+-      ?: android.graphics.Color.DKGRAY
+-
+-      setPositionLabelColor(color)
+-    }
+-
+     fun updateSelectionActions(actions: List<SelectionAction>) {
+       selectionActions = actions
+     }
+ 
++    override suspend fun currentVisibleLocation(): VisibleReaderLocation? {
++      val visibleLocator = navigatorFragment.firstVisibleElementLocator() ?: currentLocation()
++        ?: return null
++      val progression = ReadiumWebViewAccess.progressionFor(
++        navigatorFragment.view,
++        visibleLocator.href.toString()
++      )?.coerceIn(0.0, 1.0)
++        ?: visibleLocator.locations.progression
++      val locator = positionLocatorFor(
++        visibleLocator.copy(
++          locations = visibleLocator.locations.copy(progression = progression)
++        )
++      ) ?: return null
++      val pagination = ReadiumWebViewAccess.paginationFor(
++        navigatorFragment.view,
++        visibleLocator.href.toString()
++      )
++      return VisibleReaderLocation(
++        locator = locator,
++        viewportPosition = pagination?.getOrNull(0),
++        viewportPositionCount = pagination?.getOrNull(1)
++      )
++    }
++
+     /**
+      * Starts a new search, releasing any previous iterator, and returns the
+      * first page of results. Subsequent pages are fetched via [loadMoreSearchResults].
+@@ -246,13 +256,6 @@ class EpubReaderFragment : VisualReaderFragment() {
+         return view
+     }
+ 
+-    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+-        super.onViewCreated(view, savedInstanceState)
+-
+-        // Set initial position label color based on current preferences
+-        updatePositionLabelColor()
+-    }
+-
+     override fun onResume() {
+         super.onResume()
+         val activity = requireActivity()
+diff --git a/android/src/main/java/com/reactnativereadium/reader/ReadiumWebViewAccess.java b/android/src/main/java/com/reactnativereadium/reader/ReadiumWebViewAccess.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..70f0d9e7e7837ee75e24772f6362d72aa21a7776
+--- /dev/null
++++ b/android/src/main/java/com/reactnativereadium/reader/ReadiumWebViewAccess.java
+@@ -0,0 +1,101 @@
++package com.reactnativereadium.reader;
++
++import android.graphics.Rect;
++import android.net.Uri;
++import android.view.View;
++import android.view.ViewGroup;
++import java.util.ArrayList;
++import java.util.List;
++import org.readium.r2.navigator.R2BasicWebView;
++import org.readium.r2.navigator.R2WebView;
++
++/** Java bridge for Readium APIs which are public in bytecode but Kotlin-internal. */
++final class ReadiumWebViewAccess {
++  private ReadiumWebViewAccess() {}
++
++  static Double progressionFor(View root, String href) {
++    R2BasicWebView webView = activeWebView(root, href, R2BasicWebView.class);
++    return webView == null ? null : webView.getProgression();
++  }
++
++  static int[] paginationFor(View root, String href) {
++    R2WebView webView = activeWebView(root, href, R2WebView.class);
++    if (webView == null || webView.getScrollMode()) return null;
++
++    // Readium updates this after settling a swipe. Calling it here also keeps
++    // the value accurate when a location is requested between scroll events.
++    webView.updateCurrentItem$readium_navigator();
++    int pageCount = webView.getNumPages$readium_navigator();
++    int pageIndex = webView.getMCurItem$readium_navigator();
++    if (pageCount <= 0) return null;
++    return new int[] {
++      Math.max(1, Math.min(pageIndex + 1, pageCount)),
++      pageCount
++    };
++  }
++
++  private static <T extends R2BasicWebView> T activeWebView(
++    View root,
++    String href,
++    Class<T> type
++  ) {
++    List<T> webViews = new ArrayList<>();
++    collectWebViews(root, type, webViews);
++
++    T bestMatch = null;
++    int bestMatchArea = -1;
++    T bestVisible = null;
++    int bestVisibleArea = -1;
++    for (T webView : webViews) {
++      int visibleArea = visibleArea(webView);
++      if (visibleArea > bestVisibleArea) {
++        bestVisible = webView;
++        bestVisibleArea = visibleArea;
++      }
++      if (matchesResource(webView, href) && visibleArea > bestMatchArea) {
++        bestMatch = webView;
++        bestMatchArea = visibleArea;
++      }
++    }
++    return bestMatch != null ? bestMatch : bestVisible;
++  }
++
++  private static <T extends R2BasicWebView> void collectWebViews(
++    View root,
++    Class<T> type,
++    List<T> result
++  ) {
++    if (type.isInstance(root)) result.add(type.cast(root));
++    if (!(root instanceof ViewGroup)) return;
++
++    ViewGroup group = (ViewGroup) root;
++    for (int index = 0; index < group.getChildCount(); index++) {
++      collectWebViews(group.getChildAt(index), type, result);
++    }
++  }
++
++  private static boolean matchesResource(R2BasicWebView webView, String href) {
++    Object url = webView.getResourceUrl();
++    if (url == null) return false;
++    String resourcePath = normalizedPath(url.toString());
++    String hrefPath = normalizedPath(href);
++    return !hrefPath.isEmpty() && (
++      resourcePath.equals(hrefPath) || resourcePath.endsWith("/" + hrefPath)
++    );
++  }
++
++  private static String normalizedPath(String value) {
++    String withoutFragment = value.split("#", 2)[0];
++    String path = Uri.parse(withoutFragment).getPath();
++    if (path == null) path = withoutFragment.split("\\?", 2)[0];
++    path = Uri.decode(path);
++    while (path.startsWith("/")) path = path.substring(1);
++    return path;
++  }
++
++  private static int visibleArea(View view) {
++    Rect rect = new Rect();
++    if (!view.isShown() || !view.getGlobalVisibleRect(rect)) return 0;
++    return Math.max(0, rect.width()) * Math.max(0, rect.height());
++  }
++}
+diff --git a/android/src/main/java/com/reactnativereadium/reader/VisualReaderFragment.kt b/android/src/main/java/com/reactnativereadium/reader/VisualReaderFragment.kt
+index 78197c25be24a72fff1b356043740a72c5e72ecb..a68021b93c97f7b868164dc2e7d63ad9714c0cfc 100644
+--- a/android/src/main/java/com/reactnativereadium/reader/VisualReaderFragment.kt
++++ b/android/src/main/java/com/reactnativereadium/reader/VisualReaderFragment.kt
+@@ -13,15 +13,12 @@ import android.view.ViewGroup
+ import android.view.WindowInsets
+ import android.widget.FrameLayout
+ import androidx.fragment.app.Fragment
+-import androidx.lifecycle.lifecycleScope
+ import com.reactnativereadium.R
+ import com.reactnativereadium.databinding.FragmentReaderBinding
+ import com.reactnativereadium.utils.clearPadding
+ import com.reactnativereadium.utils.hideSystemUi
+ import com.reactnativereadium.utils.padSystemUi
+ import com.reactnativereadium.utils.showSystemUi
+-import kotlinx.coroutines.flow.launchIn
+-import kotlinx.coroutines.flow.onEach
+ 
+ /*
+  * Adds fullscreen support to the BaseReaderFragment
+@@ -33,8 +30,6 @@ abstract class VisualReaderFragment : BaseReaderFragment() {
+     private var _binding: FragmentReaderBinding? = null
+     val binding get() = _binding!!
+ 
+-    private var positionLabelManager: PositionLabelManager? = null
+-
+     override fun onCreateView(
+         inflater: LayoutInflater,
+         container: ViewGroup?,
+@@ -48,23 +43,6 @@ abstract class VisualReaderFragment : BaseReaderFragment() {
+         super.onViewCreated(view, savedInstanceState)
+         navigatorFragment = navigator as Fragment
+ 
+-        // Initialize position label manager - simple overlay, matching iOS approach
+-        positionLabelManager = PositionLabelManager(
+-            containerView = binding.fragmentReaderContainer,
+-            publication = model.publication,
+-            lifecycleScope = viewLifecycleOwner.lifecycleScope
+-        )
+-
+-        // Update position label when navigator location changes
+-        navigator.currentLocator
+-            .onEach { locator ->
+-                positionLabelManager?.update(
+-                    position = locator.locations.position,
+-                    totalProgression = locator.locations.totalProgression
+-                )
+-            }
+-            .launchIn(viewLifecycleOwner.lifecycleScope)
+-
+         childFragmentManager.addOnBackStackChangedListener {
+             updateSystemUiVisibility()
+         }
+@@ -75,20 +53,10 @@ abstract class VisualReaderFragment : BaseReaderFragment() {
+     }
+ 
+     override fun onDestroyView() {
+-        positionLabelManager?.cleanup()
+-        positionLabelManager = null
+         _binding = null
+         super.onDestroyView()
+     }
+ 
+-    /**
+-     * Update the text color of the position label.
+-     * @param color Android color integer
+-     */
+-    fun setPositionLabelColor(color: Int) {
+-        positionLabelManager?.setTextColor(color)
+-    }
+-
+     fun updateSystemUiVisibility() {
+         if (navigatorFragment.isHidden)
+             requireActivity().showSystemUi()
+diff --git a/android/src/main/java/com/reactnativereadium/utils/EventChannel.kt b/android/src/main/java/com/reactnativereadium/utils/EventChannel.kt
+index 6acd149b15f0a4ec72377876bc71aac574ccb9a9..060dca53aa37dd09c860dbff3d4f96cfeab2c13e 100644
+--- a/android/src/main/java/com/reactnativereadium/utils/EventChannel.kt
++++ b/android/src/main/java/com/reactnativereadium/utils/EventChannel.kt
+@@ -25,6 +25,11 @@ class EventChannel<T>(private val channel: Channel<T>, private val sendScope: Co
+         val observer = FlowObserver(lifecycleOwner, channel.receiveAsFlow(), callback)
+         lifecycleOwner.lifecycle.addObserver(observer)
+     }
++
++    fun receive(scope: CoroutineScope, callback: suspend (T) -> Unit): Job =
++        scope.launch {
++            channel.receiveAsFlow().collect { callback(it) }
++        }
+ }
+ 
+ class FlowObserver<T> (
+diff --git a/android/src/main/java/com/reactnativereadium/utils/NitroTypeConverters.kt b/android/src/main/java/com/reactnativereadium/utils/NitroTypeConverters.kt
+index 0dc67b65065724ccd17cd1cf2155863b6c8f11dc..faa15c4b012dd4db90b4cdb8ca0d22e5fc09255d 100644
+--- a/android/src/main/java/com/reactnativereadium/utils/NitroTypeConverters.kt
++++ b/android/src/main/java/com/reactnativereadium/utils/NitroTypeConverters.kt
+@@ -191,11 +191,17 @@ internal fun parseColorString(colorString: String?): Int {
+ 
+ // MARK: - Readium → Nitro converters
+ 
+-internal fun readiumLocatorToNitro(loc: ReadiumLocator): Locator {
++internal fun readiumLocatorToNitro(
++  loc: ReadiumLocator,
++  viewportPosition: Int? = null,
++  viewportPositionCount: Int? = null
++): Locator {
+   val locations = LocatorLocations(
+     progression = loc.locations.progression ?: 0.0,
+     position = loc.locations.position?.toDouble(),
+-    totalProgression = loc.locations.totalProgression
++    totalProgression = loc.locations.totalProgression,
++    viewportPosition = viewportPosition?.toDouble(),
++    viewportPositionCount = viewportPositionCount?.toDouble()
+   )
+ 
+   val text = if (loc.text.highlight != null || loc.text.before != null || loc.text.after != null) {
+diff --git a/ios/HybridReadiumView.swift b/ios/HybridReadiumView.swift
+index 33b6589e09836e7cf01f826830f1b197f14839f4..3a895e36ee3f97a979ef72a663a519a4dc70237d 100644
+--- a/ios/HybridReadiumView.swift
++++ b/ios/HybridReadiumView.swift
+@@ -190,7 +190,12 @@ class HybridReadiumView: HybridReadiumViewSpec {
+   private func addViewControllerAsSubview(_ vc: ReaderViewController) {
+     vc.publisher.sink(receiveValue: { [weak self] locator in
+       guard let self = self else { return }
+-      let nitroLocator = readiumLocatorToNitro(locator)
++      let pagination = vc.viewportPagination(for: locator)
++      let nitroLocator = readiumLocatorToNitro(
++        locator,
++        viewportPosition: pagination?.position,
++        viewportPositionCount: pagination?.count
++      )
+       self.onLocationChange?(nitroLocator)
+     })
+     .store(in: &subscriptions)
+diff --git a/ios/NitroTypeConverters.swift b/ios/NitroTypeConverters.swift
+index 84ee4625a88267fd5968a98b5948c28e05416991..229ca4c9ce59ee3e0f0295281cc3ce78d8aebbde 100644
+--- a/ios/NitroTypeConverters.swift
++++ b/ios/NitroTypeConverters.swift
+@@ -121,11 +121,17 @@ func readiumDecorationToNitro(_ dec: RDecoration, group: String) -> Decoration {
+   return Decoration(id: dec.id, locator: locator, style: style, extras: extras)
+ }
+ 
+-func readiumLocatorToNitro(_ loc: RLocator) -> Locator {
++func readiumLocatorToNitro(
++  _ loc: RLocator,
++  viewportPosition: Int? = nil,
++  viewportPositionCount: Int? = nil
++) -> Locator {
+   let locations = LocatorLocations(
+     progression: loc.locations.progression ?? 0,
+     position: loc.locations.position.map { Double($0) },
+-    totalProgression: loc.locations.totalProgression
++    totalProgression: loc.locations.totalProgression,
++    viewportPosition: viewportPosition.map { Double($0) },
++    viewportPositionCount: viewportPositionCount.map { Double($0) }
+   )
+ 
+   let text: LocatorText? = {
+diff --git a/ios/Reader/Common/ReaderViewController.swift b/ios/Reader/Common/ReaderViewController.swift
+index 57d6dd6b4d916bdf81afceffbba6605c591afb11..6e2baf10ee708b9be11682780e3150311202e170 100644
+--- a/ios/Reader/Common/ReaderViewController.swift
++++ b/ios/Reader/Common/ReaderViewController.swift
+@@ -224,6 +224,38 @@ class ReaderViewController: UIViewController, Loggable {
+     navigatorInputObserverTokens.removeAll()
+   }
+ 
++  func viewportPagination(for locator: ReadiumShared.Locator) -> (position: Int, count: Int)? {
++    let encodedResourcePath = locator.href.string
++      .split(separator: "#", maxSplits: 1)
++      .first
++      .map(String.init) ?? locator.href.string
++    let resourcePath = encodedResourcePath.removingPercentEncoding ?? encodedResourcePath
++    let webView = descendantWebViews(in: navigator.view).first { candidate in
++      guard let path = candidate.url?.path.removingPercentEncoding else { return false }
++      return path.hasSuffix(resourcePath)
++    }
++    guard let webView else { return nil }
++    let scrollView = webView.scrollView
++    let pageWidth = scrollView.bounds.width
++    guard pageWidth > 0, scrollView.contentSize.width > pageWidth * 1.01 else {
++      return nil
++    }
++    let count = max(1, Int(ceil(scrollView.contentSize.width / pageWidth)))
++    let position = min(
++      count,
++      max(1, Int(round(abs(scrollView.contentOffset.x) / pageWidth)) + 1)
++    )
++    return (position, count)
++  }
++
++  private func descendantWebViews(in view: UIView) -> [WKWebView] {
++    var webViews = view is WKWebView ? [view as! WKWebView] : []
++    for subview in view.subviews {
++      webViews.append(contentsOf: descendantWebViews(in: subview))
++    }
++    return webViews
++  }
++
+   @objc private func goBackward() {
+     Task { [weak self] in
+       await self?.navigateBackwardAnimated()
+diff --git a/lib/src/specs/ReadiumView.nitro.d.ts b/lib/src/specs/ReadiumView.nitro.d.ts
+index 2138ae63ec877a5650d548f201975d1d079d0410..98a64dd3d1f847e53b3a33f695ac5a8d0226dc75 100644
+--- a/lib/src/specs/ReadiumView.nitro.d.ts
++++ b/lib/src/specs/ReadiumView.nitro.d.ts
+@@ -3,6 +3,8 @@ export interface LocatorLocations {
+     progression: number;
+     position?: number;
+     totalProgression?: number;
++    viewportPosition?: number;
++    viewportPositionCount?: number;
+ }
+ export interface LocatorText {
+     before?: string;
+diff --git a/nitrogen/generated/android/c++/JLocatorLocations.hpp b/nitrogen/generated/android/c++/JLocatorLocations.hpp
+index 39bb134706ad96c0a03943f7b30b7027784e4e93..78aa8f05635e6290428af40fa0bcfb28a69f68ef 100644
+--- a/nitrogen/generated/android/c++/JLocatorLocations.hpp
++++ b/nitrogen/generated/android/c++/JLocatorLocations.hpp
+@@ -37,10 +37,16 @@ namespace margelo::nitro::readium {
+       jni::local_ref<jni::JDouble> position = this->getFieldValue(fieldPosition);
+       static const auto fieldTotalProgression = clazz->getField<jni::JDouble>("totalProgression");
+       jni::local_ref<jni::JDouble> totalProgression = this->getFieldValue(fieldTotalProgression);
++      static const auto fieldViewportPosition = clazz->getField<jni::JDouble>("viewportPosition");
++      jni::local_ref<jni::JDouble> viewportPosition = this->getFieldValue(fieldViewportPosition);
++      static const auto fieldViewportPositionCount = clazz->getField<jni::JDouble>("viewportPositionCount");
++      jni::local_ref<jni::JDouble> viewportPositionCount = this->getFieldValue(fieldViewportPositionCount);
+       return LocatorLocations(
+         progression,
+         position != nullptr ? std::make_optional(position->value()) : std::nullopt,
+-        totalProgression != nullptr ? std::make_optional(totalProgression->value()) : std::nullopt
++        totalProgression != nullptr ? std::make_optional(totalProgression->value()) : std::nullopt,
++        viewportPosition != nullptr ? std::make_optional(viewportPosition->value()) : std::nullopt,
++        viewportPositionCount != nullptr ? std::make_optional(viewportPositionCount->value()) : std::nullopt
+       );
+     }
+ 
+@@ -50,14 +56,16 @@ namespace margelo::nitro::readium {
+      */
+     [[maybe_unused]]
+     static jni::local_ref<JLocatorLocations::javaobject> fromCpp(const LocatorLocations& value) {
+-      using JSignature = JLocatorLocations(double, jni::alias_ref<jni::JDouble>, jni::alias_ref<jni::JDouble>);
++      using JSignature = JLocatorLocations(double, jni::alias_ref<jni::JDouble>, jni::alias_ref<jni::JDouble>, jni::alias_ref<jni::JDouble>, jni::alias_ref<jni::JDouble>);
+       static const auto clazz = javaClassStatic();
+       static const auto create = clazz->getStaticMethod<JSignature>("fromCpp");
+       return create(
+         clazz,
+         value.progression,
+         value.position.has_value() ? jni::JDouble::valueOf(value.position.value()) : nullptr,
+-        value.totalProgression.has_value() ? jni::JDouble::valueOf(value.totalProgression.value()) : nullptr
++        value.totalProgression.has_value() ? jni::JDouble::valueOf(value.totalProgression.value()) : nullptr,
++        value.viewportPosition.has_value() ? jni::JDouble::valueOf(value.viewportPosition.value()) : nullptr,
++        value.viewportPositionCount.has_value() ? jni::JDouble::valueOf(value.viewportPositionCount.value()) : nullptr
+       );
+     }
+   };
+diff --git a/nitrogen/generated/android/kotlin/com/margelo/nitro/reactnativereadium/LocatorLocations.kt b/nitrogen/generated/android/kotlin/com/margelo/nitro/reactnativereadium/LocatorLocations.kt
+index 3f9e43c6ba7f5870a37c2b6846ac15c2f21a8405..7e06e53b32ea77580397bf735493fefb76d3658d 100644
+--- a/nitrogen/generated/android/kotlin/com/margelo/nitro/reactnativereadium/LocatorLocations.kt
++++ b/nitrogen/generated/android/kotlin/com/margelo/nitro/reactnativereadium/LocatorLocations.kt
+@@ -25,7 +25,13 @@ data class LocatorLocations(
+   val position: Double?,
+   @DoNotStrip
+   @Keep
+-  val totalProgression: Double?
++  val totalProgression: Double?,
++  @DoNotStrip
++  @Keep
++  val viewportPosition: Double?,
++  @DoNotStrip
++  @Keep
++  val viewportPositionCount: Double?
+ ) {
+   /* primary constructor */
+ 
+@@ -37,8 +43,8 @@ data class LocatorLocations(
+     @Keep
+     @Suppress("unused")
+     @JvmStatic
+-    private fun fromCpp(progression: Double, position: Double?, totalProgression: Double?): LocatorLocations {
+-      return LocatorLocations(progression, position, totalProgression)
++    private fun fromCpp(progression: Double, position: Double?, totalProgression: Double?, viewportPosition: Double?, viewportPositionCount: Double?): LocatorLocations {
++      return LocatorLocations(progression, position, totalProgression, viewportPosition, viewportPositionCount)
+     }
+   }
+ }
+diff --git a/nitrogen/generated/ios/swift/LocatorLocations.swift b/nitrogen/generated/ios/swift/LocatorLocations.swift
+index 386aa25e0055fd49238ad6c3c9275168f062d239..b6ec207156f902fc8a330e2808ae89ede0d34914 100644
+--- a/nitrogen/generated/ios/swift/LocatorLocations.swift
++++ b/nitrogen/generated/ios/swift/LocatorLocations.swift
+@@ -18,7 +18,7 @@ public extension LocatorLocations {
+   /**
+    * Create a new instance of `LocatorLocations`.
+    */
+-  init(progression: Double, position: Double?, totalProgression: Double?) {
++  init(progression: Double, position: Double?, totalProgression: Double?, viewportPosition: Double?, viewportPositionCount: Double?) {
+     self.init(progression, { () -> bridge.std__optional_double_ in
+       if let __unwrappedValue = position {
+         return bridge.create_std__optional_double_(__unwrappedValue)
+@@ -31,6 +31,18 @@ public extension LocatorLocations {
+       } else {
+         return .init()
+       }
++    }(), { () -> bridge.std__optional_double_ in
++      if let __unwrappedValue = viewportPosition {
++        return bridge.create_std__optional_double_(__unwrappedValue)
++      } else {
++        return .init()
++      }
++    }(), { () -> bridge.std__optional_double_ in
++      if let __unwrappedValue = viewportPositionCount {
++        return bridge.create_std__optional_double_(__unwrappedValue)
++      } else {
++        return .init()
++      }
+     }())
+   }
+ 
+@@ -62,4 +74,26 @@ public extension LocatorLocations {
+       }
+     }()
+   }
++
++  @inline(__always)
++  var viewportPosition: Double? {
++    return { () -> Double? in
++      if bridge.has_value_std__optional_double_(self.__viewportPosition) {
++        return bridge.get_std__optional_double_(self.__viewportPosition)
++      } else {
++        return nil
++      }
++    }()
++  }
++
++  @inline(__always)
++  var viewportPositionCount: Double? {
++    return { () -> Double? in
++      if bridge.has_value_std__optional_double_(self.__viewportPositionCount) {
++        return bridge.get_std__optional_double_(self.__viewportPositionCount)
++      } else {
++        return nil
++      }
++    }()
++  }
+ }
+diff --git a/nitrogen/generated/shared/c++/LocatorLocations.hpp b/nitrogen/generated/shared/c++/LocatorLocations.hpp
+index 631acff957270f98c85aef0bece95a018770b7cd..b965092ad968d65f07aae27347dd973e0e7acec8 100644
+--- a/nitrogen/generated/shared/c++/LocatorLocations.hpp
++++ b/nitrogen/generated/shared/c++/LocatorLocations.hpp
+@@ -42,10 +42,12 @@ namespace margelo::nitro::readium {
+     double progression     SWIFT_PRIVATE;
+     std::optional<double> position     SWIFT_PRIVATE;
+     std::optional<double> totalProgression     SWIFT_PRIVATE;
++    std::optional<double> viewportPosition     SWIFT_PRIVATE;
++    std::optional<double> viewportPositionCount     SWIFT_PRIVATE;
+ 
+   public:
+     LocatorLocations() = default;
+-    explicit LocatorLocations(double progression, std::optional<double> position, std::optional<double> totalProgression): progression(progression), position(position), totalProgression(totalProgression) {}
++    explicit LocatorLocations(double progression, std::optional<double> position, std::optional<double> totalProgression, std::optional<double> viewportPosition, std::optional<double> viewportPositionCount): progression(progression), position(position), totalProgression(totalProgression), viewportPosition(viewportPosition), viewportPositionCount(viewportPositionCount) {}
+ 
+   public:
+     friend bool operator==(const LocatorLocations& lhs, const LocatorLocations& rhs) = default;
+@@ -63,7 +65,9 @@ namespace margelo::nitro {
+       return margelo::nitro::readium::LocatorLocations(
+         JSIConverter<double>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "progression"))),
+         JSIConverter<std::optional<double>>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "position"))),
+-        JSIConverter<std::optional<double>>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "totalProgression")))
++        JSIConverter<std::optional<double>>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "totalProgression"))),
++        JSIConverter<std::optional<double>>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "viewportPosition"))),
++        JSIConverter<std::optional<double>>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "viewportPositionCount")))
+       );
+     }
+     static inline jsi::Value toJSI(jsi::Runtime& runtime, const margelo::nitro::readium::LocatorLocations& arg) {
+@@ -71,6 +75,8 @@ namespace margelo::nitro {
+       obj.setProperty(runtime, PropNameIDCache::get(runtime, "progression"), JSIConverter<double>::toJSI(runtime, arg.progression));
+       obj.setProperty(runtime, PropNameIDCache::get(runtime, "position"), JSIConverter<std::optional<double>>::toJSI(runtime, arg.position));
+       obj.setProperty(runtime, PropNameIDCache::get(runtime, "totalProgression"), JSIConverter<std::optional<double>>::toJSI(runtime, arg.totalProgression));
++      obj.setProperty(runtime, PropNameIDCache::get(runtime, "viewportPosition"), JSIConverter<std::optional<double>>::toJSI(runtime, arg.viewportPosition));
++      obj.setProperty(runtime, PropNameIDCache::get(runtime, "viewportPositionCount"), JSIConverter<std::optional<double>>::toJSI(runtime, arg.viewportPositionCount));
+       return obj;
+     }
+     static inline bool canConvert(jsi::Runtime& runtime, const jsi::Value& value) {
+@@ -84,6 +90,8 @@ namespace margelo::nitro {
+       if (!JSIConverter<double>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "progression")))) return false;
+       if (!JSIConverter<std::optional<double>>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "position")))) return false;
+       if (!JSIConverter<std::optional<double>>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "totalProgression")))) return false;
++      if (!JSIConverter<std::optional<double>>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "viewportPosition")))) return false;
++      if (!JSIConverter<std::optional<double>>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "viewportPositionCount")))) return false;
+       return true;
+     }
+   };
+diff --git a/src/specs/ReadiumView.nitro.ts b/src/specs/ReadiumView.nitro.ts
+index 686017e62d224093bc1c27fe76e6db18566e99a4..3160c941745dbafff3ddbc50649c6e1ef1e0e8f7 100644
+--- a/src/specs/ReadiumView.nitro.ts
++++ b/src/specs/ReadiumView.nitro.ts
+@@ -10,6 +10,10 @@ export interface LocatorLocations {
+   progression: number;
+   position?: number;
+   totalProgression?: number;
++  /** 1-based page currently visible in the rendered resource. */
++  viewportPosition?: number;
++  /** Number of rendered pages in the current resource. */
++  viewportPositionCount?: number;
+ }
+ 
+ export interface LocatorText {

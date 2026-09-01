@@ -208,13 +208,26 @@ export function SearchField({
         value={value}
         onChangeText={onChangeText}
         autoFocus={autoFocus}
-        onSubmitEditing={onSubmitEditing}
+        onSubmitEditing={onSearch ? () => onSearch() : onSubmitEditing}
         placeholder={placeholder}
         placeholderTextColor={colors.textMuted}
         className="h-12 flex-1 text-sm"
         style={{ color: colors.text }}
       />
-      <Feather name="search" size={19} color={colors.textMuted} />
+      {onSearch ? (
+        <Pressable
+          onPress={onSearch}
+          disabled={(value ?? '').trim().length < 2}
+          accessibilityRole="button"
+          accessibilityLabel="Search"
+          hitSlop={10}
+          className="items-center justify-center disabled:opacity-40"
+        >
+          <Feather name="search" size={19} color={colors.textMuted} />
+        </Pressable>
+      ) : (
+        <Feather name="search" size={19} color={colors.textMuted} />
+      )}
     </View>
   );
 }

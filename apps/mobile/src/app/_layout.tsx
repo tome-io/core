@@ -97,7 +97,7 @@ export default function RootLayout() {
                       edges={
                         isReader
                           ? []
-                          : isBookOverview
+                          : isBookOverview && !showSidebar
                           ? ["right", "left"]
                           : useNativeNavigation
                             ? ["top", "right", "left"]
@@ -138,7 +138,7 @@ export default function RootLayout() {
                           </View>
                         )}
                       </View>
-                      {!isReader ? <LibraryActivityToast /> : null}
+                      <LibraryActivityToast />
                     </SafeAreaView>
                   </HomeNavigationProvider>
                 </DownloadProvider>

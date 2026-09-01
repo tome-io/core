@@ -9,6 +9,7 @@ import {
   Platform,
   Pressable,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import {
@@ -35,6 +36,13 @@ import {
 } from '@/context/library-context';
 import type { LibraryBook } from '@/lib/library';
 import {
+  locatorAtProgress,
+  sameReaderLocator,
+  shouldApplyRemoteProgress,
+  shouldUploadReaderProgress,
+  timeLeftLabel,
+} from '@/lib/reader-metrics';
+import {
   canReadInTomeio,
   prepareReadiumFile,
   readiumDecorations,
@@ -43,6 +51,7 @@ import {
   toReadiumLocator,
 } from '@/lib/readium-engine';
 import {
+  canonicalReaderBookKey,
   DEFAULT_READER_PREFERENCES,
   loadReaderState,
   readerProgress,
@@ -54,8 +63,22 @@ import {
 } from '@/lib/reader-state';
 
 const HIGHLIGHT_COLOR = '#F0C94B';
-const PROGRESS_FLUSH_INTERVAL_MS = 10_000;
 const READER_FOOTER_HEIGHT = 28;
+let readerInstanceSequence = 0;
+
+function locatorLogValue(locator?: ReaderLocator | Locator | null) {
+  const locations = locator?.locations as Locator['locations'] | undefined;
+  return locator
+    ? {
+        href: locator.href,
+        position: locations?.position,
+        progression: locations?.progression,
+        totalProgression: locations?.totalProgression,
+        viewportPosition: locations?.viewportPosition,
+        viewportPositionCount: locations?.viewportPositionCount,
+      }
+    : null;
+}
 
 function parseBook(value?: string): LibraryBook | null {
   if (!value) return null;
@@ -83,17 +106,6 @@ function bookSource(book: LibraryBook | null): string | null {
   return book?.local?.uri ?? book?.fileUri ?? null;
 }
 
-function timeLeftLabel(readingTimeMs: number, progress: number): string {
-  if (progress >= 100) return 'Finished';
-  if (progress <= 0 || readingTimeMs < 60_000) return 'Estimating time left';
-  const remainingMs = readingTimeMs * ((100 - progress) / progress);
-  const remainingMinutes = Math.max(1, Math.ceil(remainingMs / 60_000));
-  if (remainingMinutes < 60) return `${remainingMinutes} min left`;
-  const hours = Math.floor(remainingMinutes / 60);
-  const minutes = remainingMinutes % 60;
-  return minutes ? `${hours}h ${minutes}m left` : `${hours}h left`;
-}
-
 function flattenToc(items: Link[], depth = 0): ReaderTocItem[] {
   return items.flatMap((item) => [
     ...(item.title ? [{ href: item.href, title: item.title, depth }] : []),
@@ -111,38 +123,80 @@ function asReaderLocator(locator: Locator): ReaderLocator {
 export default function ReadScreen() {
   const router = useRouter();
   const safeAreaInsets = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
   const params = useLocalSearchParams<{ id: string; book?: string }>();
   const routeBook = useMemo(() => parseBook(params.book), [params.book]);
   const { downloaded } = useLibraryCatalog();
   const { readingList } = useLibraryReadingList();
-  const { recordReadingProgress } = useLibraryActions();
+  const { recordReadingProgress, refreshBookProgress } = useLibraryActions();
   const book = useMemo(
     () => {
       const candidates = [...downloaded, ...readingList];
-      return (
+      const catalogBook =
         candidates.find((candidate) => sameRouteValue(candidate.key, params.id)) ??
         candidates.find((candidate) => sameRouteValue(candidate.key, routeBook?.key)) ??
         candidates.find((candidate) =>
           sameRouteValue(bookSource(candidate), bookSource(routeBook)),
-        ) ??
-        routeBook
-      );
+        );
+      if (!catalogBook) return routeBook;
+      if (!routeBook) return catalogBook;
+
+      const syncedProgress = routeBook.isRead ? 100 : (routeBook.progress ?? 0);
+      const catalogProgress = catalogBook.isRead
+        ? 100
+        : (catalogBook.progress ?? 0);
+      const progress = Math.max(syncedProgress, catalogProgress);
+      return {
+        ...routeBook,
+        ...catalogBook,
+        local: catalogBook.local ?? routeBook.local,
+        fileUri: catalogBook.fileUri ?? routeBook.fileUri,
+        availableLocally:
+          catalogBook.availableLocally ?? routeBook.availableLocally,
+        progress,
+        isRead: routeBook.isRead || catalogBook.isRead || progress >= 100,
+        readingTimeMs: Math.max(
+          routeBook.readingTimeMs ?? 0,
+          catalogBook.readingTimeMs ?? 0,
+        ),
+        lastReadAt: Math.max(
+          routeBook.lastReadAt ?? 0,
+          catalogBook.lastReadAt ?? 0,
+        ),
+      };
     },
     [downloaded, params.id, readingList, routeBook],
   );
   const readerSourceKey = book
-    ? `${book.key}:${book.local?.uri ?? book.fileUri ?? ''}`
+    ? canonicalReaderBookKey(bookSource(book) ?? book.key)
     : null;
+  const [readerInstanceId] = useState(() => ++readerInstanceSequence);
 
   const readerRef = useRef<ReadiumViewRef>(null);
   const bookRef = useRef(book);
   const locatorRef = useRef<ReaderLocator | undefined>(undefined);
+  const pendingSyncedProgressRef = useRef<number | null>(null);
+  const pendingSyncedLocatorRef = useRef<ReaderLocator | null>(null);
+  const restoringLocatorRef = useRef<ReaderLocator | null>(null);
+  const restoreTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const remoteProgressKnownRef = useRef(false);
+  const remoteProgressRef = useRef<number | null>(null);
+  const remoteLocatorRef = useRef<ReaderLocator | null>(null);
+  const publicationPositionsRef = useRef<Locator[]>([]);
   const highlightsRef = useRef<ReaderHighlight[]>([]);
   const initialReadingTimeRef = useRef(0);
-  const sessionStartedAtRef = useRef(Date.now());
-  const lastProgressFlushAtRef = useRef(0);
+  const sessionStartedAtRef = useRef<number | null>(Date.now());
+  const estimateReadingTimeRef = useRef(0);
+  const estimateSessionStartedAtRef = useRef<number | null>(Date.now());
+  const estimateStartedPositionRef = useRef<number | null>(null);
   const stateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const exitFlushStartedRef = useRef(false);
   const activeRef = useRef(true);
+  const initializationSequenceRef = useRef(0);
+  const locationEventSequenceRef = useRef(0);
+  const stateFlushSequenceRef = useRef(0);
+  const targetedSyncSequenceRef = useRef(0);
 
   const [file, setFile] = useState<ReadiumFile | null>(null);
   const [preferences, setPreferences] = useState<ReaderPreferences>(
@@ -153,6 +207,9 @@ export default function ReadScreen() {
   const [progress, setProgress] = useState(book?.progress ?? 0);
   const [position, setPosition] = useState<number | null>(null);
   const [positionCount, setPositionCount] = useState(0);
+  const [viewportPosition, setViewportPosition] = useState<number | null>(null);
+  const [viewportPositionCount, setViewportPositionCount] = useState(0);
+  const [readerPositionReady, setReaderPositionReady] = useState(true);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [tocVisible, setTocVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -161,6 +218,33 @@ export default function ReadScreen() {
     bookRef.current = book;
   }, [book]);
 
+  const expectLocatorRestore = useCallback(
+    (locator: ReaderLocator, source: string) => {
+      if (restoreTimeoutRef.current) clearTimeout(restoreTimeoutRef.current);
+      restoringLocatorRef.current = locator;
+      setReaderPositionReady(false);
+      if (__DEV__) {
+        console.info('[reader-locator] waiting for restored locator', {
+          readerInstanceId,
+          source,
+          target: locatorLogValue(locator),
+        });
+      }
+      restoreTimeoutRef.current = setTimeout(() => {
+        if (restoringLocatorRef.current !== locator) return;
+        restoringLocatorRef.current = null;
+        restoreTimeoutRef.current = null;
+        setReaderPositionReady(true);
+        console.warn('[reader-locator] locator restore timed out', {
+          readerInstanceId,
+          source,
+          target: locatorLogValue(locator),
+        });
+      }, 2_000);
+    },
+    [readerInstanceId],
+  );
+
   useEffect(() => {
     const currentBook = bookRef.current;
     if (!currentBook) {
@@ -168,51 +252,155 @@ export default function ReadScreen() {
       return;
     }
     if (!canReadInTomeio(currentBook)) {
-      setError('The Tomeio reader currently supports downloaded EPUB books only.');
+      setError('The Tomeio reader currently supports downloaded EPUB and PDF books only.');
       return;
     }
     let active = true;
+    const initializationId = ++initializationSequenceRef.current;
+    if (__DEV__) {
+      console.info('[reader-locator] initialization started', {
+        readerInstanceId,
+        initializationId,
+        title: currentBook.title,
+        rawBookKey: currentBook.key,
+        canonicalBookKey: canonicalReaderBookKey(currentBook.key),
+        readerSourceKey,
+      });
+    }
     setError(null);
     setFile(null);
     void (async () => {
       const stored = await loadReaderState(currentBook.key);
       if (!active) return;
-      locatorRef.current = stored.book.locator;
+      const storedProgress = readerProgress(stored.book.locator) ?? 0;
+      const syncedProgress = currentBook.isRead ? 100 : (currentBook.progress ?? 0);
+      const useSyncedProgress = syncedProgress > storedProgress + 0.01;
+      if (__DEV__) {
+        console.info('[reader-locator] initialization resolved', {
+          readerInstanceId,
+          initializationId,
+          stored: locatorLogValue(stored.book.locator),
+          storedProgress,
+          catalogProgress: syncedProgress,
+          initialSource: useSyncedProgress
+            ? 'catalog-progress'
+            : 'stored-locator',
+        });
+      }
+      locatorRef.current = useSyncedProgress ? undefined : stored.book.locator;
+      pendingSyncedProgressRef.current = useSyncedProgress ? syncedProgress : null;
+      pendingSyncedLocatorRef.current = null;
+      if (stored.book.locator && !useSyncedProgress) {
+        expectLocatorRestore(stored.book.locator, 'stored-locator');
+      } else {
+        if (restoreTimeoutRef.current) clearTimeout(restoreTimeoutRef.current);
+        restoreTimeoutRef.current = null;
+        restoringLocatorRef.current = null;
+        setReaderPositionReady(!useSyncedProgress);
+      }
+      remoteProgressKnownRef.current = false;
+      remoteProgressRef.current = null;
+      remoteLocatorRef.current = null;
+      publicationPositionsRef.current = [];
       highlightsRef.current = stored.book.highlights;
       initialReadingTimeRef.current = Math.max(
         stored.book.readingTimeMs,
         currentBook.readingTimeMs ?? 0,
       );
-      sessionStartedAtRef.current = Date.now();
+      sessionStartedAtRef.current =
+        AppState.currentState === 'active' ? Date.now() : null;
       setPreferences(stored.preferences);
       setHighlights(stored.book.highlights);
-      setProgress(
-        readerProgress(stored.book.locator) ?? currentBook.progress ?? 0,
-      );
-      setPosition(stored.book.locator?.locations?.position ?? null);
+      const initialProgress = useSyncedProgress ? syncedProgress : storedProgress;
+      estimateReadingTimeRef.current = 0;
+      estimateSessionStartedAtRef.current =
+        AppState.currentState === 'active' ? Date.now() : null;
+      const initialPosition = useSyncedProgress
+        ? null
+        : (stored.book.locator?.locations?.position ?? null);
+      estimateStartedPositionRef.current = initialPosition;
+      setProgress(initialProgress);
+      setPosition(initialPosition);
       setPositionCount(0);
-      const prepared = await prepareReadiumFile(currentBook, stored.book.locator);
-      if (active) setFile(prepared);
+      setViewportPosition(null);
+      setViewportPositionCount(0);
+      const prepared = await prepareReadiumFile(
+        currentBook,
+        useSyncedProgress ? undefined : stored.book.locator,
+      );
+      if (active) {
+        if (__DEV__) {
+          console.info('[reader-locator] Readium file prepared', {
+            readerInstanceId,
+            initializationId,
+            initialLocator: locatorLogValue(stored.book.locator),
+            passesInitialLocator: !useSyncedProgress && !!stored.book.locator,
+          });
+        }
+        setFile(prepared);
+      }
     })().catch((cause) => {
       if (active) setError(cause instanceof Error ? cause.message : String(cause));
     });
     return () => {
       active = false;
+      if (__DEV__) {
+        console.info('[reader-locator] initialization disposed', {
+          readerInstanceId,
+          initializationId,
+        });
+      }
     };
-  }, [readerSourceKey]);
+  }, [expectLocatorRestore, readerInstanceId, readerSourceKey]);
 
   const currentReadingTime = useCallback(
-    () =>
-      initialReadingTimeRef.current +
-      Math.max(0, Date.now() - sessionStartedAtRef.current),
+    () => {
+      const sessionStartedAt = sessionStartedAtRef.current;
+      return (
+        initialReadingTimeRef.current +
+        (sessionStartedAt == null ? 0 : Math.max(0, Date.now() - sessionStartedAt))
+      );
+    },
     [],
   );
+
+  const pauseReadingSession = useCallback(() => {
+    const now = Date.now();
+    const sessionStartedAt = sessionStartedAtRef.current;
+    if (sessionStartedAt != null) {
+      initialReadingTimeRef.current += Math.max(0, now - sessionStartedAt);
+      sessionStartedAtRef.current = null;
+    }
+    const estimateSessionStartedAt = estimateSessionStartedAtRef.current;
+    if (estimateSessionStartedAt != null) {
+      estimateReadingTimeRef.current += Math.max(0, now - estimateSessionStartedAt);
+      estimateSessionStartedAtRef.current = null;
+    }
+  }, []);
+
+  const currentEstimateReadingTime = useCallback(() => {
+    const sessionStartedAt = estimateSessionStartedAtRef.current;
+    return (
+      estimateReadingTimeRef.current +
+      (sessionStartedAt == null ? 0 : Math.max(0, Date.now() - sessionStartedAt))
+    );
+  }, []);
 
   const flushState = useCallback(
     async (includeLibraryProgress: boolean) => {
       const currentBook = bookRef.current;
       if (!currentBook) return;
       const readingTimeMs = currentReadingTime();
+      const flushId = ++stateFlushSequenceRef.current;
+      if (__DEV__) {
+        console.info('[reader-locator] state flush started', {
+          readerInstanceId,
+          flushId,
+          bookKey: currentBook.key,
+          includeLibraryProgress,
+          locator: locatorLogValue(locatorRef.current),
+        });
+      }
       await saveBookReaderState(currentBook.key, {
         ...(locatorRef.current ? { locator: locatorRef.current } : {}),
         highlights: highlightsRef.current,
@@ -220,12 +408,43 @@ export default function ReadScreen() {
         lastOpenedAt: Date.now(),
       });
       const nextProgress = readerProgress(locatorRef.current);
-      if (includeLibraryProgress && nextProgress != null) {
-        await recordReadingProgress(currentBook, nextProgress, readingTimeMs);
-        lastProgressFlushAtRef.current = Date.now();
+      const shouldUpload =
+        nextProgress != null &&
+        shouldUploadReaderProgress({
+          remoteKnown: remoteProgressKnownRef.current,
+          remoteProgress: remoteProgressRef.current,
+          remoteLocator: remoteLocatorRef.current,
+          currentProgress: nextProgress,
+          currentLocator: locatorRef.current,
+        });
+      if (includeLibraryProgress && nextProgress != null && shouldUpload) {
+        await recordReadingProgress(
+          currentBook,
+          nextProgress,
+          readingTimeMs,
+          locatorRef.current,
+        );
+        remoteProgressKnownRef.current = true;
+        remoteProgressRef.current = nextProgress;
+        remoteLocatorRef.current = locatorRef.current ?? null;
+      } else if (__DEV__ && includeLibraryProgress && nextProgress != null) {
+        console.info('[reader-locator] remote progress write skipped', {
+          readerInstanceId,
+          flushId,
+          reason: 'locator-and-progress-unchanged',
+          locator: locatorLogValue(locatorRef.current),
+          progress: nextProgress,
+        });
+      }
+      if (__DEV__) {
+        console.info('[reader-locator] state flush complete', {
+          readerInstanceId,
+          flushId,
+          progress: nextProgress,
+        });
       }
     },
-    [currentReadingTime, recordReadingProgress],
+    [currentReadingTime, readerInstanceId, recordReadingProgress],
   );
 
   const reportSaveError = useCallback((cause: unknown) => {
@@ -237,38 +456,277 @@ export default function ReadScreen() {
   useEffect(() => {
     activeRef.current = true;
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state !== 'active') void flushState(true).catch(reportSaveError);
+      if (state === 'active') {
+        const now = Date.now();
+        sessionStartedAtRef.current ??= now;
+        estimateSessionStartedAtRef.current ??= now;
+        return;
+      }
+      pauseReadingSession();
+      void flushState(true).catch(reportSaveError);
     });
     return () => {
       activeRef.current = false;
       subscription.remove();
       if (stateTimerRef.current) clearTimeout(stateTimerRef.current);
-      void flushState(true).catch((cause) => {
-        console.error('Reader state flush failed:', cause);
-      });
+      if (restoreTimeoutRef.current) clearTimeout(restoreTimeoutRef.current);
+      pauseReadingSession();
+      if (!exitFlushStartedRef.current) {
+        void flushState(true).catch((cause) => {
+          console.error('Reader state flush failed:', cause);
+        });
+      }
     };
-  }, [flushState, reportSaveError]);
+  }, [flushState, pauseReadingSession, reportSaveError]);
 
   const handleLocationChange = useCallback(
     (locator: Locator) => {
+      const previousLocator = locatorRef.current;
+      const expectedLocator = restoringLocatorRef.current;
+      if (__DEV__) {
+        console.info('[reader-locator] Readium location event', {
+          readerInstanceId,
+          eventId: ++locationEventSequenceRef.current,
+          previous: locatorLogValue(previousLocator),
+          next: locatorLogValue(locator),
+          expected: locatorLogValue(expectedLocator),
+        });
+      }
+      if (expectedLocator && !sameReaderLocator(expectedLocator, locator)) {
+        if (__DEV__) {
+          console.info('[reader-locator] transient restore event ignored', {
+            readerInstanceId,
+            expected: locatorLogValue(expectedLocator),
+            received: locatorLogValue(locator),
+          });
+        }
+        return;
+      }
+      if (expectedLocator) {
+        restoringLocatorRef.current = null;
+        if (restoreTimeoutRef.current) clearTimeout(restoreTimeoutRef.current);
+        restoreTimeoutRef.current = null;
+        if (__DEV__) {
+          console.info('[reader-locator] locator restore complete', {
+            readerInstanceId,
+            locator: locatorLogValue(locator),
+          });
+        }
+      }
+      setReaderPositionReady(true);
+      const previousPosition = previousLocator?.locations?.position;
       locatorRef.current = asReaderLocator(locator);
-      setPosition(locator.locations.position ?? null);
+      const nextPosition = locator.locations?.position ?? null;
+      if (nextPosition != null) {
+        const estimateStartedPosition = estimateStartedPositionRef.current;
+        const jumped =
+          previousPosition != null && Math.abs(nextPosition - previousPosition) > 10;
+        if (
+          estimateStartedPosition == null ||
+          nextPosition < estimateStartedPosition ||
+          jumped
+        ) {
+          estimateStartedPositionRef.current = nextPosition;
+          estimateReadingTimeRef.current = 0;
+          estimateSessionStartedAtRef.current =
+            AppState.currentState === 'active' ? Date.now() : null;
+        }
+      }
+      setPosition(nextPosition);
+      setViewportPosition(locator.locations?.viewportPosition ?? null);
+      setViewportPositionCount(
+        locator.locations?.viewportPositionCount ?? 0,
+      );
       const nextProgress = readerProgress(locatorRef.current);
-      if (nextProgress != null) setProgress(nextProgress);
+      if (nextProgress != null) {
+        setProgress(nextProgress);
+      }
       if (stateTimerRef.current) clearTimeout(stateTimerRef.current);
       stateTimerRef.current = setTimeout(() => {
-        const includeLibrary =
-          Date.now() - lastProgressFlushAtRef.current >= PROGRESS_FLUSH_INTERVAL_MS;
-        void flushState(includeLibrary).catch(reportSaveError);
+        void flushState(false).catch(reportSaveError);
       }, 700);
     },
-    [flushState, reportSaveError],
+    [flushState, readerInstanceId, reportSaveError],
   );
 
-  const handlePublicationReady = useCallback((publication: PublicationReadyEvent) => {
-    setToc(flattenToc(publication.tableOfContents));
-    setPositionCount(publication.positions.length);
-  }, []);
+  const handlePublicationReady = useCallback(
+    (publication: PublicationReadyEvent) => {
+      if (__DEV__) {
+        console.info('[reader-locator] publication ready', {
+          readerInstanceId,
+          positions: publication.positions.length,
+          tableOfContents: publication.tableOfContents.length,
+          pendingLocator: locatorLogValue(pendingSyncedLocatorRef.current),
+          pendingProgress: pendingSyncedProgressRef.current,
+        });
+      }
+      setToc(flattenToc(publication.tableOfContents));
+      publicationPositionsRef.current = publication.positions;
+      setPositionCount(publication.positions.length);
+      const syncedLocator = pendingSyncedLocatorRef.current;
+      if (syncedLocator != null) {
+        pendingSyncedLocatorRef.current = null;
+        pendingSyncedProgressRef.current = null;
+        expectLocatorRestore(syncedLocator, 'pending-remote-locator');
+        if (__DEV__) {
+          console.info('[reader-locator] navigating', {
+            readerInstanceId,
+            source: 'pending-remote-locator',
+            target: locatorLogValue(syncedLocator),
+          });
+        }
+        readerRef.current?.goTo(toReadiumLocator(syncedLocator));
+        return;
+      }
+      const syncedProgress = pendingSyncedProgressRef.current;
+      if (syncedProgress == null || publication.positions.length === 0) return;
+      pendingSyncedProgressRef.current = null;
+      const targetLocator = locatorAtProgress(
+        publication.positions,
+        syncedProgress,
+      );
+      if (targetLocator) {
+        expectLocatorRestore(
+          asReaderLocator(targetLocator),
+          'pending-catalog-progress',
+        );
+        if (__DEV__) {
+          console.info('[reader-locator] navigating', {
+            readerInstanceId,
+            source: 'pending-catalog-progress',
+            target: locatorLogValue(targetLocator),
+          });
+        }
+        readerRef.current?.goTo(targetLocator);
+      }
+    },
+    [expectLocatorRestore, readerInstanceId],
+  );
+
+  useEffect(() => {
+    const currentBook = bookRef.current;
+    if (!file || !currentBook) return;
+    let active = true;
+    const syncId = ++targetedSyncSequenceRef.current;
+    if (__DEV__) {
+      console.info('[reader-locator] targeted sync started', {
+        readerInstanceId,
+        syncId,
+        current: locatorLogValue(locatorRef.current),
+      });
+    }
+    void refreshBookProgress(currentBook)
+      .then((result) => {
+        const {
+          book: refreshedBook,
+          progress: remoteProgress,
+          locator: syncedLocator,
+        } = result;
+        if (!active) {
+          if (__DEV__) {
+            console.info('[reader-locator] targeted sync discarded', {
+              readerInstanceId,
+              syncId,
+            });
+          }
+          return;
+        }
+        bookRef.current = refreshedBook;
+        remoteProgressKnownRef.current = true;
+        remoteProgressRef.current = remoteProgress ?? null;
+        remoteLocatorRef.current = syncedLocator ?? null;
+        if (remoteProgress == null) {
+          if (__DEV__) {
+            console.info('[reader-locator] targeted sync resolved', {
+              readerInstanceId,
+              syncId,
+              remoteProgress: null,
+              remoteLocator: locatorLogValue(syncedLocator),
+              action: 'keep-local-no-remote-progress',
+            });
+          }
+          return;
+        }
+        const syncedProgress = remoteProgress;
+        const currentReaderProgress = readerProgress(locatorRef.current);
+        const shouldApply = shouldApplyRemoteProgress(
+          syncedProgress,
+          currentReaderProgress,
+        );
+        if (__DEV__) {
+          console.info('[reader-locator] targeted sync resolved', {
+            readerInstanceId,
+            syncId,
+            current: locatorLogValue(locatorRef.current),
+            currentProgress: currentReaderProgress,
+            remoteProgress: syncedProgress,
+            remoteLocator: locatorLogValue(syncedLocator),
+            action: shouldApply ? 'apply-remote' : 'keep-local',
+          });
+        }
+        if (!shouldApply) return;
+
+        setProgress(syncedProgress);
+        if (syncedLocator) {
+          locatorRef.current = syncedLocator;
+          void saveBookReaderState(currentBook.key, {
+            locator: syncedLocator,
+          }).catch(reportSaveError);
+          if (publicationPositionsRef.current.length > 0) {
+            expectLocatorRestore(syncedLocator, 'targeted-remote-locator');
+            if (__DEV__) {
+              console.info('[reader-locator] navigating', {
+                readerInstanceId,
+                syncId,
+                source: 'targeted-remote-locator',
+                target: locatorLogValue(syncedLocator),
+              });
+            }
+            readerRef.current?.goTo(toReadiumLocator(syncedLocator));
+          } else {
+            pendingSyncedLocatorRef.current = syncedLocator;
+          }
+          return;
+        }
+
+        const targetLocator = locatorAtProgress(
+          publicationPositionsRef.current,
+          syncedProgress,
+        );
+        if (targetLocator) {
+          expectLocatorRestore(
+            asReaderLocator(targetLocator),
+            'targeted-remote-progress',
+          );
+          if (__DEV__) {
+            console.info('[reader-locator] navigating', {
+              readerInstanceId,
+              syncId,
+              source: 'targeted-remote-progress',
+              target: locatorLogValue(targetLocator),
+            });
+          }
+          readerRef.current?.goTo(targetLocator);
+        } else {
+          pendingSyncedProgressRef.current = syncedProgress;
+        }
+      })
+      .catch((cause) => {
+        console.info('[reader-sync] Continuing with local progress', {
+          reason: cause instanceof Error ? cause.message : String(cause),
+        });
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    file,
+    expectLocatorRestore,
+    readerInstanceId,
+    readerSourceKey,
+    refreshBookProgress,
+    reportSaveError,
+  ]);
 
   const updatePreferences = useCallback((next: ReaderPreferences) => {
     setPreferences(next);
@@ -337,6 +795,7 @@ export default function ReadScreen() {
   }, []);
 
   const goBack = useCallback(() => {
+    exitFlushStartedRef.current = true;
     void flushState(true).catch(reportSaveError).finally(() => {
       if (router.canGoBack()) router.back();
       else router.replace('/library');
@@ -347,12 +806,20 @@ export default function ReadScreen() {
   const progressLabel = `${Math.max(0, Math.min(100, progress)).toFixed(
     progress < 10 && progress % 1 !== 0 ? 1 : 0,
   )}%`;
-  const remainingLabel = timeLeftLabel(currentReadingTime(), progress);
-  const positionLabel = position
-    ? positionCount
-      ? `${position} / ${positionCount}`
-      : String(position)
-    : '—';
+  const estimateStartedPosition = estimateStartedPositionRef.current;
+  const remainingLabel = timeLeftLabel(
+    currentEstimateReadingTime(),
+    position == null || estimateStartedPosition == null
+      ? 0
+      : Math.max(0, position - estimateStartedPosition),
+    position == null || !positionCount ? 0 : Math.max(0, positionCount - position),
+    progress,
+  );
+  const positionLabel = viewportPosition
+    ? viewportPositionCount
+      ? `${viewportPosition} / ${viewportPositionCount}`
+      : String(viewportPosition)
+    : '';
   const footerBottom = safeAreaInsets.bottom + 4;
   const readerBottomInset = footerBottom + READER_FOOTER_HEIGHT;
 
@@ -401,6 +868,39 @@ export default function ReadScreen() {
         </>
       ) : null}
 
+      {Platform.OS === 'android' && file && !error ? (
+        <SafeAreaView
+          edges={['top', 'left', 'right']}
+          style={{ backgroundColor: themeColors.backgroundColor }}
+        >
+          <View className="flex-row items-center justify-between px-3 py-2">
+            <ReaderButton
+              icon="arrow-left"
+              label="Close reader"
+              foregroundColor={themeColors.textColor}
+              theme={preferences.theme}
+              onPress={goBack}
+            />
+            <View className="flex-row gap-2">
+              <ReaderButton
+                icon="list"
+                label="Table of contents"
+                foregroundColor={themeColors.textColor}
+                theme={preferences.theme}
+                onPress={() => setTocVisible(true)}
+              />
+              <ReaderButton
+                icon="type"
+                label="Reading settings"
+                foregroundColor={themeColors.textColor}
+                theme={preferences.theme}
+                onPress={() => setSettingsVisible(true)}
+              />
+            </View>
+          </View>
+        </SafeAreaView>
+      ) : null}
+
       {file && !error ? (
         <View
           style={{
@@ -412,10 +912,10 @@ export default function ReadScreen() {
           <ReadiumView
             ref={readerRef}
             file={file}
-            preferences={readiumPreferences(preferences)}
+            preferences={readiumPreferences(preferences, isLandscape)}
             decorations={readiumDecorations(highlights)}
             selectionActions={[{ id: 'highlight', label: 'Highlight' }]}
-            style={{ flex: 1 }}
+            style={{ flex: 1, opacity: readerPositionReady ? 1 : 0 }}
             onLocationChange={handleLocationChange}
             onPublicationReady={handlePublicationReady}
             onSelectionAction={handleSelectionAction}
@@ -448,52 +948,6 @@ export default function ReadScreen() {
           )}
         </View>
       )}
-
-      {file && !error ? (
-        <Pressable
-          onPress={() => setSettingsVisible(true)}
-          accessibilityLabel="Reading settings"
-          style={{
-            position: 'absolute',
-            bottom: 0,
-            left: '25%',
-            width: '50%',
-            height: '16%',
-          }}
-        />
-      ) : null}
-
-      {Platform.OS === 'android' && file && !error ? (
-        <SafeAreaView
-          pointerEvents="box-none"
-          edges={['top', 'left', 'right', 'bottom']}
-          style={{ position: 'absolute', inset: 0 }}
-        >
-          <View
-            className="mx-3 mt-2 flex-row items-center rounded-2xl px-2 py-2"
-            style={{ backgroundColor: 'rgba(16,11,8,0.92)' }}
-          >
-            <ReaderButton icon="arrow-left" label="Close reader" onPress={goBack} />
-            <Text
-              numberOfLines={1}
-              className="mx-2 flex-1 text-sm font-semibold"
-              style={{ color: '#F4EDE7' }}
-            >
-              {book?.title}
-            </Text>
-            <ReaderButton
-              icon="list"
-              label="Table of contents"
-              onPress={() => setTocVisible(true)}
-            />
-            <ReaderButton
-              icon="type"
-              label="Reading settings"
-              onPress={() => setSettingsVisible(true)}
-            />
-          </View>
-        </SafeAreaView>
-      ) : null}
 
       {file && !error ? (
         <View
@@ -560,10 +1014,14 @@ export default function ReadScreen() {
 function ReaderButton({
   icon,
   label,
+  foregroundColor,
+  theme,
   onPress,
 }: {
   icon: keyof typeof Feather.glyphMap;
   label: string;
+  foregroundColor: string;
+  theme: ReaderPreferences['theme'];
   onPress: () => void;
 }) {
   return (
@@ -572,8 +1030,12 @@ function ReaderButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       className="h-11 w-11 items-center justify-center rounded-full active:opacity-60"
+      style={{
+        backgroundColor:
+          theme === 'dark' ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.68)',
+      }}
     >
-      <Feather name={icon} size={20} color="#F4EDE7" />
+      <Feather name={icon} size={20} color={foregroundColor} />
     </Pressable>
   );
 }

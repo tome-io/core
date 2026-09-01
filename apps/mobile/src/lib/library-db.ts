@@ -1447,7 +1447,8 @@ export async function markCatalogBookRead(bookKey: string): Promise<void> {
 export async function persistCatalogBookProgress(
   book: LibraryBook,
 ): Promise<void> {
-  if (typeof book.progress !== "number" || !Number.isFinite(book.progress)) {
+  const progress = book.progress;
+  if (typeof progress !== "number" || !Number.isFinite(progress)) {
     throw new Error("Reading progress must be a finite percentage.");
   }
   await withDatabaseWrite(async (database) => {
@@ -1461,7 +1462,7 @@ export async function persistCatalogBookProgress(
       database,
       {
         ...book,
-        progress: Math.max(0, Math.min(100, book.progress)),
+        progress: Math.max(0, Math.min(100, progress)),
       },
       "tomeio",
       book.lastReadAt ?? Date.now(),
@@ -1623,6 +1624,7 @@ export async function loadCollectionSyncRecords(
 }
 
 export interface HostedSyncLocalDocument {
+  bookKey: string;
   identity: string;
   aliases: string[];
   uri: string;
@@ -1636,10 +1638,11 @@ export async function loadHostedSyncLocalDocuments(): Promise<
 > {
   const database = await getLibraryDatabase();
   const rows = await database.getAllAsync<{
+    book_key: string;
     book_json: string;
     sync_identity: string | null;
   }>(
-    `SELECT books.book_json, synced.identity AS sync_identity
+    `SELECT books.book_key, books.book_json, synced.identity AS sync_identity
      FROM local_files AS files
      JOIN catalog_books AS books ON books.book_key = files.book_key
      LEFT JOIN collection_sync_records AS synced
@@ -1651,6 +1654,7 @@ export async function loadHostedSyncLocalDocuments(): Promise<
     if (!uri) return [];
     const identity = row.sync_identity ?? bookIdentity(book.title, book.author);
     return [{
+      bookKey: row.book_key,
       identity,
       aliases: [identity, bookIdentity(book.title, book.author), ...syncAliases(book)],
       uri,
