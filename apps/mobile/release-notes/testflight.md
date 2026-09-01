@@ -10,14 +10,14 @@
 
 ## What's new
 
-- This is the first Tomeio beta.
-- Discover and search books from built-in sources.
-- Download compatible formats and manage a local library and reading list.
-- Add compatible Tomeio extensions for more book sources.
+- Read EPUB and PDF books directly inside Tomeio.
+- Synchronize library state and reading progress across signed-in devices.
+- Choose Tomeio or Moon+ Reader as the reading engine on Android.
+- Improved tablet layouts, search, downloads, and local library reliability.
 
 ## What to test
 
-- Browse and search each built-in source, including changing the format filter.
-- Download a book, add it to your reading list, and open it in your preferred reader.
-- Restart Tomeio and confirm that your library, settings, and reading progress remain intact.
-- Install, disable, and remove a compatible extension.
+- Open an EPUB or PDF, change pages, leave the reader, and confirm it resumes correctly.
+- Read the same book on two signed-in devices and confirm the furthest position wins.
+- On Android, switch between Tomeio and Moon+ Reader in Settings.
+- Check the book overview and two-page reader layout on a tablet in landscape.
