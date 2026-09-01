@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import * as IntentLauncher from 'expo-intent-launcher';
 import * as Sharing from 'expo-sharing';
 import { Platform } from 'react-native';
 
@@ -17,6 +18,11 @@ const MIME_TYPES: Record<string, string> = {
   pdf: 'application/pdf',
 };
 
+const IOS_UTIS: Record<string, string> = {
+  epub: 'org.idpf.epub-container',
+  pdf: 'com.adobe.pdf',
+};
+
 function sourceUri(book: LibraryBook): string {
   const uri = book.local?.uri ?? book.fileUri;
   if (
@@ -32,6 +38,11 @@ function sourceUri(book: LibraryBook): string {
 function mimeType(book: LibraryBook): string {
   const format = book.local?.format ?? book.format ?? '';
   return MIME_TYPES[format.toLowerCase()] ?? 'application/octet-stream';
+}
+
+function iosUti(book: LibraryBook): string | undefined {
+  const format = book.local?.format ?? book.format ?? '';
+  return IOS_UTIS[format.toLowerCase()];
 }
 
 function safeFilename(book: LibraryBook): string {
@@ -57,12 +68,26 @@ export async function openBookWithAnotherApp(book: LibraryBook): Promise<void> {
   if (Platform.OS === 'web') {
     throw new Error('Opening local books with another app is unavailable on web.');
   }
+  const fileUri = await shareableFileUri(book);
+  if (Platform.OS === 'android') {
+    const contentUri = fileUri.startsWith('content:')
+      ? fileUri
+      : await FileSystem.getContentUriAsync(fileUri);
+    await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+      data: contentUri,
+      type: mimeType(book),
+      category: 'android.intent.category.DEFAULT',
+      flags: 1,
+    });
+    return;
+  }
   if (!(await Sharing.isAvailableAsync())) {
     throw new Error('No compatible app is available to open this book.');
   }
-  await Sharing.shareAsync(await shareableFileUri(book), {
+  await Sharing.shareAsync(fileUri, {
     dialogTitle: `Open ${book.title} with`,
     mimeType: mimeType(book),
+    UTI: iosUti(book),
   });
 }
 

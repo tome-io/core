@@ -32,8 +32,10 @@ export default function RootLayout() {
   const useBottomNavigation = width < 700;
   const useNativeNavigation = Platform.OS === "ios";
   const isBookOverview = pathname.startsWith("/book/");
-  const showSidebar = !useNativeNavigation && !useBottomNavigation;
+  const isReader = pathname.startsWith("/read/");
+  const showSidebar = !isReader && !useNativeNavigation && !useBottomNavigation;
   const showBottomNavigation =
+    !isReader &&
     !useNativeNavigation &&
     useBottomNavigation &&
     !pathname.startsWith("/book/");
@@ -93,7 +95,9 @@ export default function RootLayout() {
                     <SafeAreaView
                       className="flex-1"
                       edges={
-                        isBookOverview
+                        isReader
+                          ? []
+                          : isBookOverview && !showSidebar
                           ? ["right", "left"]
                           : useNativeNavigation
                             ? ["top", "right", "left"]

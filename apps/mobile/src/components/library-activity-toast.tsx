@@ -83,6 +83,7 @@ export function LibraryActivityToast() {
 
   if (!visible) return null;
   const compact = width < 700;
+  const reader = pathname.startsWith("/read/");
   return (
     <>
       <View
@@ -90,9 +91,9 @@ export function LibraryActivityToast() {
         style={{
           position: "absolute",
           right: compact ? 12 : 24,
-          bottom: compact && !pathname.startsWith("/book/") ? 108 : 32,
-          left: compact ? 12 : undefined,
-          alignItems: compact ? "center" : undefined,
+          bottom: reader ? 64 : compact && !pathname.startsWith("/book/") ? 108 : 32,
+          left: compact ? 12 : 24,
+          alignItems: "center",
           zIndex: 50,
         }}
       >

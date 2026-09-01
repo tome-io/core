@@ -10,7 +10,7 @@
 
 ## Current release
 
-- Choose which providers power Home, search, and downloads.
-- Install Tomeio add-ons for additional book sources.
-- Improved download reliability and local library indexing.
-- Sync reading progress using a shared folder.
+- Read EPUB and PDF books inside Tomeio with customizable reading controls.
+- Keep reading progress synchronized across signed-in devices and supported readers.
+- Choose Tomeio or Moon+ Reader as the default reading engine on Android.
+- Improved tablet layouts, search, downloads, and local library reliability.

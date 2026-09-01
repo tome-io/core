@@ -40,7 +40,6 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import {
   LibraryActionsSheet,
-  ReadBookSheet,
   type LibraryAction,
 } from '@/components/library-book-actions';
 import { AppErrorDialog } from '@/components/app-error-dialog';
@@ -78,6 +77,10 @@ import {
   showBookInFiles,
 } from '@/lib/book-file-actions';
 import { bookPriceLabel, bookSourceUrl } from '@/lib/book-offers';
+import {
+  chooseReadingEngine,
+  MOON_READER_EXTENSION_ID,
+} from '@/lib/reading-engine';
 import type { BookCoverPreference, BookCoverSources } from '@/lib/book-cover';
 import { bookIdentity } from '@/lib/book-metadata';
 import { bookFilename } from '@/lib/download';
@@ -89,6 +92,7 @@ import {
   type LibraryBook,
 } from '@/lib/library';
 import { loadLocalCatalogBook } from '@/lib/library-db';
+import { canReadInTomeio } from '@/lib/readium-engine';
 import {
   getWorkDetails,
   type DiscoveryBook,
@@ -222,7 +226,7 @@ export default function BookDetailScreen() {
   const router = useRouter();
   const extensions = useExtensions();
   const { acquisitionExtensionId, load: loadExtension } = extensions;
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const screenInsets = useSafeAreaInsets();
   const compactLayout = width < 700;
   const params = useLocalSearchParams<{
@@ -893,7 +897,6 @@ export default function BookDetailScreen() {
   const [descriptionOpen, setDescriptionOpen] = useState(false);
   const [deleteActionsOpen, setDeleteActionsOpen] = useState(false);
   const [libraryActionsOpen, setLibraryActionsOpen] = useState(false);
-  const [readOptionsOpen, setReadOptionsOpen] = useState(false);
   const [coverPickerOpen, setCoverPickerOpen] = useState(false);
   const [coverBusy, setCoverBusy] = useState(false);
   const [unavailableCoverProviders, setUnavailableCoverProviders] = useState<
@@ -1106,17 +1109,9 @@ export default function BookDetailScreen() {
         ),
     }));
   }, [extensions, libraryActionBook, runLibraryAction]);
-  const readerAddonActions = useMemo(
-    () =>
-      addonActions.filter(
-        (action) =>
-          action.key.startsWith('addon:community.tomeio.moon-reader:') ||
-          action.key.startsWith('addon:community.tomeio.google-books:')
-      ),
-    [addonActions]
+  const moonReaderAction = addonActions.find((action) =>
+    action.key.startsWith(`addon:${MOON_READER_EXTENSION_ID}:`)
   );
-  const openReadOptions = useCallback(() => setReadOptionsOpen(true), []);
-
   const goBack = useCallback(() => {
     if (router.canGoBack()) router.back();
     else router.replace('/home');
@@ -1200,6 +1195,37 @@ export default function BookDetailScreen() {
     : libraryActionBook;
   const hasOpenAction =
     Platform.OS !== 'web' && !!openableLibraryBook && localFileAvailable;
+  const opensInTomeio = !!openableLibraryBook && canReadInTomeio(openableLibraryBook);
+  const openInTomeio = () => {
+    if (!openableLibraryBook || !canReadInTomeio(openableLibraryBook)) return;
+    router.push({
+      pathname: '/read/[id]',
+      params: {
+        id: openableLibraryBook.key,
+        book: JSON.stringify(openableLibraryBook),
+      },
+    } as any);
+  };
+  const readingEngine = chooseReadingEngine({
+    preferred: settings.preferredReadingEngine,
+    tomeioAvailable: opensInTomeio,
+    moonReaderAvailable: !!moonReaderAction,
+  });
+  const openPreferredReader = () => {
+    if (readingEngine === 'tomeio') {
+      openInTomeio();
+      return;
+    }
+    if (readingEngine === 'moon-reader' && moonReaderAction) {
+      moonReaderAction.onPress();
+      return;
+    }
+    if (openableLibraryBook) {
+      void runLibraryAction('openWith', () =>
+        openBookWithAnotherApp(openableLibraryBook)
+      );
+    }
+  };
   const viewUrl = !localFileAvailable
     ? (extensionBook ? bookSourceUrl(extensionBook) : undefined) ??
       (libraryActionBook?.extension?.book
@@ -1239,8 +1265,11 @@ export default function BookDetailScreen() {
   ].filter(Boolean);
   const activeCover = coverCandidates.find((cover) => !failedCovers.includes(cover)) ?? null;
   const mobileOverview = Platform.OS === 'ios' || Platform.OS === 'android';
+  const landscapeOverview = mobileOverview && width > height;
   const baseHeroHeight = mobileOverview
-    ? Math.min(600, Math.max(530, Math.round(width * 1.3)))
+    ? landscapeOverview
+      ? Math.min(560, Math.max(380, height))
+      : Math.min(600, Math.max(530, Math.round(width * 1.3)))
     : compactLayout
       ? Math.min(620, Math.max(480, Math.round(width * 1.24)))
       : 420;
@@ -1260,20 +1289,29 @@ export default function BookDetailScreen() {
   const foregroundCoverWidth = Math.min(220, Math.max(168, Math.round(width * 0.48)));
   const foregroundCoverHeight = Math.round(foregroundCoverWidth * 1.5);
   const foregroundCoverTop = screenInsets.top + 78;
+  const landscapeContentTop = screenInsets.top + 76;
+  const landscapeCoverHeight = Math.min(
+    420,
+    Math.max(240, heroHeight - landscapeContentTop - 28),
+  );
+  const landscapeCoverWidth = Math.round(landscapeCoverHeight / 1.5);
   const acquisitionCardWidth = Math.min(420, width - 48);
 
   const descriptionPreview = description ? (
     <Pressable
       onPress={() => setDescriptionOpen(true)}
-      className="mt-5 overflow-hidden"
+      className={`${landscapeOverview ? 'mt-6' : 'mt-5'} overflow-hidden`}
       accessibilityRole="button"
       accessibilityLabel={`Read the full description of ${title}`}
     >
       <DescriptionText
         value={description}
-        numberOfLines={4}
+        numberOfLines={landscapeOverview ? 6 : 4}
         className="text-sm leading-5"
-        style={{ color: colors.text, textAlign: 'center' }}
+        style={{
+          color: colors.text,
+          textAlign: landscapeOverview ? 'left' : 'center',
+        }}
       />
     </Pressable>
   ) : null;
@@ -1341,6 +1379,103 @@ export default function BookDetailScreen() {
           : []),
       ]
     : [];
+  const primaryActions =
+    hasOpenAction || readingListBook || viewUrl ? (
+      <View
+        className={`${landscapeOverview ? 'mt-6' : 'mt-2'} flex-row flex-wrap items-center gap-3 ${
+          landscapeOverview ? 'justify-start' : 'justify-center'
+        }`}
+      >
+        {Platform.OS === 'ios' ? (
+          <>
+            {hasOpenAction && openableLibraryBook ? (
+              <IosGlassActionButton
+                label="Read"
+                systemImage="book.fill"
+                onPress={openPreferredReader}
+                disabled={!!busyAction}
+              />
+            ) : null}
+            {readingListBook ? (
+              <IosGlassActionButton
+                label={onReadingList ? 'Saved' : 'Save'}
+                systemImage={onReadingList ? 'bookmark.fill' : 'bookmark'}
+                onPress={() => void toggleSaved()}
+                disabled={libraryBusy}
+              />
+            ) : null}
+            {viewUrl ? (
+              <IosGlassActionButton
+                label="View"
+                systemImage="arrow.up.right.square"
+                onPress={() => void Linking.openURL(viewUrl)}
+              />
+            ) : null}
+          </>
+        ) : (
+          <>
+            {hasOpenAction && openableLibraryBook ? (
+              <Pressable
+                onPress={openPreferredReader}
+                disabled={!!busyAction}
+                accessibilityRole="button"
+                accessibilityLabel="Read book"
+                className="h-[52px] flex-row items-center justify-center gap-2 rounded-full border px-6 active:opacity-80 disabled:opacity-50"
+                style={{ borderColor: colors.border, backgroundColor: colors.surface }}
+              >
+                <Feather name="book-open" size={17} color={colors.text} />
+                <Text className="text-sm font-semibold" style={{ color: colors.text }}>
+                  Read
+                </Text>
+              </Pressable>
+            ) : null}
+            {readingListBook ? (
+              <Pressable
+                onPress={() => void toggleSaved()}
+                disabled={libraryBusy}
+                accessibilityRole="button"
+                accessibilityLabel={onReadingList ? 'Remove from saved' : 'Save book'}
+                className="h-[52px] flex-row items-center justify-center gap-2 rounded-full border px-6 active:opacity-80 disabled:opacity-50"
+                style={{
+                  borderColor: onReadingList ? colors.accent : colors.border,
+                  backgroundColor: onReadingList ? colors.accentMuted : colors.surface,
+                }}
+              >
+                {libraryBusy ? (
+                  <ActivityIndicator size="small" color={colors.accent} />
+                ) : (
+                  <Feather
+                    name="bookmark"
+                    size={17}
+                    color={onReadingList ? colors.accent : colors.text}
+                  />
+                )}
+                <Text
+                  className="text-sm font-semibold"
+                  style={{ color: onReadingList ? colors.accent : colors.text }}
+                >
+                  {onReadingList ? 'Saved' : 'Save'}
+                </Text>
+              </Pressable>
+            ) : null}
+            {viewUrl ? (
+              <Pressable
+                onPress={() => void Linking.openURL(viewUrl)}
+                accessibilityRole="link"
+                accessibilityLabel="View at source"
+                className="h-[52px] flex-row items-center justify-center gap-2 rounded-full border px-6 active:opacity-80"
+                style={{ borderColor: colors.border, backgroundColor: colors.surface }}
+              >
+                <Feather name="external-link" size={17} color={colors.text} />
+                <Text className="text-sm font-semibold" style={{ color: colors.text }}>
+                  View
+                </Text>
+              </Pressable>
+            ) : null}
+          </>
+        )}
+      </View>
+    ) : null;
 
   return (
     <>
@@ -1417,6 +1552,82 @@ export default function BookDetailScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: bottomPadding }}
       >
+        {landscapeOverview ? (
+          <View
+            style={{
+              minHeight: heroHeight,
+              paddingTop: landscapeContentTop,
+              paddingRight: Math.max(28, Math.min(64, width * 0.06)),
+              paddingBottom: 28,
+              paddingLeft: Math.max(28, Math.min(64, width * 0.06)),
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: Math.max(28, Math.min(56, width * 0.05)),
+            }}
+          >
+            <View
+              style={{
+                width: landscapeCoverWidth,
+                height: landscapeCoverHeight,
+                flexShrink: 0,
+                overflow: 'hidden',
+                borderRadius: 16,
+                backgroundColor: colors.surfaceRaised,
+                shadowColor: '#000000',
+                shadowOffset: { width: 0, height: 12 },
+                shadowOpacity: 0.3,
+                shadowRadius: 20,
+              }}
+            >
+              {activeCover ? (
+                <Image
+                  source={{ uri: activeCover }}
+                  style={{ width: '100%', height: '100%' }}
+                  contentFit="cover"
+                  cachePolicy="memory-disk"
+                  onError={() =>
+                    setFailedCovers((current) =>
+                      current.includes(activeCover) ? current : [...current, activeCover]
+                    )
+                  }
+                />
+              ) : (
+                <View className="h-full w-full items-center justify-center">
+                  <Text className="text-5xl">📚</Text>
+                </View>
+              )}
+              <SeriesPositionChip position={seriesPosition} />
+              <CoverProgress progress={progress} isRead={trackedBook?.isRead} />
+            </View>
+
+            <View style={{ flex: 1, maxWidth: 680, alignSelf: 'center' }}>
+              <Text
+                numberOfLines={3}
+                className="text-[30px] font-semibold leading-9"
+                style={{ color: colors.text }}
+              >
+                {title}
+              </Text>
+              <Text className="mt-2 text-base" style={{ color: colors.text }}>
+                {author}
+              </Text>
+              {meta.length ? (
+                <Text
+                  className="mt-2 text-xs uppercase tracking-wide"
+                  style={{ color: colors.textMuted }}
+                >
+                  {meta.join(' · ')}
+                </Text>
+              ) : null}
+              {showInlineProgress ? (
+                <BookStatusChips progress={progress} isRead={trackedBook?.isRead} />
+              ) : null}
+              {descriptionPreview}
+              {primaryActions}
+            </View>
+          </View>
+        ) : (
         <View className="relative overflow-hidden" style={{ height: heroHeight }}>
           {activeCover ? (
             <>
@@ -1531,103 +1742,11 @@ export default function BookDetailScreen() {
             ) : null}
           </View>
         </View>
+        )}
 
         <View className="px-5">
-          {Platform.OS === 'ios' &&
-          (hasOpenAction || readingListBook || viewUrl) ? (
-            <View className="mt-2 flex-row items-center justify-center gap-3">
-              {hasOpenAction && openableLibraryBook ? (
-                <IosGlassActionButton
-                  label="Read"
-                  systemImage="book.fill"
-                  onPress={openReadOptions}
-                  disabled={!!busyAction}
-                />
-              ) : null}
-              {readingListBook ? (
-                <IosGlassActionButton
-                  label={onReadingList ? 'Saved' : 'Save'}
-                  systemImage={onReadingList ? 'bookmark.fill' : 'bookmark'}
-                  onPress={() => void toggleSaved()}
-                  disabled={libraryBusy}
-                />
-              ) : null}
-              {viewUrl ? (
-                <IosGlassActionButton
-                  label="View"
-                  systemImage="arrow.up.right.square"
-                  onPress={() => void Linking.openURL(viewUrl)}
-                />
-              ) : null}
-            </View>
-          ) : Platform.OS !== 'ios' &&
-            (hasOpenAction || readingListBook || viewUrl) ? (
-            <View className="mt-2 flex-row items-center justify-center gap-3">
-              {hasOpenAction && openableLibraryBook ? (
-                <Pressable
-                  onPress={openReadOptions}
-                  disabled={!!busyAction}
-                  accessibilityRole="button"
-                  accessibilityLabel="Read book"
-                  className="h-[52px] flex-row items-center justify-center gap-2 rounded-full border px-6 active:opacity-80 disabled:opacity-50"
-                  style={{ borderColor: colors.border, backgroundColor: colors.surface }}
-                >
-                  <Feather name="book-open" size={17} color={colors.text} />
-                  <Text className="text-sm font-semibold" style={{ color: colors.text }}>
-                    Read
-                  </Text>
-                </Pressable>
-              ) : null}
-              {readingListBook ? (
-                <Pressable
-                  onPress={() => void toggleSaved()}
-                  disabled={libraryBusy}
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    onReadingList ? 'Remove from saved' : 'Save book'
-                  }
-                  className="h-[52px] flex-row items-center justify-center gap-2 rounded-full border px-6 active:opacity-80 disabled:opacity-50"
-                  style={{
-                    borderColor: onReadingList ? colors.accent : colors.border,
-                    backgroundColor: onReadingList
-                      ? colors.accentMuted
-                      : colors.surface,
-                  }}
-                >
-                  {libraryBusy ? (
-                    <ActivityIndicator size="small" color={colors.accent} />
-                  ) : (
-                    <Feather
-                      name="bookmark"
-                      size={17}
-                      color={onReadingList ? colors.accent : colors.text}
-                    />
-                  )}
-                  <Text
-                    className="text-sm font-semibold"
-                    style={{ color: onReadingList ? colors.accent : colors.text }}
-                  >
-                    {onReadingList ? 'Saved' : 'Save'}
-                  </Text>
-                </Pressable>
-              ) : null}
-              {viewUrl ? (
-                <Pressable
-                  onPress={() => void Linking.openURL(viewUrl)}
-                  accessibilityRole="link"
-                  accessibilityLabel="View at source"
-                  className="h-[52px] flex-row items-center justify-center gap-2 rounded-full border px-6 active:opacity-80"
-                  style={{ borderColor: colors.border, backgroundColor: colors.surface }}
-                >
-                  <Feather name="external-link" size={17} color={colors.text} />
-                  <Text className="text-sm font-semibold" style={{ color: colors.text }}>
-                    View
-                  </Text>
-                </Pressable>
-              ) : null}
-            </View>
-          ) : null}
-          {descriptionPreview}
+          {!landscapeOverview ? primaryActions : null}
+          {!landscapeOverview ? descriptionPreview : null}
           {Platform.OS !== 'ios' && Platform.OS !== 'android' && overviewActions.length ? (
             <View
               className="mt-5 overflow-hidden rounded-2xl border"
@@ -1894,28 +2013,6 @@ export default function BookDetailScreen() {
           onRefreshMetadata={() => {
             setLibraryActionsOpen(false);
             void runLibraryAction('metadata', () => refreshBookMetadata(libraryActionBook));
-          }}
-        />
-      ) : null}
-
-      {hasOpenAction && openableLibraryBook ? (
-        <ReadBookSheet
-          book={openableLibraryBook}
-          visible={readOptionsOpen}
-          readerActions={readerAddonActions.map((action) => ({
-            ...action,
-            label: action.label.replace(/^Open in /, 'Read in '),
-            onPress: () => {
-              setReadOptionsOpen(false);
-              action.onPress();
-            },
-          }))}
-          onClose={() => setReadOptionsOpen(false)}
-          onOpenWith={() => {
-            setReadOptionsOpen(false);
-            void runLibraryAction('openWith', () =>
-              openBookWithAnotherApp(openableLibraryBook)
-            );
           }}
         />
       ) : null}

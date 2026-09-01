@@ -257,18 +257,30 @@ export function ReadBookSheet({
   book,
   visible,
   readerActions,
+  onReadInTomeio,
   onOpenWith,
   onClose,
 }: {
   book: LibraryBook;
   visible: boolean;
   readerActions: AddonLibraryAction[];
+  onReadInTomeio?: () => void;
   onOpenWith: () => void;
   onClose: () => void;
 }) {
   const { width, height } = useWindowDimensions();
   const landscape = width > height;
   const actions = [
+    ...(onReadInTomeio
+      ? [
+          {
+            key: 'tomeio-reader' as const,
+            label: 'Read in Tomeio',
+            icon: 'book-open' as const,
+            onPress: onReadInTomeio,
+          },
+        ]
+      : []),
     ...readerActions,
     {
       key: 'other-app' as const,

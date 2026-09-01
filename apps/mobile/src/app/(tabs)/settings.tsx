@@ -89,7 +89,11 @@ import {
 } from "@/lib/library-import";
 import { bookIdentity } from "@/lib/book-metadata";
 import type { LibraryBook } from "@/lib/library";
-import type { FolderLocationSetting } from "@/lib/settings";
+import { MOON_READER_EXTENSION_ID } from "@/lib/reading-engine";
+import type {
+  FolderLocationSetting,
+  PreferredReadingEngine,
+} from "@/lib/settings";
 import { forgetNativeDirectory } from "../../../modules/expo-progress-folder/src";
 
 type ProviderRole = "discovery" | "search" | "acquisition";
@@ -339,6 +343,85 @@ function LauncherIconPicker({
       >
         Android launchers can take a few seconds to refresh the home-screen
         icon. System themed icons may still apply the wallpaper palette.
+      </Text>
+    </AppDialog>
+  );
+}
+
+function ReadingEnginePicker({
+  visible,
+  selected,
+  onSelect,
+  onClose,
+}: {
+  visible: boolean;
+  selected: PreferredReadingEngine;
+  onSelect: (engine: PreferredReadingEngine) => void;
+  onClose: () => void;
+}) {
+  const options: {
+    id: PreferredReadingEngine;
+    label: string;
+    detail: string;
+  }[] = [
+    {
+      id: "tomeio",
+      label: "Tomeio",
+      detail: "Use the built-in reader for EPUB and PDF books.",
+    },
+    {
+      id: "moon-reader",
+      label: "Moon+ Reader",
+      detail: "Open supported local books in Moon+ Reader.",
+    },
+  ];
+
+  return (
+    <AppDialog visible={visible} title="Reading engine" onClose={onClose}>
+      <View className="gap-2">
+        {options.map((option) => {
+          const active = option.id === selected;
+          return (
+            <Pressable
+              key={option.id}
+              onPress={() => onSelect(option.id)}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: active }}
+              className="min-h-20 flex-row items-center gap-4 border px-4 py-3 active:opacity-75"
+              style={{
+                borderRadius: 16,
+                borderColor: active ? colors.accent : colors.border,
+                backgroundColor: active
+                  ? colors.accentMuted
+                  : colors.surfaceRaised,
+              }}
+            >
+              <Feather
+                name={active ? "check-circle" : "circle"}
+                size={20}
+                color={active ? colors.accent : colors.textMuted}
+              />
+              <View className="flex-1">
+                <Text
+                  className="text-sm font-semibold"
+                  style={{ color: colors.text }}
+                >
+                  {option.label}
+                </Text>
+                <Text
+                  className="mt-1 text-xs leading-[18px]"
+                  style={{ color: colors.textMuted }}
+                >
+                  {option.detail}
+                </Text>
+              </View>
+            </Pressable>
+          );
+        })}
+      </View>
+      <Text className="mt-4 text-xs leading-5" style={{ color: colors.textMuted }}>
+        If the selected engine cannot read a format, Tomeio uses another
+        compatible reader or the Android app chooser.
       </Text>
     </AppDialog>
   );
@@ -994,6 +1077,7 @@ export default function SettingsScreen() {
   const [providerPicker, setProviderPicker] = useState<ProviderRole | null>(
     null,
   );
+  const [readingEnginePicker, setReadingEnginePicker] = useState(false);
   const [launcherIconPicker, setLauncherIconPicker] = useState(false);
   const [launcherIcon, setLauncherIcon] = useState<LauncherIcon>("full");
   const [launcherIconBusy, setLauncherIconBusy] = useState(false);
@@ -1060,6 +1144,12 @@ export default function SettingsScreen() {
     ],
     [extensions.bundled, extensions.thirdParty],
   );
+  const moonReaderEnabled =
+    Platform.OS === "android" &&
+    extensions.thirdParty.some(
+      (extension) =>
+        extension.enabled && extension.manifest.id === MOON_READER_EXTENSION_ID,
+    );
   const searchProviders = useMemo(
     () =>
       enabledManifests.filter((manifest) =>
@@ -1246,6 +1336,15 @@ export default function SettingsScreen() {
       setProviderPicker(null);
     } catch (cause) {
       showError("Could not change provider", cause);
+    }
+  };
+
+  const setReadingEngine = async (engine: PreferredReadingEngine) => {
+    try {
+      await update({ preferredReadingEngine: engine });
+      setReadingEnginePicker(false);
+    } catch (cause) {
+      showError("Could not change reading engine", cause);
     }
   };
 
@@ -1470,6 +1569,23 @@ export default function SettingsScreen() {
               onSelect={(id) => void setProvider("acquisition", id)}
             />
           </SettingsOption>
+          {moonReaderEnabled ? (
+            <SettingsOption
+              compact={compactOptions}
+              label="Reading engine"
+              detail="Chooses which reader opens when you tap Read. Unsupported formats use another compatible app."
+            >
+              <SelectField
+                label={
+                  settings.preferredReadingEngine === "moon-reader"
+                    ? "Moon+ Reader"
+                    : "Tomeio"
+                }
+                icon="book-open"
+                onPress={() => setReadingEnginePicker(true)}
+              />
+            </SettingsOption>
+          ) : null}
         </SettingsSection>
 
         <SettingsSection
@@ -1827,6 +1943,12 @@ export default function SettingsScreen() {
         onClose={() => {
           if (!launcherIconBusy) setLauncherIconPicker(false);
         }}
+      />
+      <ReadingEnginePicker
+        visible={readingEnginePicker && moonReaderEnabled}
+        selected={settings.preferredReadingEngine}
+        onSelect={(engine) => void setReadingEngine(engine)}
+        onClose={() => setReadingEnginePicker(false)}
       />
       {hostedSyncDialog ? (
         <HostedSyncDialog

@@ -3,6 +3,7 @@ import {
   type ProgressSyncRecord,
 } from './progress-sync-model';
 import type { CollectionSyncRecord } from './library-sync-model';
+import type { ReaderLocator } from './reader-state';
 
 interface SyncIdentityRecord {
   identity: string;
@@ -69,6 +70,15 @@ export interface HostedProgressRecord {
     identifiers?: Record<string, string>;
   } | null;
   percentage: number;
+  locator?: {
+    spineIndex?: number;
+    href?: string;
+    progression?: number;
+    textOffset?: number;
+    koreaderXPointer?: string;
+    precision?: 'exact' | 'nearest-anchor';
+  } | null;
+  locatorPrecision?: 'exact' | 'nearest-anchor' | 'percentage';
   metadata: Record<string, unknown> | null;
   source: 'tomeio' | 'koreader' | 'moonreader' | 'kobo';
   updatedAt: number;
@@ -108,6 +118,26 @@ export function progressRecordFromHosted(
     lastReadAt: optionalNumber(syncRecord?.lastReadAt),
     updatedAt: record.updatedAt,
     ...(record.removedAt == null ? {} : { removedAt: record.removedAt }),
+  };
+}
+
+export function readerLocatorFromHosted(
+  record: HostedProgressRecord,
+  format?: string,
+): ReaderLocator | undefined {
+  const href = record.locator?.href;
+  if (!href) return undefined;
+  const progression = record.locator?.progression;
+  return {
+    href,
+    type:
+      format?.toLowerCase() === 'pdf'
+        ? 'application/pdf'
+        : 'application/xhtml+xml',
+    locations: {
+      ...(typeof progression === 'number' ? { progression } : {}),
+      totalProgression: Math.max(0, Math.min(1, record.percentage)),
+    },
   };
 }
 

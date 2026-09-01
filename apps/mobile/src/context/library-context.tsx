@@ -34,9 +34,11 @@ import {
   deleteLocalCatalogBook,
   invalidateCatalogMetadata,
   loadLocalCatalog,
+  loadLocalCatalogBook,
   loadMoonReaderCatalog,
   loadProgressSyncCatalog,
   markCatalogBookRead,
+  persistCatalogBookProgress,
   persistCatalogBook,
   persistLocalBook,
   removeLibrarySyncBook,
@@ -54,11 +56,13 @@ import {
 import {
   hostedDocumentAliasForBook,
   synchronizeHostedBookChangesIfEnabled,
+  synchronizeHostedBookProgressIfEnabled,
   synchronizeHostedProgressIfEnabled,
   type HostedSyncBookChange,
   type HostedSyncBookStream,
   type HostedSyncProgress,
 } from "@/lib/hosted-sync";
+import type { ReaderLocator } from "@/lib/reader-state";
 import {
   indexReaderExtensionCatalog,
   type ReaderExtensionSyncOutput,
@@ -100,7 +104,7 @@ interface LibraryUiStatusValue {
 }
 
 interface LibraryActionsValue {
-  refreshLocalBooks: () => Promise<void>;
+  refreshLocalBooks: (forceHostedSync?: boolean) => Promise<void>;
   synchronizeLibrary: () => Promise<void>;
   refreshProgressSyncBooks: () => Promise<void>;
   refreshBookMetadata: (book: LibraryBook) => Promise<void>;
@@ -118,6 +122,15 @@ interface LibraryActionsValue {
     preference: BookCoverPreference,
   ) => Promise<void>;
   markAsRead: (book: LibraryBook) => Promise<void>;
+  recordReadingProgress: (
+    book: LibraryBook,
+    progress: number,
+    readingTimeMs: number,
+    locator?: ReaderLocator,
+  ) => Promise<void>;
+  refreshBookProgress: (
+    book: LibraryBook,
+  ) => Promise<{ book: LibraryBook; progress?: number; locator?: ReaderLocator }>;
   removeLocalFile: (book: LibraryBook) => Promise<void>;
   removeLibraryBook: (book: LibraryBook) => Promise<void>;
   isOnReadingList: (key: string) => boolean;
@@ -169,6 +182,8 @@ const LibraryActionsContext = createContext<LibraryActionsValue>({
   cacheBookCoverSource: async () => {},
   setBookCoverPreference: async () => {},
   markAsRead: async () => {},
+  recordReadingProgress: async () => {},
+  refreshBookProgress: async (book) => ({ book }),
   removeLocalFile: async () => {},
   removeLibraryBook: async () => {},
   isOnReadingList: () => false,
@@ -401,7 +416,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     [extensions],
   );
 
-  const refreshLocalBooks = useCallback((): Promise<void> => {
+  const refreshLocalBooks = useCallback((forceHostedSync = false): Promise<void> => {
     if (!settingsReady || !readerConfigurationReady || !ready)
       return Promise.resolve();
 
@@ -513,6 +528,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         lastHostedSyncStartedAt.current = Date.now();
         const hosted = await synchronizeHostedProgressIfEnabled({
           onProgress: reportHostedSyncProgress,
+          forceRemotePull: forceHostedSync,
         });
         if (hosted != null) {
           setLastSyncedAt(hosted.syncedAt);
@@ -855,6 +871,86 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     }
   }, [enrichSyncedBooksInBackground, reportHostedSyncProgress]);
 
+  const refreshBookProgress = useCallback(
+    async (
+      book: LibraryBook,
+    ): Promise<{
+      book: LibraryBook;
+      progress?: number;
+      locator?: ReaderLocator;
+    }> => {
+      lastHostedSyncStartedAt.current = Date.now();
+      setActivity({
+        state: "running",
+        title: "Checking reading position",
+        detail: `Looking for newer progress for “${book.title}”.`,
+      });
+      let hosted;
+      try {
+        hosted = await synchronizeHostedBookProgressIfEnabled(book);
+      } catch (cause) {
+        setActivity(null);
+        throw cause;
+      }
+      if (hosted == null) {
+        setActivity(null);
+        return { book };
+      }
+
+      setLastSyncedAt(Date.now());
+      const fileUri = book.local?.uri ?? book.fileUri ?? null;
+      const [syncedState, syncedProgress, refreshedLocal] = await Promise.all([
+        loadLibrary(),
+        loadProgressSyncCatalog(),
+        loadLocalCatalogBook(book.key, fileUri),
+      ]);
+      stateRef.current = syncedState;
+      setState(syncedState);
+      setProgressSyncBooks(syncedProgress);
+
+      if (refreshedLocal) {
+        const identity = bookIdentity(book.title, book.author);
+        setLocalBooks((current) =>
+          current.map((candidate) =>
+            candidate.key === refreshedLocal.key ||
+            bookIdentity(candidate.title, candidate.author) === identity
+              ? refreshedLocal
+              : candidate,
+          ),
+        );
+        setActivity({
+          state: "success",
+          title: "Reading position synchronized",
+          detail: `“${book.title}” is ready at the latest position.`,
+        });
+        return {
+          book: refreshedLocal,
+          progress: hosted.progress,
+          locator: hosted.locator,
+        };
+      }
+
+      const identity = bookIdentity(book.title, book.author);
+      const refreshedBook =
+        [...syncedState.downloaded, ...syncedState.readingList, ...syncedProgress].find(
+          (candidate) =>
+            candidate.key === book.key ||
+            bookIdentity(candidate.title, candidate.author) === identity,
+        ) ?? book;
+      setActivity({
+        state: "success",
+        title: "Reading position synchronized",
+        detail: `“${book.title}” is ready at the latest position.`,
+      });
+      return {
+        book: refreshedBook,
+        progress: hosted.progress,
+        locator: hosted.locator,
+      };
+    },
+    [],
+  );
+
   const synchronizeForegroundChanges = useCallback(async (): Promise<void> => {
     try {
       lastHostedSyncStartedAt.current = Date.now();
@@ -897,6 +993,10 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         });
         if (hosted == null) return;
         setLastSyncedAt(hosted.syncedAt);
+        if (hosted.pushedRecords === 0) {
+          setActivity(null);
+          return;
+        }
         setActivity({
           state: "success",
           title: "Change synchronized",
@@ -939,6 +1039,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       book: LibraryBook,
       streams: HostedSyncBookStream[],
       documentAlias?: string,
+      locator?: ReaderLocator,
     ) => {
       const key = bookIdentity(book.title, book.author);
       const existing = pendingBookChanges.current.get(key);
@@ -946,6 +1047,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         book,
         streams: [...new Set([...(existing?.streams ?? []), ...streams])],
         documentAlias: documentAlias ?? existing?.documentAlias,
+        locator: locator ?? existing?.locator,
       });
       if (pendingChangeSyncTimer.current || pendingChangeSyncRunning.current)
         return;
@@ -1046,6 +1148,39 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         readingList: current.readingList.map(applyRead),
       }));
       schedulePendingChanges(book, ["progress"]);
+    },
+    [commit, schedulePendingChanges],
+  );
+
+  const recordReadingProgress = useCallback(
+    async (
+      book: LibraryBook,
+      progress: number,
+      readingTimeMs: number,
+      locator?: ReaderLocator,
+    ) => {
+      const nextProgress = Math.max(
+        book.progress ?? 0,
+        Math.max(0, Math.min(100, progress)),
+      );
+      const updated: LibraryBook = {
+        ...book,
+        progress: nextProgress,
+        readingTimeMs: Math.max(book.readingTimeMs ?? 0, readingTimeMs),
+        lastReadAt: Date.now(),
+      };
+      if (nextProgress >= 100) updated.isRead = true;
+      await persistCatalogBookProgress(updated);
+      const applyProgress = (item: LibraryBook) =>
+        item.key === updated.key ? { ...item, ...updated } : item;
+      setLocalBooks((current) => current.map(applyProgress));
+      setMoonReaderBooks((current) => current.map(applyProgress));
+      setProgressSyncBooks((current) => current.map(applyProgress));
+      await commit((current) => ({
+        downloaded: current.downloaded.map(applyProgress),
+        readingList: current.readingList.map(applyProgress),
+      }));
+      schedulePendingChanges(updated, ["progress"], undefined, locator);
     },
     [commit, schedulePendingChanges],
   );
@@ -1729,6 +1864,8 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       cacheBookCoverSource,
       setBookCoverPreference,
       markAsRead,
+      recordReadingProgress,
+      refreshBookProgress,
       removeLocalFile,
       removeLibraryBook,
       isOnReadingList,
@@ -1740,6 +1877,8 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       removeLocalFile,
       isOnReadingList,
       markAsRead,
+      recordReadingProgress,
+      refreshBookProgress,
       recordDownload,
       refreshBookMetadata,
       refreshBookCoverSources,

@@ -14,6 +14,13 @@ import {
   syncAliases,
 } from "./library-db";
 import type { LibraryBook } from "./library";
+import { sameReaderLocator } from "./reader-metrics";
+import {
+  loadReaderLocators,
+  loadReaderState,
+  saveBookReaderState,
+  type ReaderLocator,
+} from "./reader-state";
 import { koreaderPartialMd5 } from "./koreader-document";
 import { bookIdentity } from "./book-metadata";
 import { materializeNativeFolderFile } from "./native-folder-file";
@@ -31,6 +38,7 @@ import {
   hostedAccountMetadata,
   matchingSyncRecord,
   progressRecordFromHosted,
+  readerLocatorFromHosted,
   sameCollectionSyncContent,
   sameProgressSyncContent,
   type HostedProgressRecord,
@@ -62,6 +70,7 @@ export interface HostedSyncProgress {
 export interface HostedSyncOptions {
   onProgress?: (progress: HostedSyncProgress) => void;
   queueAfterCurrent?: boolean;
+  forceRemotePull?: boolean;
 }
 
 export type HostedSyncBookStream =
@@ -73,6 +82,13 @@ export interface HostedSyncBookChange {
   book: LibraryBook;
   streams: HostedSyncBookStream[];
   documentAlias?: string;
+  locator?: ReaderLocator;
+}
+
+export interface HostedBookProgress {
+  progress: number;
+  locator?: ReaderLocator;
+  updatedAt: number;
 }
 
 export interface HostedSyncAccount {
@@ -110,6 +126,7 @@ export interface HostedSyncRecoveryChallenge {
 }
 
 interface HostedDocumentIds {
+  bookKey?: string;
   primary: string;
   aliases: string[];
   fingerprintKind: "koreader-partial-md5-v1" | "tomeio-logical-md5-v1";
@@ -256,22 +273,40 @@ async function jsonRequest<T>(path: string, init: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+let pendingSessionRefresh: Promise<HostedSyncSession> | null = null;
+
 async function refreshSession(
   session: HostedSyncSession,
 ): Promise<HostedSyncSession> {
-  try {
-    const refreshed = await jsonRequest<HostedSyncSession>("/v1/auth/refresh", {
-      method: "POST",
-      body: JSON.stringify({ refreshToken: session.refreshToken }),
-    });
-    await saveSession(refreshed);
-    return refreshed;
-  } catch (error) {
-    if (error instanceof HostedSyncError && error.status === 401) {
-      await SecureStore.deleteItemAsync(SESSION_KEY);
+  if (pendingSessionRefresh != null) return pendingSessionRefresh;
+  const operation: Promise<HostedSyncSession> = (async () => {
+    const current = await loadSession();
+    if (current == null) {
+      throw new Error("Sign in to Tomeio Sync before synchronizing.");
     }
-    throw error;
-  }
+    if (current.refreshToken !== session.refreshToken) return current;
+    try {
+      const refreshed = await jsonRequest<HostedSyncSession>("/v1/auth/refresh", {
+        method: "POST",
+        body: JSON.stringify({ refreshToken: current.refreshToken }),
+      });
+      await saveSession(refreshed);
+      console.info("[hosted-sync] session refreshed");
+      return refreshed;
+    } catch (error) {
+      if (error instanceof HostedSyncError && error.status === 401) {
+        const latest = await loadSession();
+        if (latest?.refreshToken === current.refreshToken) {
+          await SecureStore.deleteItemAsync(SESSION_KEY);
+        }
+      }
+      throw error;
+    }
+  })().finally(() => {
+    if (pendingSessionRefresh === operation) pendingSessionRefresh = null;
+  });
+  pendingSessionRefresh = operation;
+  return operation;
 }
 
 async function authenticatedRequest<T>(
@@ -756,7 +791,9 @@ function progressPayload(
   record: ProgressSyncRecord,
   document: HostedDocumentIds,
   deviceId: string,
+  locator?: ReaderLocator,
 ): Record<string, unknown> {
+  const locatorProgression = locator?.locations?.progression;
   return {
     percentage: record.isRead
       ? 1
@@ -782,11 +819,37 @@ function progressPayload(
       ]),
     ].map((externalKey) => ({ reader: "moonreader", externalKey })),
     metadata: hostedAccountMetadata(record),
+    ...(locator
+      ? {
+          locator: {
+            href: locator.href,
+            ...(typeof locatorProgression === "number"
+              ? { progression: locatorProgression }
+              : {}),
+            precision: "nearest-anchor",
+          },
+        }
+      : {}),
     deviceId,
     deviceName: deviceName(),
     updatedAt: record.updatedAt,
     removedAt: record.removedAt,
   };
+}
+
+function sameHostedLocator(
+  locator: ReaderLocator | undefined,
+  hosted: HostedProgressRecord,
+): boolean {
+  if (!locator) return true;
+  const hostedLocator = hosted.locator;
+  if (!hostedLocator || hostedLocator.href !== locator.href) return false;
+  const localProgression = locator.locations?.progression;
+  if (localProgression == null) return hostedLocator.progression == null;
+  return (
+    hostedLocator.progression != null &&
+    Math.abs(hostedLocator.progression - localProgression) < 0.000001
+  );
 }
 
 async function localDocumentIdentifiers(): Promise<
@@ -815,6 +878,7 @@ async function localDocumentIdentifiers(): Promise<
       throw cause;
     }
     const identifiers = {
+      bookKey: local.bookKey,
       primary: partial,
       aliases: [logical],
       fingerprintKind: "koreader-partial-md5-v1" as const,
@@ -860,6 +924,7 @@ async function localDocumentIdentifiersForChanges(
       ));
     const identity = bookIdentity(book.title, book.author);
     const identifiers: HostedDocumentIds = {
+      bookKey: book.key,
       primary: partial,
       aliases: [await md5(identity)],
       fingerprintKind: "koreader-partial-md5-v1",
@@ -1169,6 +1234,7 @@ async function performHostedCollectionSync(
 async function performHostedProgressSync(
   accountId: string,
   notify: (progress: HostedSyncProgress) => void,
+  forceRemotePull = false,
 ): Promise<HostedSyncResult> {
   const status = hostedSyncStatus(
     await authenticatedRequest<unknown>("/v1/sync/status"),
@@ -1182,6 +1248,7 @@ async function performHostedProgressSync(
   const getLocalIdentifiers = () =>
     (localIdentifiersPromise ??= localDocumentIdentifiers());
   if (
+    !forceRemotePull &&
     checkpoint.localRevision === localRevision &&
     checkpoint.remoteVersion === status.versions.progress
   ) {
@@ -1213,12 +1280,16 @@ async function performHostedProgressSync(
   const remote = await authenticatedRequest<{
     records: HostedProgressRecord[];
     serverTime: number;
-  }>(incrementalPath("/v1/progress", checkpoint.cursor));
+  }>(incrementalPath("/v1/progress", forceRemotePull ? null : checkpoint.cursor));
   const windowRevision = await remoteWindowRevision(remote.records);
   const remoteIsUnchanged =
     remote.records.length === 0 ||
     checkpoint.remoteWindowRevision === windowRevision;
-  if (checkpoint.localRevision === localRevision && remoteIsUnchanged) {
+  if (
+    !forceRemotePull &&
+    checkpoint.localRevision === localRevision &&
+    remoteIsUnchanged
+  ) {
     console.info("[hosted-sync] progress unchanged", {
       remote: remote.records.length,
       local: localBeforePull.length,
@@ -1304,15 +1375,62 @@ async function performHostedProgressSync(
   const identifiers = await documentIds(merged, localIdentifiers);
   const deviceId = await getSyncDeviceId();
   const fingerprints = new Map<ProgressSyncRecord, string>();
+  const locators = new Map<ProgressSyncRecord, ReaderLocator | undefined>();
+  const storedLocators = await loadReaderLocators(
+    [...identifiers.byRecord.values()].flatMap((document) =>
+      document.bookKey ? [document.bookKey] : [],
+    ),
+  );
+  let importedLocators = 0;
+  for (const hosted of remote.records) {
+    const remoteRecord = remoteComparableByDocument.get(hosted.document);
+    if (remoteRecord == null) continue;
+    const mergedRecord = matchingSyncRecord(remoteRecord, merged);
+    const document = mergedRecord && identifiers.byRecord.get(mergedRecord);
+    const knownHostedRecord =
+      identifiersBeforePull.recordsByDocument.get(hosted.document);
+    if (
+      !mergedRecord ||
+      !document?.bookKey ||
+      (document.primary !== hosted.document &&
+        (knownHostedRecord == null ||
+          matchingSyncRecord(knownHostedRecord, [mergedRecord]) == null)) ||
+      remoteRecord.progress + 0.01 < mergedRecord.progress ||
+      (mergedRecord.isRead && !remoteRecord.isRead)
+    ) {
+      continue;
+    }
+    const remoteLocator = readerLocatorFromHosted(hosted, mergedRecord.format);
+    if (!remoteLocator) continue;
+    const storedLocator = storedLocators.get(document.bookKey);
+    const storedProgress =
+      typeof storedLocator?.locations?.totalProgression === "number"
+        ? storedLocator.locations.totalProgression * 100
+        : 0;
+    if (remoteRecord.progress + 0.01 < storedProgress) continue;
+    const sameLocator = sameReaderLocator(storedLocator, remoteLocator);
+    if (!sameLocator) {
+      await saveBookReaderState(document.bookKey, { locator: remoteLocator });
+      storedLocators.set(document.bookKey, remoteLocator);
+      importedLocators += 1;
+    }
+  }
+  console.info("[hosted-sync] imported reader locators", {
+    imported: importedLocators,
+  });
   for (const record of merged) {
     const document = identifiers.byRecord.get(record);
     if (document == null)
       throw new Error(`No hosted sync identifier for ${record.identity}.`);
+    const locator = document.bookKey
+      ? storedLocators.get(document.bookKey)
+      : undefined;
+    locators.set(record, locator);
     fingerprints.set(
       record,
       await payloadFingerprint(
         document,
-        progressPayload(record, document, deviceId),
+        progressPayload(record, document, deviceId, locator),
       ),
     );
   }
@@ -1329,7 +1447,8 @@ async function performHostedProgressSync(
       (document.primary === hosted.document ||
         (knownHostedRecord != null &&
           matchingSyncRecord(knownHostedRecord, [mergedRecord]) != null)) &&
-      sameProgressSyncContent(mergedRecord, remoteRecord)
+      sameProgressSyncContent(mergedRecord, remoteRecord) &&
+      sameHostedLocator(locators.get(mergedRecord), hosted)
     ) {
       checkpoint.acknowledgements[document.primary] = fingerprints.get(
         mergedRecord,
@@ -1365,7 +1484,9 @@ async function performHostedProgressSync(
       `/v1/progress/${encodeURIComponent(document.primary)}`,
       {
         method: "PUT",
-        body: JSON.stringify(progressPayload(record, document, deviceId)),
+        body: JSON.stringify(
+          progressPayload(record, document, deviceId, locators.get(record)),
+        ),
       },
     );
     checkpoint.acknowledgements[document.primary] = fingerprints.get(record)!;
@@ -1532,7 +1653,16 @@ async function pushHostedProgressChanges(
       const document = identifiers.byRecord.get(record);
       if (document == null)
         throw new Error(`No hosted sync identifier for ${record.identity}.`);
-      const payload = progressPayload(record, document, deviceId);
+      const locator =
+        changes.find(
+        (change) =>
+          change.streams.includes("progress") &&
+          recordMatchesBook(record, change.book),
+        )?.locator ??
+        (document.bookKey
+          ? (await loadReaderState(document.bookKey)).book.locator
+          : undefined);
+      const payload = progressPayload(record, document, deviceId, locator);
       return {
         document,
         payload,
@@ -1544,12 +1674,17 @@ async function pushHostedProgressChanges(
     ({ document, fingerprint }) =>
       checkpoint.acknowledgements[document.primary] !== fingerprint,
   );
+  if (recordsToPush.length === 0) {
+    if (checkpoint.localRevision != null) {
+      checkpoint.localRevision = await syncRecordsRevision(localRecords);
+      await saveCheckpoint(accountId, "progress", checkpoint);
+    }
+    console.info("[hosted-sync] targeted progress push", { pushing: 0 });
+    return 0;
+  }
   notify({
     phase: "uploading-progress",
-    message:
-      recordsToPush.length === 0
-        ? "Reading progress is up to date"
-        : `Uploading reading change${recordsToPush.length === 1 ? "" : "s"}…`,
+    message: `Uploading reading change${recordsToPush.length === 1 ? "" : "s"}…`,
     completed: 0,
     total: recordsToPush.length,
   });
@@ -1624,6 +1759,7 @@ async function performHostedBookChanges(
 
 let pendingHostedSync: Promise<HostedSyncResult> | null = null;
 let queuedHostedSync = false;
+let queuedForceRemotePull = false;
 let hostedSyncSerial: Promise<void> = Promise.resolve();
 const hostedSyncObservers = new Set<
   NonNullable<HostedSyncOptions["onProgress"]>
@@ -1648,7 +1784,10 @@ export function synchronizeHostedProgress(
   const observer = options.onProgress;
   if (observer) hostedSyncObservers.add(observer);
   if (pendingHostedSync != null) {
-    if (options.queueAfterCurrent) queuedHostedSync = true;
+    if (options.queueAfterCurrent || options.forceRemotePull) {
+      queuedHostedSync = true;
+      queuedForceRemotePull ||= options.forceRemotePull ?? false;
+    }
     return pendingHostedSync.finally(() => {
       if (observer) hostedSyncObservers.delete(observer);
     });
@@ -1665,7 +1804,14 @@ export function synchronizeHostedProgress(
     };
     do {
       queuedHostedSync = false;
-      const next = await performHostedProgressSync(account.id, notifyHostedSync);
+      const forceRemotePull =
+        (options.forceRemotePull ?? false) || queuedForceRemotePull;
+      queuedForceRemotePull = false;
+      const next = await performHostedProgressSync(
+        account.id,
+        notifyHostedSync,
+        forceRemotePull,
+      );
       result = {
         importedRecords: result.importedRecords + next.importedRecords,
         pushedRecords: result.pushedRecords + next.pushedRecords,
@@ -1694,6 +1840,88 @@ export async function synchronizeHostedBookChangesIfEnabled(
     if (account == null)
       throw new Error("Sign in to Tomeio Sync before synchronizing.");
     return performHostedBookChanges(account.id, changes, notify);
+  });
+}
+
+export async function synchronizeHostedBookProgressIfEnabled(
+  book: LibraryBook,
+): Promise<HostedBookProgress | null> {
+  if ((await getHostedSyncAccount()) == null) return null;
+  return serializeHostedSync(async () => {
+    const identifiersByAlias = await localDocumentIdentifiersForChanges([
+      { book, streams: ["progress"] },
+    ]);
+    const identity = bookIdentity(book.title, book.author);
+    const identifiers = [identity, ...syncAliases(book)]
+      .map((alias) => identifiersByAlias.get(alias))
+      .find((candidate): candidate is HostedDocumentIds => candidate != null);
+    if (identifiers == null) return null;
+
+    let record: HostedProgressRecord;
+    try {
+      const response = await authenticatedRequest<{ record: HostedProgressRecord }>(
+        `/v1/progress/${encodeURIComponent(identifiers.primary)}`,
+      );
+      record = response.record;
+    } catch (cause) {
+      if (
+        cause instanceof HostedSyncError &&
+        cause.status === 404 &&
+        cause.code === "progress_not_found"
+      ) {
+        return null;
+      }
+      throw cause;
+    }
+
+    const localRecords = await loadProgressSyncRecords();
+    const local = localRecords.find((candidate) => recordMatchesBook(candidate, book));
+    const embedded = progressRecordFromHosted(record);
+    const linked = local ?? embedded;
+    if (linked != null) {
+      const remoteBase = embedded ?? linked;
+      const remote: ProgressSyncRecord = {
+        ...remoteBase,
+        identity: linked.identity,
+        aliases: [...new Set([...linked.aliases, ...remoteBase.aliases])].sort(),
+        progress: Math.max(0, Math.min(100, record.percentage * 100)),
+        isRead: record.percentage >= 1 || remoteBase.isRead,
+        readingTimeMs: remoteBase.readingTimeMs ?? local?.readingTimeMs,
+        wordsRead: remoteBase.wordsRead ?? local?.wordsRead,
+        lastReadAt: remoteBase.lastReadAt ?? local?.lastReadAt,
+        updatedAt: record.updatedAt,
+        ...(record.removedAt == null ? {} : { removedAt: record.removedAt }),
+      };
+      await applyProgressSyncRecords(
+        mergeProgressRecords(local ? [local] : [], [remote]),
+      );
+    }
+
+    const locator = readerLocatorFromHosted(record, book.format);
+    if (locator) {
+      const stored = await loadReaderState(book.key);
+      const storedProgress =
+        typeof stored.book.locator?.locations?.totalProgression === "number"
+          ? stored.book.locator.locations.totalProgression * 100
+          : 0;
+      const shouldApply = record.percentage * 100 + 0.01 >= storedProgress;
+      const changed = !sameReaderLocator(stored.book.locator, locator);
+      if (shouldApply && changed) {
+        await saveBookReaderState(book.key, { locator });
+      }
+      console.info("[hosted-sync] targeted locator pull", {
+        bookKey: book.key,
+        remoteProgress: record.percentage * 100,
+        storedProgress,
+        changed,
+        applied: shouldApply && changed,
+      });
+    }
+    return {
+      progress: Math.max(0, Math.min(100, record.percentage * 100)),
+      ...(locator ? { locator } : {}),
+      updatedAt: record.updatedAt,
+    };
   });
 }
 

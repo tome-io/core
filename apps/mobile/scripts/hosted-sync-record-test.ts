@@ -5,6 +5,7 @@ import {
   hostedAccountMetadata,
   matchingSyncRecord,
   progressRecordFromHosted,
+  readerLocatorFromHosted,
   sameCollectionSyncContent,
   sameProgressSyncContent,
 } from '../src/lib/hosted-sync-record';
@@ -36,6 +37,30 @@ test('creates a remote-only library record from shared document metadata', () =>
     wordsRead: undefined,
     lastReadAt: undefined,
     updatedAt: 1_780_000_000_000,
+  });
+});
+
+test('converts hosted progress into a Readium locator', () => {
+  assert.deepEqual(readerLocatorFromHosted({
+    document: '0415cf9c2d689bf88caea70729528842',
+    documentMetadata: null,
+    percentage: 0.0661,
+    locator: {
+      href: 'OEBPS/Text/Section0002.xhtml',
+      progression: 0.42857142857142855,
+    },
+    metadata: null,
+    source: 'tomeio',
+    updatedAt: 1_780_000_000_000,
+    serverUpdatedAt: 1_780_000_000_100,
+    removedAt: null,
+  }, 'epub'), {
+    href: 'OEBPS/Text/Section0002.xhtml',
+    type: 'application/xhtml+xml',
+    locations: {
+      progression: 0.42857142857142855,
+      totalProgression: 0.0661,
+    },
   });
 });
 

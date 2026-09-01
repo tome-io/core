@@ -14,6 +14,7 @@
     "ios": {
       "icon": "./assets/images/icon.png",
       "bundleIdentifier": "org.tomeio.app",
+      "deploymentTarget": "16.4",
       "supportsTablet": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
@@ -65,6 +66,15 @@
         }
       ],
       "@kesha-antonov/react-native-background-downloader",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "kotlinVersion": "2.3.20"
+          }
+        }
+      ],
+      "./plugins/with-readium.js",
       "expo-sqlite"
     ],
     "experiments": {
