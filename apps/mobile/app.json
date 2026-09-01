@@ -74,6 +74,7 @@
           }
         }
       ],
+      "./plugins/with-android-build-memory.js",
       "./plugins/with-readium.js",
       "expo-sqlite"
     ],
