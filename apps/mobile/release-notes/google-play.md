@@ -10,7 +10,7 @@
 
 ## Current release
 
-- Read EPUB and PDF books inside Tomeio with customizable reading controls.
-- Keep reading progress synchronized across signed-in devices and supported readers.
-- Choose Tomeio or Moon+ Reader as the default reading engine on Android.
-- Improved tablet layouts, search, downloads, and local library reliability.
+- Read EPUB and PDF books inside Tomeio with themes, typography, contents, and progress details.
+- Resume from the furthest position across signed-in Tomeio devices.
+- Sync supported reading progress with KOReader, Moon+ Reader, and Kobo eReaders.
+- Choose Tomeio or Moon+ Reader on Android, with improved tablet layouts, search, downloads, and library reliability.
