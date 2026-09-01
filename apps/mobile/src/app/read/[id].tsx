@@ -186,9 +186,9 @@ export default function ReadScreen() {
   const publicationPositionsRef = useRef<Locator[]>([]);
   const highlightsRef = useRef<ReaderHighlight[]>([]);
   const initialReadingTimeRef = useRef(0);
-  const sessionStartedAtRef = useRef<number | null>(Date.now());
+  const sessionStartedAtRef = useRef<number | null>(null);
   const estimateReadingTimeRef = useRef(0);
-  const estimateSessionStartedAtRef = useRef<number | null>(Date.now());
+  const estimateSessionStartedAtRef = useRef<number | null>(null);
   const estimateStartedPositionRef = useRef<number | null>(null);
   const stateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const exitFlushStartedRef = useRef(false);
@@ -209,6 +209,10 @@ export default function ReadScreen() {
   const [positionCount, setPositionCount] = useState(0);
   const [viewportPosition, setViewportPosition] = useState<number | null>(null);
   const [viewportPositionCount, setViewportPositionCount] = useState(0);
+  const [estimateReadingTimeMs, setEstimateReadingTimeMs] = useState(0);
+  const [estimateStartedPosition, setEstimateStartedPosition] = useState<
+    number | null
+  >(null);
   const [readerPositionReady, setReaderPositionReady] = useState(true);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [tocVisible, setTocVisible] = useState(false);
@@ -319,6 +323,8 @@ export default function ReadScreen() {
         ? null
         : (stored.book.locator?.locations?.position ?? null);
       estimateStartedPositionRef.current = initialPosition;
+      setEstimateReadingTimeMs(0);
+      setEstimateStartedPosition(initialPosition);
       setProgress(initialProgress);
       setPosition(initialPosition);
       setPositionCount(0);
@@ -530,6 +536,10 @@ export default function ReadScreen() {
           estimateReadingTimeRef.current = 0;
           estimateSessionStartedAtRef.current =
             AppState.currentState === 'active' ? Date.now() : null;
+          setEstimateReadingTimeMs(0);
+          setEstimateStartedPosition(nextPosition);
+        } else {
+          setEstimateReadingTimeMs(currentEstimateReadingTime());
         }
       }
       setPosition(nextPosition);
@@ -546,7 +556,7 @@ export default function ReadScreen() {
         void flushState(false).catch(reportSaveError);
       }, 700);
     },
-    [flushState, readerInstanceId, reportSaveError],
+    [currentEstimateReadingTime, flushState, readerInstanceId, reportSaveError],
   );
 
   const handlePublicationReady = useCallback(
@@ -806,9 +816,8 @@ export default function ReadScreen() {
   const progressLabel = `${Math.max(0, Math.min(100, progress)).toFixed(
     progress < 10 && progress % 1 !== 0 ? 1 : 0,
   )}%`;
-  const estimateStartedPosition = estimateStartedPositionRef.current;
   const remainingLabel = timeLeftLabel(
-    currentEstimateReadingTime(),
+    estimateReadingTimeMs,
     position == null || estimateStartedPosition == null
       ? 0
       : Math.max(0, position - estimateStartedPosition),
