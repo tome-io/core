@@ -437,6 +437,7 @@ export function PillButton({
         fullWidth={fullWidth}
         compact={compact}
         prominent={variant === 'accent' || variant === 'success'}
+        plain={variant === 'ghost'}
         destructive={variant === 'danger'}
       />
     );
