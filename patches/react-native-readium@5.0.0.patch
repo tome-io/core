@@ -620,7 +620,15 @@ diff --git a/ios/Reader/Common/ReaderViewController.swift b/ios/Reader/Common/Re
 index 57d6dd6b4d916bdf81afceffbba6605c591afb11..6e2baf10ee708b9be11682780e3150311202e170 100644
 --- a/ios/Reader/Common/ReaderViewController.swift
 +++ b/ios/Reader/Common/ReaderViewController.swift
-@@ -224,6 +224,38 @@ class ReaderViewController: UIViewController, Loggable {
+@@ -93,6 +93,7 @@ class ReaderViewController: UIViewController, Loggable {
+     positionLabel.translatesAutoresizingMaskIntoConstraints = false
+     positionLabel.font = .systemFont(ofSize: 12)
+     positionLabel.textColor = .darkGray
++    positionLabel.isHidden = true // Tomeio renders the shared reader footer.
+     view.addSubview(positionLabel)
+     NSLayoutConstraint.activate([
+       positionLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+@@ -224,6 +225,38 @@ class ReaderViewController: UIViewController, Loggable {
      navigatorInputObserverTokens.removeAll()
    }
  
@@ -637,7 +645,7 @@ index 57d6dd6b4d916bdf81afceffbba6605c591afb11..6e2baf10ee708b9be11682780e315031
 +    guard let webView else { return nil }
 +    let scrollView = webView.scrollView
 +    let pageWidth = scrollView.bounds.width
-+    guard pageWidth > 0, scrollView.contentSize.width > pageWidth * 1.01 else {
++    guard pageWidth > 0, scrollView.contentSize.width >= pageWidth * 0.99 else {
 +      return nil
 +    }
 +    let count = max(1, Int(ceil(scrollView.contentSize.width / pageWidth)))

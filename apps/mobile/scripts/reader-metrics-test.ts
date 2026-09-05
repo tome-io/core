@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import {
   locatorAtProgress,
   sameReaderLocator,
+  restoredReaderLocator,
   sampleReadingSpeed,
   shouldApplyRemoteProgress,
   shouldUploadReaderProgress,
@@ -125,4 +126,13 @@ test('duplicate locators retain elapsed time while idle and rapid navigation do 
 test('last partial position has an estimate, unavailable data has a terminal label', () => {
   assert.equal(timeLeftLabel(0, 0, 0.2, 99), '1 min left');
   assert.equal(timeLeftLabel(0, 0, Number.NaN, 50), 'Time unavailable');
+});
+
+test('restoration accepts a saved offset within its laid-out page, without weakening sync equality', () => {
+  const target = { href: 'chapter.xhtml', locations: { progression: 0.42857142857142855 } };
+  const actual = { href: 'chapter.xhtml', locations: { progression: 0.4166666666666667, viewportPosition: 16, viewportPositionCount: 36 } };
+  assert.equal(restoredReaderLocator(target, actual), true);
+  assert.equal(sameReaderLocator(target, actual), false);
+  assert.equal(restoredReaderLocator(target, { ...actual, href: 'other.xhtml' }), false);
+  assert.equal(restoredReaderLocator(target, { ...actual, locations: { ...actual.locations, viewportPosition: 15 } }), false);
 });
