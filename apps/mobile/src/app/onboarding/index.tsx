@@ -142,18 +142,23 @@ export default function OnboardingScreen() {
             <PillButton label="Explore extensions" icon="plus" fullWidth onPress={() => router.push('/onboarding/extensions')} />
             <Text style={styles.caption}>More sources, more possibilities. Add them anytime.</Text>
           </View> : null}
-          {step === 2 ? <View style={{ gap: 16 }}>
-            <View style={[styles.card, { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 20 }]}>
-              <Feather name="folder" size={24} color={colors.accent} />
-              <View style={{ flex: 1, gap: 4 }}>
-                <Text style={styles.label}>{settings.localLibraryLocation && isExternalFolderLocation(settings.localLibraryLocation)
-                  ? folderLocationLabel(settings.localLibraryLocation) : 'Tomeio storage'}</Text>
-                <Text style={{ color: colors.textMuted, fontSize: 13 }}>{isExternalFolderLocation(settings.localLibraryLocation) ? 'Connected · EPUBs & PDFs' : 'Ready to use · No setup needed'}</Text>
+          {step === 2 ? <View style={{ gap: 18 }}>
+            <View style={[styles.card, { padding: 20, gap: 20 }]}>
+              <Text style={{ color: colors.textMuted, fontSize: 11, fontWeight: '600', letterSpacing: 1.2 }}>YOUR LIBRARY FOLDER</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+                <View style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: colors.accentMuted, alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="folder" size={22} color={colors.accent} />
+                </View>
+                <View style={{ flex: 1, gap: 4 }}>
+                  <Text style={[styles.label, { fontSize: 18 }]}>{settings.localLibraryLocation && isExternalFolderLocation(settings.localLibraryLocation)
+                    ? folderLocationLabel(settings.localLibraryLocation) : 'Tomeio storage'}</Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 13 }}>{isExternalFolderLocation(settings.localLibraryLocation) ? 'Selected for your books' : 'Ready when you are'}</Text>
+                </View>
+                <Feather name="check-circle" size={18} color={colors.success} />
               </View>
-              <Feather name="check-circle" size={20} color={colors.success} />
+              <PillButton label={isExternalFolderLocation(settings.localLibraryLocation) ? 'Change folder' : 'Choose my own folder'} fullWidth onPress={() => void chooseFolder()} disabled={busy || Platform.OS === 'web'} />
             </View>
-            <PillButton label={isExternalFolderLocation(settings.localLibraryLocation) ? 'Change folder' : 'Choose my own folder'} icon="folder" fullWidth onPress={() => void chooseFolder()} disabled={busy || Platform.OS === 'web'} />
-            <Text style={styles.caption}>Your files stay in your storage.</Text>
+            <Text style={styles.caption}>EPUBs & PDFs. Your files stay in your storage.</Text>
           </View> : null}
           {step === 3 ? <View style={{ gap: 20 }}>
             <View style={[styles.card, { padding: 20, gap: 18 }]}>

@@ -37,7 +37,7 @@ export function useOnboardingMotion() {
   return !reduced && active && focused;
 }
 
-function CoverColumn({ column, width, animate }: { column: number; width: number; animate: boolean }) {
+function CoverColumn({ column, width, animate, viewportHeight }: { column: number; width: number; animate: boolean; viewportHeight: number }) {
   const progress = useAnimatedValue(0);
   const height = width * 1.5;
   const stride = (height + 12) * 3;
@@ -53,19 +53,26 @@ function CoverColumn({ column, width, animate }: { column: number; width: number
   }, [animate, column, progress]);
   const translateY = progress.interpolate({ inputRange: [0, 1], outputRange: column % 2 ? [-stride, 0] : [0, -stride] });
   return <Animated.View style={{ width, gap: 12, marginTop: -column * 35, transform: [{ translateY }] }}>
-    {Array.from({ length: 12 }, (_, index) => <Image key={index} source={COVERS[(column * 2 + index % 3) % COVERS.length]}
+    {Array.from({ length: Math.ceil((viewportHeight + stride + column * 35) / (height + 12) / 3) * 3 }, (_, index) => <Image key={index} source={COVERS[(column * 2 + index % 3) % COVERS.length]}
       contentFit="cover" style={{ width, height, borderRadius: 10, backgroundColor: colors.surfaceRaised }} />)}
   </Animated.View>;
 }
 
 export function WelcomeArtwork() {
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const animate = useOnboardingMotion();
   const columnWidth = Math.min(140, Math.max(90, (width - 24) / 4));
+  const wallHeight = height * 0.88 + 40;
+  // Rotate a viewport-sized wall, not the much taller repeating column content.
+  // Overscan covers the corners exposed by rotation at every screen size.
+  const overscan = Math.ceil(Math.max(width, wallHeight) * Math.sin(7 * Math.PI / 180)) + 48;
+  const wallWidth = width + overscan * 2;
+  const columnCount = Math.ceil(wallWidth / (columnWidth + 12)) + 1;
   return <View pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={StyleSheet.absoluteFill}>
     <View style={{ position: 'absolute', top: -40, left: 0, right: 0, bottom: '12%', overflow: 'hidden', alignItems: 'center' }}>
-      <View style={{ flexDirection: 'row', gap: 12, transform: [{ rotate: '-7deg' }] }}>
-        {[0, 1, 2, 3, 4].map((column) => <CoverColumn key={column} column={column} width={columnWidth} animate={animate} />)}
+      <View style={{ position: 'absolute', top: -overscan, left: -overscan, width: wallWidth, height: wallHeight + overscan * 2,
+        flexDirection: 'row', justifyContent: 'center', gap: 12, transform: [{ rotate: '-7deg' }] }}>
+        {Array.from({ length: columnCount }, (_, column) => <CoverColumn key={column} column={column} width={columnWidth} animate={animate} viewportHeight={wallHeight + overscan * 2} />)}
       </View>
       <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(16, 11, 8, 0.24)' }]} />
       <View style={[StyleSheet.absoluteFill, { experimental_backgroundImage: `linear-gradient(to bottom, rgba(16, 11, 8, 0.1) 0%, rgba(16, 11, 8, 0.12) 38%, rgba(16, 11, 8, 0.68) 68%, ${colors.background} 100%)` }]} />
@@ -88,13 +95,16 @@ export function StepArtwork({ step }: { step: number }) {
     {step === 1 ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
       {[0, 2, 5].map((cover, index) => <Image key={cover} source={COVERS[cover]} style={{ width: index === 1 ? 84 : 70, height: index === 1 ? 126 : 105, borderRadius: 8,
         transform: [{ rotate: `${(index - 1) * 12}deg` }, { translateY: index === 1 ? -5 : 8 }] }} />)}
-    </View> : step === 2 ? <View style={{ width: 190, height: 130, justifyContent: 'flex-end' }}>
-      <View style={{ position: 'absolute', top: 13, left: 4, width: 75, height: 30, backgroundColor: '#8b421c', borderTopLeftRadius: 12, borderTopRightRadius: 12 }} />
-      <View style={{ position: 'absolute', top: 30, bottom: 0, width: 190, backgroundColor: '#8b421c', borderRadius: 12 }} />
-      <Image source={COVERS[2]} style={{ position: 'absolute', top: 0, left: 25, width: 61, height: 92, borderRadius: 5, transform: [{ rotate: '-10deg' }] }} />
-      <Image source={COVERS[0]} style={{ position: 'absolute', top: -5, right: 28, width: 61, height: 92, borderRadius: 5, transform: [{ rotate: '9deg' }] }} />
-      <View style={{ height: 85, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#d97833', borderWidth: 1, borderColor: '#f6a66c', transform: [{ rotate: '-3deg' }] }}>
-        <Feather name="book-open" size={28} color={colors.text} />
+    </View> : step === 2 ? <View style={{ width: 168, height: 130, justifyContent: 'flex-end', transform: [{ rotate: '-4deg' }] }}>
+      <View style={{ position: 'absolute', top: 24, left: 0, width: 66, height: 28, backgroundColor: '#965028', borderTopLeftRadius: 10, borderTopRightRadius: 10 }} />
+      <View style={{ position: 'absolute', top: 40, bottom: 0, width: 168, backgroundColor: '#965028', borderRadius: 12 }} />
+      <Image source={COVERS[2]} style={{ position: 'absolute', top: 8, left: 17, width: 56, height: 84, borderRadius: 5, transform: [{ rotate: '-10deg' }] }} />
+      <Image source={COVERS[5]} style={{ position: 'absolute', top: 0, left: 57, width: 56, height: 84, borderRadius: 5 }} />
+      <Image source={COVERS[0]} style={{ position: 'absolute', top: 10, right: 10, width: 56, height: 84, borderRadius: 5, transform: [{ rotate: '12deg' }] }} />
+      <View style={{ height: 66, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#bb692f',
+        experimental_backgroundImage: 'linear-gradient(to bottom, #e8954d 0%, #bb692f 100%)',
+        borderWidth: 1, borderColor: '#f1b17b', boxShadow: '0px 8px 20px rgba(0, 0, 0, 0.25)' }}>
+        <Feather name="book-open" size={23} color={colors.text} />
       </View>
     </View> : <View style={{ flexDirection: 'row', alignItems: 'center', gap: 17 }}>
       <View style={[styles.device, { width: 71, height: 116, transform: [{ rotate: '-8deg' }] }]}>
