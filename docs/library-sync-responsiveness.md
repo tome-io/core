@@ -35,3 +35,25 @@ new automatic passes start during setup and refresh resumes after exit. Outside
 setup, scroll/navigate while syncing large EPUBs and PDFs, and compare KOReader
 fingerprints/progress against existing files. Run the scheduler and existing
 KOReader fingerprint regression tests.
+
+## Timing diagnostics and refresh cost
+
+Development builds emit `[sync-timing]` start/done/failed events with `stageId`, duration, and a `waiting` heartbeat every ten seconds. Refresh phases include `runId`. No tokens, book titles, local paths or request payloads are included.
+
+- `local.load-catalogs`, `local.index`, `local.scan-files`, `local.reconcile`: disk/database work.
+- `reader-addon.sync`: reader extension communication.
+- `hosted.serial-queue` and `hosted.dequeued.queueMs`: time behind another sync operation.
+- `hosted.request`: authenticated request duration by route family and method, including session refresh if needed.
+- `hosted.local-identifiers`, `hosted.hash-file`, `hosted.hash-summary`: file materialization/hashing versus cached hashes.
+- `hosted.reading-sessions`: interval backlog count and upload concurrency.
+- `refresh.foreground-finished`: foreground refresh duration. Background metadata continues independently.
+- `refresh.enrichment`, `enrichment.dequeued.queueMs`, `local.candidates`, `reader.candidates`, `local.epub-parse`, `local.provider-only`, `local.persist`: enrichment queue, candidate counts and work timings.
+- `[source-timing]`: upstream queue wait, rate-limit pacing, network time and response status. Open Library remains limited to one anonymous request start per 1.1 seconds.
+
+Ordinary pull-to-refresh now uses hosted cursors/version checks, rather than forcing a full progress download. The explicit full-pull option remains available to existing repair callers. The native refresh indicator follows the foreground scanning state.
+
+Provider-only refreshes no longer reparse EPUBs or rerun catalog enrichment for fresh metadata. Result replacement uses a map and one final array pass, avoiding quadratic array rebuilding. Superseded enrichment stops between batches, rather than delaying the next refresh through the entire previous library.
+
+File hashes are reused within the app session only when URI, size and a positive modification timestamp match; unknown timestamps force rehashing. Cache entries are bounded to 256 and rejected hashes are evicted. Reading-session uploads use the existing concurrency limit of four instead of serial round trips (up to 100 pending intervals per pass).
+
+Network writes still scale with changed records because the current service API accepts individual records. First-time metadata enrichment also scales with books missing metadata. This change does not claim constant-time full-library synchronization; the timings distinguish those expected costs from redundant work. No new device trace was captured during implementation: use the next development refresh's timing output to measure the actual bottleneck on-device.

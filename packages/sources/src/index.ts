@@ -1,3 +1,4 @@
+declare const __DEV__: boolean;
 export interface SourceCache {
   read<T>(key: string): Promise<T | null>;
   write<T>(key: string, value: T, ttlMs: number): Promise<void>;
@@ -29,6 +30,7 @@ export class SourceRequestError extends Error {
   }
 }
 
+let nextRequestId = 0;
 const originQueues = new Map<string, { pending: Promise<void>; nextStart: number }>();
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -39,16 +41,36 @@ export async function fetchSource(url: string, fetchFn: typeof fetch = fetch, in
   const queue = originQueues.get(origin) ?? { pending: Promise.resolve(), nextStart: 0 };
   if (paced) originQueues.set(origin, queue);
   const attempt = async () => {
+    const requestId = ++nextRequestId;
+    const queuedAt = performance.now();
     if (paced) {
       await sleep(Math.max(0, queue.nextStart - Date.now()));
       queue.nextStart = Date.now() + 1_100;
     }
-    return fetchFn(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+    const startedAt = performance.now();
+    let status: number | undefined;
+    try {
+      const response = await fetchFn(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+      status = response.status;
+      return response;
+    } finally {
+      if (typeof __DEV__ !== 'undefined' && __DEV__) console.info('[source-timing]', {
+        requestId, origin, status: status ?? 'network-error', pacingMs: Math.round(startedAt - queuedAt),
+        networkMs: Math.round(performance.now() - startedAt),
+      });
+    }
   };
   for (let index = 0; ; index += 1) {
     let response: Response;
     try {
-      const operation = paced ? queue.pending.then(attempt) : attempt();
+      const queuedAt = performance.now();
+      const run = () => {
+        if (typeof __DEV__ !== 'undefined' && __DEV__ && performance.now() - queuedAt > 1000) {
+          console.info('[source-timing] queue', { origin, queueMs: Math.round(performance.now() - queuedAt) });
+        }
+        return attempt();
+      };
+      const operation = paced ? queue.pending.then(run) : run();
       if (paced) queue.pending = operation.then(() => {}, () => {});
       response = await operation;
     } catch (cause) {

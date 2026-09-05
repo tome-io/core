@@ -1,3 +1,4 @@
+import { syncDiagnostic } from './sync-diagnostics';
 import { enrichProviderMetadata, providerMetadataDue, type ProviderMetadataOptions } from './provider-metadata';
 import { libraryWorkCheckpoint } from './library-work-scheduler';
 import type { LibraryBook } from './library';
@@ -33,6 +34,9 @@ async function enrichReaderBook(
   warning?: string;
 }> {
   if (book.local) return { book };
+  if (!shouldEnrichReaderMetadata(book, Date.now(), forceCatalogRefresh) && book.cover) {
+    return enrichProviderMetadata(book, providerOptions);
+  }
   const provider = await enrichProviderMetadata(book, providerOptions);
   book = provider.book;
   const warnings: string[] = provider.warning ? [provider.warning] : [];
@@ -143,10 +147,10 @@ export async function enrichIndexedReaderCatalog(
     coverLookupKey?: string;
   } = {},
 ): Promise<ReaderCatalogResult> {
-  let books = initialBooks;
+  const updates = new Map<string, LibraryBook>();
   const warnings: string[] = [];
   const now = Date.now();
-  const candidates = books.filter((book) => {
+  const candidates = initialBooks.filter((book) => {
     // Local-file enrichment owns these records. Persisting a reader-catalog
     // snapshot here can overwrite a newly extracted embedded cover.
     if (book.local) return false;
@@ -162,11 +166,13 @@ export async function enrichIndexedReaderCatalog(
         book.coverLookupKey !== options.coverLookupKey)
     );
   });
+  syncDiagnostic('reader.candidates', { total: initialBooks.length, selected: candidates.length });
   let completed = 0;
   options.onProgress?.(completed, candidates.length);
 
   for (let offset = 0; offset < candidates.length; offset += METADATA_BATCH_SIZE) {
     await libraryWorkCheckpoint();
+    if (options.shouldContinue?.() === false) break;
     const batch = candidates.slice(offset, offset + METADATA_BATCH_SIZE);
     const results = await Promise.all(
       batch.map((book) =>
@@ -184,12 +190,12 @@ export async function enrichIndexedReaderCatalog(
       if (persisted.discovery) {
         await persistMetadataSource(persisted, 'catalog', persisted.discovery);
       }
-      books = books.map((book) => (book.key === persisted.key ? persisted : book));
+      updates.set(persisted.key, persisted);
       onBookUpdated?.(persisted);
       if (result.warning) warnings.push(result.warning);
       completed += 1;
       options.onProgress?.(completed, candidates.length);
     }
   }
-  return { books, warnings };
+  return { books: updates.size ? initialBooks.map((book) => updates.get(book.key) ?? book) : initialBooks, warnings };
 }

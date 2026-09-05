@@ -1,3 +1,5 @@
+import { createDocumentHashCache } from './document-hash-cache';
+import { traceSyncStage, syncDiagnostic } from './sync-diagnostics';
 import { newerCoverPreference, type CoverPreferenceRecord } from './book-cover';
 import { syncBookIdentity } from './sync-book-identity';
 import { publicationAliases } from '@tomeio/domain';
@@ -316,7 +318,13 @@ async function refreshSession(
   return operation;
 }
 
-async function authenticatedRequest<T>(
+async function authenticatedRequest<T>(path: string, init: RequestInit = {}, expectedAccountId?: string): Promise<T> {
+  // Only the route family is logged; document IDs and query parameters are omitted.
+  const route = path.split('?')[0].split('/').slice(0, 3).join('/');
+  return traceSyncStage('hosted.request', () => performAuthenticatedRequest<T>(path, init, expectedAccountId), { route, method: init.method ?? 'GET' });
+}
+
+async function performAuthenticatedRequest<T>(
   path: string,
   init: RequestInit = {},
   expectedAccountId?: string,
@@ -868,21 +876,27 @@ function sameHostedLocator(
   );
 }
 
+const cachedLocalDocumentHash = createDocumentHashCache();
+
 async function localDocumentIdentifiers(): Promise<
   Map<string, HostedDocumentIds | null>
 > {
   const localDocuments = await loadHostedSyncLocalDocuments();
+  syncDiagnostic('hosted.hash-candidates', { files: localDocuments.length });
   const identifiersByAlias = new Map<string, HostedDocumentIds | null>();
+  let hashedFiles = 0;
   for (const local of localDocuments) {
     await libraryWorkCheckpoint();
     const logical = await md5(local.identity);
     let partial: string;
     try {
-      const readableUri = await materializeNativeFolderFile(
-        local.uri,
-        local.filename,
-      );
-      partial = await koreaderPartialMd5(readableUri);
+      partial = await cachedLocalDocumentHash(local, async () => {
+        hashedFiles += 1;
+        return traceSyncStage('hosted.hash-file', async () => {
+          const readableUri = await materializeNativeFolderFile(local.uri, local.filename);
+          return koreaderPartialMd5(readableUri);
+        }, { bytes: local.size }, 500);
+      });
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       if (
@@ -911,6 +925,7 @@ async function localDocumentIdentifiers(): Promise<
       if (existing === undefined) identifiersByAlias.set(alias, identifiers);
     }
   }
+  syncDiagnostic('hosted.hash-summary', { files: localDocuments.length, hashedFiles, reusedFiles: localDocuments.length - hashedFiles });
   return identifiersByAlias;
 }
 
@@ -1262,7 +1277,7 @@ async function performHostedProgressSync(
     | Promise<Map<string, HostedDocumentIds | null>>
     | undefined;
   const getLocalIdentifiers = () =>
-    (localIdentifiersPromise ??= localDocumentIdentifiers());
+    (localIdentifiersPromise ??= traceSyncStage('hosted.local-identifiers', localDocumentIdentifiers));
   if (
     !forceRemotePull &&
     checkpoint.localRevision === localRevision &&
@@ -1790,7 +1805,11 @@ function notifyHostedSync(progress: HostedSyncProgress): void {
 }
 
 function serializeHostedSync<T>(operation: () => Promise<T>): Promise<T> {
-  const result = hostedSyncSerial.catch(() => {}).then(operation);
+  const queuedAt = performance.now();
+  const result = traceSyncStage('hosted.serial-queue', () => hostedSyncSerial.catch(() => {}).then(() => {
+    syncDiagnostic('hosted.dequeued', { queueMs: Math.round(performance.now() - queuedAt) });
+    return operation();
+  }));
   hostedSyncSerial = result.then(
     () => {},
     () => {},
@@ -1958,7 +1977,8 @@ export async function synchronizeHostedProgressIfEnabled(
 
 async function uploadReadingSessions(accountId: string): Promise<void> {
   // Bound a sync pass; a large offline backlog continues on subsequent passes.
-  for (const interval of await pendingReadingIntervals(accountId)) {
+  const intervals = await pendingReadingIntervals(accountId);
+  await traceSyncStage('hosted.reading-sessions', () => uploadConcurrently(intervals, async (interval) => {
     if ((await getHostedSyncAccount())?.id !== accountId) return;
     const { accountId: _account, bookKey: _book, ...payload } = interval;
     const response = await authenticatedRequest<{ id: string }>("/v1/reading-sessions", {
@@ -1966,7 +1986,7 @@ async function uploadReadingSessions(accountId: string): Promise<void> {
     }, accountId);
     if (response.id !== interval.id) throw new Error("Reading session acknowledgement did not match.");
     await acknowledgeReadingInterval(accountId, interval.id);
-  }
+  }), { records: intervals.length, concurrency: UPLOAD_CONCURRENCY });
 }
 
 export async function synchronizeReadingSessionsIfEnabled(): Promise<void> {

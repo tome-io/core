@@ -1,3 +1,4 @@
+import { traceSyncStage } from './sync-diagnostics';
 import type { ProviderMetadataOptions } from './provider-metadata';
 import type { LibraryBook } from './library';
 import {
@@ -38,7 +39,7 @@ export async function indexLocalLibrary({
   directoryUri,
   onScanComplete,
 }: LocalLibrarySyncOptions): Promise<LocalLibrarySyncResult> {
-  const scan = await scanLocalLibrary(directoryUri);
+  const scan = await traceSyncStage('local.scan-files', () => scanLocalLibrary(directoryUri));
   const folderFingerprint = hashSyncInput(
     scan.books
       .map((book) =>
@@ -71,6 +72,7 @@ export async function enrichIndexedLocalLibrary({
   onProgress,
   forceCatalogRefresh,
   coverLookup,
+  shouldContinue,
   providerLookup,
   providerLookupKey,
 }: ProviderMetadataOptions & {
@@ -80,22 +82,22 @@ export async function enrichIndexedLocalLibrary({
   onProgress?: (completed: number, total: number) => void;
   forceCatalogRefresh?: boolean;
 }): Promise<LocalLibrarySyncResult> {
-  let books = initialBooks;
+  const updates = new Map<string, LibraryBook>();
   const warnings: string[] = [];
 
   const metadataWarnings = await enrichLocalLibrary(
-    books,
+    initialBooks,
     async (enriched, sources) => {
       const persisted = await persistLocalBook(directoryKey, enriched);
-      await persistMetadataSource(persisted, 'embedded', sources.embedded);
+      if (Object.keys(sources.embedded).length) await persistMetadataSource(persisted, 'embedded', sources.embedded);
       if (sources.catalog) {
         await persistMetadataSource(persisted, 'catalog', sources.catalog);
       }
-      books = books.map((book) => (book.key === persisted.key ? persisted : book));
+      updates.set(persisted.key, persisted);
       onBookUpdated?.(persisted);
     },
     onProgress,
-    { forceCatalogRefresh, providerLookup, providerLookupKey, coverLookup },
+    { forceCatalogRefresh, providerLookup, providerLookupKey, coverLookup, shouldContinue },
   );
   if (metadataWarnings.length) {
     warnings.push(
@@ -105,7 +107,7 @@ export async function enrichIndexedLocalLibrary({
     );
   }
 
-  return { books, warnings, changed: books !== initialBooks };
+  return { books: updates.size ? initialBooks.map((book) => updates.get(book.key) ?? book) : initialBooks, warnings, changed: updates.size > 0 };
 }
 
 export async function syncLocalLibrary(
