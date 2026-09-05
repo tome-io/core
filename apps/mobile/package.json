@@ -79,7 +79,8 @@
     "test:acquisition": "tsx --test scripts/acquisition-options-test.ts",
     "test:enrichment": "tsx --test scripts/enrichment-test.mjs",
     "test:enrichment:live": "LIVE_OPENLIBRARY=1 tsx --test scripts/enrichment-test.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "ios:onboarding": "EXPO_PUBLIC_ONBOARDING_PREVIEW=1 expo start --dev-client --ios --port 8082 --clear"
   },
   "expo": {
     "autolinking": {

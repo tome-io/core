@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export interface Settings {
+  onboardingCompleted: boolean;
+  onboardingStep: number;
   preferredReadingEngine: PreferredReadingEngine;
   localLibraryLocation: string | null; // Local books and download destination
   libraryMirrorLocation: string | null; // Optional Android on-device book mirror
@@ -22,6 +24,8 @@ const EMPTY_FOLDER_PICKER_LOCATIONS: Settings['folderPickerLocations'] = {
 };
 
 export const DEFAULT_SETTINGS: Settings = {
+  onboardingCompleted: false,
+  onboardingStep: 0,
   preferredReadingEngine: 'tomeio',
   localLibraryLocation: null,
   libraryMirrorLocation: null,
@@ -44,6 +48,8 @@ export async function loadSettings(): Promise<Settings> {
         if (!(key in parsed)) continue;
         (settings as any)[key] = parsed[key];
       }
+      settings.onboardingCompleted = parsed.onboardingCompleted === true;
+      settings.onboardingStep = Number.isInteger(parsed.onboardingStep) && parsed.onboardingStep >= 0 && parsed.onboardingStep <= 3 ? parsed.onboardingStep : 0;
       const storedPickerLocations =
         parsed.folderPickerLocations && typeof parsed.folderPickerLocations === 'object'
           ? parsed.folderPickerLocations

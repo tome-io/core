@@ -122,6 +122,7 @@ export function IosNativeAction({
   disabled = false,
   fullWidth = false,
   prominent = false,
+  plain = false,
   compact = false,
   destructive = false,
   iconPlacement = 'leading',
@@ -132,6 +133,7 @@ export function IosNativeAction({
   disabled?: boolean;
   fullWidth?: boolean;
   prominent?: boolean;
+  plain?: boolean;
   compact?: boolean;
   destructive?: boolean;
   iconPlacement?: 'leading' | 'trailing';
@@ -154,7 +156,7 @@ export function IosNativeAction({
         onPress={onPress}
         role={destructive ? 'destructive' : 'default'}
         modifiers={[
-          buttonStyle(prominent ? 'glassProminent' : 'glass'),
+          buttonStyle(plain ? 'plain' : prominent ? 'glassProminent' : 'glass'),
           buttonBorderShape('capsule'),
           controlSize(compact ? 'regular' : 'large'),
           foregroundStyle(destructive ? colors.danger : colors.text),
