@@ -97,7 +97,7 @@ export function progressRecordFromHosted(
     ...embedded,
     aliases: [...new Set([...embedded.aliases,
       ...(record.documentMetadata ? publicationAliases(record.documentMetadata.title ?? '', record.documentMetadata.authors, record.documentMetadata.identifiers) : []),
-      ...(record.documentAliases ?? [record.document]).map((value) => `hosted-document:koreader-partial-md5-v1:${value}`),
+      ...(record.documentAliases ?? [record.document]).flatMap((value) => [`hosted-document:koreader-partial-md5-v1:${value}`, `fingerprint:koreader-partial-md5-v1:${value}`]),
     ])],
   };
   const shared = record.documentMetadata;
@@ -117,7 +117,7 @@ export function progressRecordFromHosted(
         ? syncRecord.identity
         : `fingerprint:koreader-partial-md5-v1:${record.document}`,
     aliases: [...aliases, ...publicationAliases(shared.title, shared.authors, shared.identifiers),
-      ...(record.documentAliases ?? [record.document]).map((value) => `hosted-document:koreader-partial-md5-v1:${value}`)],
+      ...(record.documentAliases ?? [record.document]).flatMap((value) => [`hosted-document:koreader-partial-md5-v1:${value}`, `fingerprint:koreader-partial-md5-v1:${value}`])],
     title: shared.title,
     author: shared.authors.join(', ') || 'Unknown',
     format: shared.format ?? '',

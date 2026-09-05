@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import { identityGroups, normalizeIsbn, publicationAliases } from '@tomeio/domain';
 import { mergeCollectionSyncRecords } from '../src/lib/library-sync-model';
 import { mergeProgressRecords } from '../src/lib/progress-sync-model';
+import { groupLibraryBooks, sameLibraryBook } from '../src/lib/library-book-groups';
+import type { LibraryBook } from '../src/lib/library';
 
 test('normalizes equivalent ISBNs and rejects invalid checksums', () => {
   assert.equal(normalizeIsbn('0-306-40615-2'), '9780306406157');
@@ -25,4 +27,19 @@ test('a shared identity bridges all previously separate file groups', () => {
   const progress = collections.map((row, index) => ({ ...row, isRead: false, progress: index * 25 }));
   assert.equal(mergeProgressRecords(progress).length, 1);
   assert.equal(mergeProgressRecords(progress)[0].progress, 50);
+});
+
+test('one library reference retains both local EPUB variants and shared progress', () => {
+  const book = (key: string, title: string, isbn: string, progress: number): LibraryBook => ({
+    key, id: key, title, author: 'Author', identifiers: { isbn }, progress,
+    genre: 'Fiction', cover: '', description: '', year: '', addedAt: 1, format: 'epub',
+    local: { uri: `file:///${key}.epub`, filename: `${key}.epub`, format: 'epub', size: 100, modificationTime: 1 },
+  });
+  const first = book('a', 'Book', '0306406152', 25);
+  const second = book('b', 'Book: an alternate title', '9780306406157', 50);
+  const grouped = groupLibraryBooks([first, second]);
+  assert.equal(grouped.length, 1);
+  assert.equal(grouped[0].localFiles?.length, 2);
+  assert.equal(grouped[0].progress, 50);
+  assert.equal(sameLibraryBook(grouped[0], second), true);
 });
