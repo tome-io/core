@@ -1,7 +1,7 @@
 import "../global.css";
 
 import { colors } from "@tomeio/design";
-import { DarkTheme, Stack, ThemeProvider, usePathname } from "expo-router";
+import { DarkTheme, Stack, ThemeProvider, usePathname, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform, useWindowDimensions, View } from "react-native";
@@ -11,6 +11,7 @@ import {
   SafeAreaView,
 } from "react-native-safe-area-context";
 
+import { onboardingPreview } from "@/lib/onboarding-preview";
 import { Sidebar } from "@/components/sidebar";
 import { LibraryActivityToast } from "@/components/library-activity-toast";
 import { DownloadProvider } from "@/context/download-context";
@@ -29,6 +30,8 @@ import {
 export default function RootLayout() {
   const { width } = useWindowDimensions();
   const pathname = usePathname();
+  const router = useRouter();
+  const previewOpened = useRef(false);
   const useBottomNavigation = width < 700;
   const useNativeNavigation = Platform.OS === "ios";
   const isBookOverview = pathname.startsWith("/book/");
@@ -43,6 +46,11 @@ export default function RootLayout() {
     !pathname.startsWith("/book/");
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [ready, setReady] = useState(false);
+  useEffect(() => {
+    if (!ready || !onboardingPreview || previewOpened.current) return;
+    previewOpened.current = true;
+    router.replace('/onboarding');
+  }, [ready, router]);
   const settingsRef = useRef(settings);
   const settingsQueue = useRef<Promise<void>>(Promise.resolve());
 
@@ -97,7 +105,7 @@ export default function RootLayout() {
                     <SafeAreaView
                       className="flex-1"
                       edges={
-                        isReader
+                        isReader || pathname === "/onboarding"
                           ? []
                           : isBookOverview && !showSidebar
                           ? ["right", "left"]
@@ -140,7 +148,7 @@ export default function RootLayout() {
                           </View>
                         )}
                       </View>
-                      <LibraryActivityToast />
+                      {!isOnboarding && <LibraryActivityToast />}
                     </SafeAreaView>
                   </HomeNavigationProvider>
                 </DownloadProvider>
