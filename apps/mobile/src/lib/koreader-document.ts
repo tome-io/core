@@ -1,35 +1,31 @@
 import * as Crypto from 'expo-crypto';
-import { File, FileMode, type FileHandle } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
-import { collectKoreaderPartialMd5Samples } from './progress-sync-model';
+import { collectKoreaderPartialMd5Samples, koreaderPartialMd5Offsets, KOREADER_PARTIAL_MD5_SAMPLE_SIZE } from './progress-sync-model';
 
 function hex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 export async function koreaderPartialMd5(uri: string): Promise<string> {
-  const file = new File(uri);
-  // Expo's native File exposes random-access handles, but its public File
-  // declaration currently omits the inherited native method.
-  const handle = (
-    file as File & { open(mode: FileMode): FileHandle }
-  ).open(FileMode.ReadOnly);
-  let input: Uint8Array;
-  try {
-    input = collectKoreaderPartialMd5Samples((offset, length) => {
-      handle.offset = offset;
-      return handle.readBytes(length);
+  const info = await FileSystem.getInfoAsync(uri);
+  if (!info.exists || info.isDirectory) throw new Error(`KOReader document hashing could not read ${uri}`);
+  const samples = new Map<number, Uint8Array>();
+  for (const offset of koreaderPartialMd5Offsets()) {
+    if (offset >= info.size) break;
+    // Native asynchronous range reads avoid blocking JS on FileHandle seek/read.
+    // Decode at most 1 KiB per sample, never the entire book.
+    const encoded = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+      position: offset,
+      length: Math.min(KOREADER_PARTIAL_MD5_SAMPLE_SIZE, info.size - offset),
     });
-  } finally {
-    handle.close();
+    const sample = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+    if (!sample.length) break;
+    samples.set(offset, sample);
   }
-  if (input.byteLength === 0) {
-    throw new Error(`KOReader document hashing could not read ${uri}`);
-  }
-  // Expo's digest API requires an ArrayBuffer-backed view. The shared helper's
-  // public type may also represent SharedArrayBuffer-backed views, so copy it.
-  const digestInput = new Uint8Array(input.byteLength);
-  digestInput.set(input);
-  const digest = await Crypto.digest(Crypto.CryptoDigestAlgorithm.MD5, digestInput);
+  const input = collectKoreaderPartialMd5Samples((offset) => samples.get(offset) ?? new Uint8Array());
+  if (!input.byteLength) throw new Error(`KOReader document hashing could not read ${uri}`);
+  const digest = await Crypto.digest(Crypto.CryptoDigestAlgorithm.MD5, new Uint8Array(input));
   return hex(new Uint8Array(digest));
 }

@@ -1,3 +1,4 @@
+import { libraryWorkCheckpoint } from './library-work-scheduler';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import {
@@ -42,6 +43,7 @@ async function inspectUris(uris: string[]) {
     info: Awaited<ReturnType<typeof FileSystem.getInfoAsync>>;
   }[] = [];
   for (let offset = 0; offset < uris.length; offset += METADATA_BATCH_SIZE) {
+    await libraryWorkCheckpoint();
     const batch = uris.slice(offset, offset + METADATA_BATCH_SIZE);
     entries.push(
       ...(await Promise.all(
@@ -92,6 +94,7 @@ async function scanNativeDirectory(
 
   const entries = await listNativeDirectoryEntries(directoryUri);
   for (const entry of entries) {
+    await libraryWorkCheckpoint();
     const normalized = entry.name.toLowerCase();
     if (
       entry.isDirectory &&
@@ -127,6 +130,7 @@ async function scanFileDirectory(
       .map((childName) => `${directoryUri.replace(/\/$/, '')}/${childName}`)
   );
   for (const { childUri, info } of entries) {
+    await libraryWorkCheckpoint();
     if (!info.exists) continue;
     if (info.isDirectory) {
       await scanFileDirectory(childUri, visited, files);

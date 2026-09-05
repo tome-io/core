@@ -4,9 +4,10 @@ import type { PdfEmbeddedMetadata } from './pdf-metadata.types';
 
 export type { PdfEmbeddedMetadata } from './pdf-metadata.types';
 
-export async function readPdfMetadata(base64: string): Promise<PdfEmbeddedMetadata> {
-  const pdf = await PDFDocument.load(base64, {
+export async function readPdfMetadata(bytes: Uint8Array): Promise<PdfEmbeddedMetadata> {
+  const pdf = await PDFDocument.load(bytes, {
     ignoreEncryption: true,
+    parseSpeed: 20,
     throwOnInvalidObject: true,
     updateMetadata: false,
   });

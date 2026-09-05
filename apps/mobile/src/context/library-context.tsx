@@ -229,7 +229,7 @@ function isSafeProviderCover(uri: string): boolean {
   }
 }
 
-export function LibraryProvider({ children }: { children: React.ReactNode }) {
+export function LibraryProvider({ children, automaticSyncEnabled = true }: { children: React.ReactNode; automaticSyncEnabled?: boolean }) {
   const { settings, ready: settingsReady } = useSettings();
   const extensions = useExtensions();
   const [readerIntegrations, setReaderIntegrations] = useState<
@@ -417,7 +417,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
   );
 
   const refreshLocalBooks = useCallback((forceHostedSync = false): Promise<void> => {
-    if (!settingsReady || !readerConfigurationReady || !ready)
+    if (!automaticSyncEnabled || !settingsReady || !readerConfigurationReady || !ready)
       return Promise.resolve();
 
     const localKey = settings.localLibraryLocation ?? "__app_downloads__";
@@ -723,6 +723,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     pendingScan.current = { key, promise };
     return promise;
   }, [
+    automaticSyncEnabled,
     commit,
     settings.localLibraryLocation,
     readerIntegrations,
@@ -751,6 +752,10 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
   }, [coverProviderKey, extensionCoverLookup]);
 
   useEffect(() => {
+    if (!automaticSyncEnabled) {
+      initialRefreshKey.current = null;
+      return;
+    }
     if (!settingsReady || !readerConfigurationReady || !ready) return;
     const key = `${settings.localLibraryLocation ?? "__app_downloads__"}|${
       readerSourceKey ?? "__no_reader_addons__"
@@ -759,6 +764,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     initialRefreshKey.current = key;
     void refreshLocalBooks();
   }, [
+    automaticSyncEnabled,
     readerConfigurationReady,
     readerSourceKey,
     ready,
@@ -1027,12 +1033,12 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       previousState = nextState;
       const hostedSyncIsStale =
         Date.now() - lastHostedSyncStartedAt.current >= 5 * 60_000;
-      if (returningToApp && hostedSyncIsStale && !isFolderPickerActive()) {
+      if (automaticSyncEnabled && returningToApp && hostedSyncIsStale && !isFolderPickerActive()) {
         void synchronizeForegroundChanges();
       }
     });
     return () => subscription.remove();
-  }, [synchronizeForegroundChanges]);
+  }, [automaticSyncEnabled, synchronizeForegroundChanges]);
 
   const schedulePendingChanges = useCallback(
     (

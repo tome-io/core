@@ -1,3 +1,5 @@
+import { libraryWorkCheckpoint } from './library-work-scheduler';
+import { File } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Image } from 'expo-image';
 import JSZip from 'jszip';
@@ -188,8 +190,8 @@ async function savePdfCover(
   return uri;
 }
 
-async function readEpubMetadata(book: LibraryBook, base64: string): Promise<EmbeddedMetadata> {
-  const zip = await JSZip.loadAsync(base64, { base64: true });
+async function readEpubMetadata(book: LibraryBook, bytes: Uint8Array): Promise<EmbeddedMetadata> {
+  const zip = await JSZip.loadAsync(bytes);
   const container = await zip.file('META-INF/container.xml')?.async('string');
   if (!container) throw new Error('EPUB container metadata is missing.');
   const rootfileTag = container.match(/<rootfile\b[^>]*>/i)?.[0] ?? '';
@@ -332,13 +334,13 @@ async function enrichLocalBook(
   if (canReadEmbedded) {
     try {
       const readableUri = await readableLocalFile();
-      const base64 = await FileSystem.readAsStringAsync(readableUri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      await libraryWorkCheckpoint();
+      const bytes = new Uint8Array(await new File(readableUri).arrayBuffer());
+      await libraryWorkCheckpoint();
       const parsed =
         book.local.format === 'epub'
-          ? await readEpubMetadata(book, base64)
-          : await readPdfMetadata(base64);
+          ? await readEpubMetadata(book, bytes)
+          : await readPdfMetadata(bytes);
       embedded = { ...parsed, ...(embedded.cover ? { cover: embedded.cover } : {}) };
     } catch (err: any) {
       warningMessages.push(`Embedded metadata could not be read: ${err.message || String(err)}`);
@@ -463,6 +465,7 @@ export async function enrichLocalLibrary(
   let completed = 0;
   onProgress?.(completed, candidates.length);
   for (let offset = 0; offset < candidates.length; ) {
+    await libraryWorkCheckpoint();
     const nextCandidates = candidates.slice(offset, offset + ENRICH_BATCH_SIZE);
     const largeEpubIndex = nextCandidates.findIndex(
       (book) =>
