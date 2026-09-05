@@ -33,8 +33,10 @@ export default function RootLayout() {
   const useNativeNavigation = Platform.OS === "ios";
   const isBookOverview = pathname.startsWith("/book/");
   const isReader = pathname.startsWith("/read/");
-  const showSidebar = !isReader && !useNativeNavigation && !useBottomNavigation;
+  const isOnboarding = pathname.startsWith("/onboarding");
+  const showSidebar = !isOnboarding && !isReader && !useNativeNavigation && !useBottomNavigation;
   const showBottomNavigation =
+    !isOnboarding &&
     !isReader &&
     !useNativeNavigation &&
     useBottomNavigation &&
