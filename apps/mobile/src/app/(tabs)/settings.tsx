@@ -1114,9 +1114,6 @@ export default function SettingsScreen() {
           paddingBottom: bottomPadding,
         }}
       >
-        <View className="py-4">
-          <PillButton label="Open setup guide" icon="book-open" onPress={() => router.push('/onboarding')} />
-        </View>
         {Platform.OS === "android" ? (
           <SettingsSection
             title="Appearance"

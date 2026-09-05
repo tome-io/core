@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Text, TextInput, View } from 'react-native';
+import { ScrollView, Text, TextInput, View } from 'react-native';
+import { Image } from 'expo-image';
 import { AppDialog, colors, PillButton } from '@/components/app-ui';
 import { HostedSyncError, loginHostedSync, registerHostedSync, requestHostedSyncCode,
   resetHostedSyncPassword, verifyHostedSyncEmail, verifyHostedSyncRecoveryCode,
@@ -159,7 +160,7 @@ export function HostedSyncDialog({
 
   const title =
     step === "register"
-      ? "Create sync account"
+      ? "Your next chapter"
       : step === "verify"
         ? "Confirm your email"
         : step === "forgot"
@@ -168,7 +169,7 @@ export function HostedSyncDialog({
             ? "Enter reset code"
             : step === "reset"
               ? "Choose a new password"
-              : "Tomeio Sync";
+              : "Welcome back";
 
   const codeStep = step === "verify" || step === "recovery-code";
   const credentialStep = step === "login" || step === "register";
@@ -181,8 +182,12 @@ export function HostedSyncDialog({
         if (!busy) onClose();
       }}
     >
+      <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} style={{ flexShrink: 1 }} contentContainerStyle={{ paddingBottom: 4 }}>
+      <View style={{ alignItems: 'center', paddingBottom: 20 }}>
+        <Image source={require('../../assets/images/icon.png')} style={{ width: 56, height: 56, borderRadius: 16 }} />
+      </View>
       <Text
-        className="mb-4 text-sm leading-5"
+        className="mb-6 text-sm leading-5 text-center"
         style={{ color: colors.textMuted }}
       >
         {step === "verify"
@@ -193,9 +198,11 @@ export function HostedSyncDialog({
               ? `Enter the six-digit reset code sent to ${email.trim()}.`
               : step === "reset"
                 ? "Your new password will also become the password used by KOReader and Moon+ Reader."
-                : "Sync is optional. Your library remains available on this device without an account."}
+                : step === "register"
+                  ? "Create an account to take your library with you."
+                  : "Sign in to pick up where you left off."}
       </Text>
-      <View className="gap-3">
+      <View className="gap-4">
         {credentialStep || step === "forgot" ? (
           <TextInput
             value={email}
@@ -205,13 +212,16 @@ export function HostedSyncDialog({
             autoCorrect={false}
             autoComplete="email"
             keyboardType="email-address"
-            placeholder="Email"
+            accessibilityLabel="Email address"
+            placeholder="Email address"
             placeholderTextColor={colors.textMuted}
             className="h-14 px-5 text-[15px]"
             style={{
               color: colors.text,
               backgroundColor: colors.surfaceRaised,
-              borderRadius: 999,
+              borderRadius: 16,
+              borderWidth: 1,
+              borderColor: colors.border,
             }}
           />
         ) : null}
@@ -228,13 +238,16 @@ export function HostedSyncDialog({
                 : "current-password"
             }
             secureTextEntry
+            accessibilityLabel={step === "reset" ? "New password" : "Password"}
             placeholder={step === "reset" ? "New password" : "Password"}
             placeholderTextColor={colors.textMuted}
             className="h-14 px-5 text-[15px]"
             style={{
               color: colors.text,
               backgroundColor: colors.surfaceRaised,
-              borderRadius: 999,
+              borderRadius: 16,
+              borderWidth: 1,
+              borderColor: colors.border,
             }}
           />
         ) : null}
@@ -247,13 +260,16 @@ export function HostedSyncDialog({
             autoCorrect={false}
             autoComplete="new-password"
             secureTextEntry
+            accessibilityLabel="Confirm new password"
             placeholder="Confirm new password"
             placeholderTextColor={colors.textMuted}
             className="h-14 px-5 text-[15px]"
             style={{
               color: colors.text,
               backgroundColor: colors.surfaceRaised,
-              borderRadius: 999,
+              borderRadius: 16,
+              borderWidth: 1,
+              borderColor: colors.border,
             }}
           />
         ) : null}
@@ -267,16 +283,20 @@ export function HostedSyncDialog({
             autoComplete="one-time-code"
             keyboardType="number-pad"
             maxLength={6}
+            accessibilityLabel="Six-digit verification code"
             placeholder="000000"
             placeholderTextColor={colors.textMuted}
             className="h-16 px-5 text-center text-2xl tracking-[10px]"
             style={{
               color: colors.text,
               backgroundColor: colors.surfaceRaised,
-              borderRadius: 999,
+              borderRadius: 16,
+              borderWidth: 1,
+              borderColor: colors.border,
             }}
           />
         ) : null}
+        {step === "register" || step === "reset" ? <Text style={{ color: colors.textMuted, fontSize: 12 }}>Use at least 10 characters for your password.</Text> : null}
         {debugCode ? (
           <Text
             className="text-center text-xs"
@@ -286,10 +306,11 @@ export function HostedSyncDialog({
           </Text>
         ) : null}
         {error ? (
-          <Text className="text-sm leading-5" style={{ color: colors.danger }}>{error}</Text>
+          <Text accessibilityRole="alert" className="text-sm leading-5" style={{ color: colors.danger }}>{error}</Text>
         ) : null}
         {credentialStep ? (
           <PillButton
+            fullWidth
             label={
               busy
                 ? "Please wait…"
@@ -303,6 +324,7 @@ export function HostedSyncDialog({
           />
         ) : step === "forgot" ? (
           <PillButton
+            fullWidth
             label={busy ? "Sending…" : "Send reset code"}
             variant="accent"
             disabled={busy || !email.trim()}
@@ -310,6 +332,7 @@ export function HostedSyncDialog({
           />
         ) : codeStep ? (
           <PillButton
+            fullWidth
             label={
               busy
                 ? "Checking…"
@@ -323,6 +346,7 @@ export function HostedSyncDialog({
           />
         ) : (
           <PillButton
+            fullWidth
             label={busy ? "Saving…" : "Save new password"}
             variant="accent"
             disabled={
@@ -333,16 +357,18 @@ export function HostedSyncDialog({
         )}
         {codeStep ? (
           <PillButton
+            fullWidth
             label="Send another code"
-            variant="overlay"
+            variant="ghost"
             disabled={busy}
             onPress={() => void resendCode()}
           />
         ) : null}
         {step === "login" ? (
           <PillButton
+            fullWidth
             label="Forgot password?"
-            variant="overlay"
+            variant="ghost"
             disabled={busy}
             onPress={() => {
               setError(null);
@@ -352,6 +378,7 @@ export function HostedSyncDialog({
           />
         ) : null}
         <PillButton
+            fullWidth
           label={
             step === "register"
               ? "I already have an account"
@@ -359,7 +386,7 @@ export function HostedSyncDialog({
                 ? "Create an account"
                 : "Back to sign in"
           }
-          variant="overlay"
+          variant="ghost"
           disabled={busy}
           onPress={() => {
             setError(null);
@@ -372,6 +399,7 @@ export function HostedSyncDialog({
           }}
         />
       </View>
+      </ScrollView>
     </AppDialog>
   );
 }

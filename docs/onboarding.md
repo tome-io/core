@@ -15,9 +15,10 @@ activity toasts are hidden during onboarding, while setup errors remain visible.
 
 Provider choices use enabled extensions and the existing provider setters. The
 extension manager and account dialog are shared with Settings, including email
-verification and password recovery. Folder selection uses the existing native
+verification and password recovery. Account forms share full-width fields and
+primary actions, plain secondary links and keyboard-accessible scrolling. Folder selection uses the existing native
 picker and picker lock. App storage works without configuration. Choices and the
-current step persist; Settings can reopen onboarding. Accounts remain optional.
+current step persist. Use the development preview command to replay onboarding. Accounts remain optional.
 
 ## Preview on iOS
 

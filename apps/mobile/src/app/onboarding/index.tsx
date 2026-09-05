@@ -144,7 +144,6 @@ export default function OnboardingScreen() {
           </View> : null}
           {step === 2 ? <View style={{ gap: 18 }}>
             <View style={[styles.card, { padding: 20, gap: 20 }]}>
-              <Text style={{ color: colors.textMuted, fontSize: 11, fontWeight: '600', letterSpacing: 1.2 }}>YOUR LIBRARY FOLDER</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
                 <View style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: colors.accentMuted, alignItems: 'center', justifyContent: 'center' }}>
                   <Feather name="folder" size={22} color={colors.accent} />

@@ -95,16 +95,22 @@ export function StepArtwork({ step }: { step: number }) {
     {step === 1 ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
       {[0, 2, 5].map((cover, index) => <Image key={cover} source={COVERS[cover]} style={{ width: index === 1 ? 84 : 70, height: index === 1 ? 126 : 105, borderRadius: 8,
         transform: [{ rotate: `${(index - 1) * 12}deg` }, { translateY: index === 1 ? -5 : 8 }] }} />)}
-    </View> : step === 2 ? <View style={{ width: 168, height: 130, justifyContent: 'flex-end', transform: [{ rotate: '-4deg' }] }}>
-      <View style={{ position: 'absolute', top: 24, left: 0, width: 66, height: 28, backgroundColor: '#965028', borderTopLeftRadius: 10, borderTopRightRadius: 10 }} />
-      <View style={{ position: 'absolute', top: 40, bottom: 0, width: 168, backgroundColor: '#965028', borderRadius: 12 }} />
-      <Image source={COVERS[2]} style={{ position: 'absolute', top: 8, left: 17, width: 56, height: 84, borderRadius: 5, transform: [{ rotate: '-10deg' }] }} />
-      <Image source={COVERS[5]} style={{ position: 'absolute', top: 0, left: 57, width: 56, height: 84, borderRadius: 5 }} />
-      <Image source={COVERS[0]} style={{ position: 'absolute', top: 10, right: 10, width: 56, height: 84, borderRadius: 5, transform: [{ rotate: '12deg' }] }} />
-      <View style={{ height: 66, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#bb692f',
-        experimental_backgroundImage: 'linear-gradient(to bottom, #e8954d 0%, #bb692f 100%)',
-        borderWidth: 1, borderColor: '#f1b17b', boxShadow: '0px 8px 20px rgba(0, 0, 0, 0.25)' }}>
-        <Feather name="book-open" size={23} color={colors.text} />
+    </View> : step === 2 ? <View style={{ width: 236, height: 138, justifyContent: 'flex-end' }}>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center', gap: 8, paddingHorizontal: 12 }}>
+        <View style={{ width: 14, height: 87, borderRadius: 3, backgroundColor: '#49675e', borderLeftWidth: 2, borderColor: '#739184', justifyContent: 'space-between', paddingVertical: 10 }}>
+          <View style={{ height: 2, backgroundColor: '#bdba8a' }} /><View style={{ height: 2, backgroundColor: '#bdba8a' }} />
+        </View>
+        <Image source={COVERS[2]} style={{ width: 60, height: 90, borderRadius: 4 }} />
+        <Image source={COVERS[5]} style={{ width: 67, height: 101, borderRadius: 4 }} />
+        <View style={{ marginLeft: 5, marginBottom: 2, transform: [{ rotate: '10deg' }] }}>
+          <Image source={COVERS[0]} style={{ width: 56, height: 84, borderRadius: 4 }} />
+        </View>
+      </View>
+      <View style={{ height: 10, borderRadius: 3, borderTopWidth: 1, borderColor: '#b68a61',
+        experimental_backgroundImage: 'linear-gradient(to bottom, #94704f 0%, #59402d 100%)',
+        boxShadow: '0px 8px 16px rgba(0, 0, 0, 0.35)' }} />
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 30 }}>
+        {[0, 1].map((index) => <View key={index} style={{ width: 6, height: 14, borderBottomLeftRadius: 2, borderBottomRightRadius: 2, backgroundColor: '#493326' }} />)}
       </View>
     </View> : <View style={{ flexDirection: 'row', alignItems: 'center', gap: 17 }}>
       <View style={[styles.device, { width: 71, height: 116, transform: [{ rotate: '-8deg' }] }]}>
