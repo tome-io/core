@@ -41,8 +41,10 @@ test("collection aliases merge renditions without duplicating the logical book",
     [record({ identity: "fingerprint:abc", aliases: ["logical"], updatedAt: 20 })],
   );
   assert.equal(merged.length, 1);
-  assert.deepEqual(merged[0]?.aliases, ["logical"]);
+  assert.deepEqual(merged[0]?.aliases, ["book:project-hail-mary:andy-weir", "fingerprint:abc", "logical"]);
   assert.equal(merged[0]?.identity, "fingerprint:abc");
+  assert.equal(mergeCollectionSyncRecords(merged, [record({ updatedAt: 30 })]).length, 1,
+    "the old identity must still match after the winning rendition changes");
 });
 
 function progressRecord(
@@ -67,7 +69,8 @@ test("progress aliases match an existing record identity in either direction", (
     [progressRecord({ identity: "fingerprint", aliases: ["logical"] })],
   );
   assert.equal(merged.length, 1);
-  assert.deepEqual(merged[0]?.aliases, ["logical"]);
+  assert.deepEqual(merged[0]?.aliases, ["fingerprint", "logical"]);
+  assert.equal(mergeProgressRecords(merged, [progressRecord({ identity: "fingerprint", updatedAt: 30 })]).length, 1);
 });
 
 test("a newer progress removal wins over stale active progress", () => {
