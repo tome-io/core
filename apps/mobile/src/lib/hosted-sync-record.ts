@@ -39,6 +39,8 @@ export function sameCollectionSyncContent(
     left.author === right.author &&
     left.format === right.format &&
     left.sourceUrl === right.sourceUrl &&
+    left.coverPreference === right.coverPreference &&
+    (left.coverPreferenceUpdatedAt ?? 0) === (right.coverPreferenceUpdatedAt ?? 0) &&
     left.addedAt === right.addedAt &&
     left.sortAt === right.sortAt &&
     (left.removedAt ?? undefined) === (right.removedAt ?? undefined)

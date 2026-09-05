@@ -1,3 +1,5 @@
+import { enrichProviderMetadata, providerMetadataDue, type ProviderMetadataOptions } from './provider-metadata';
+import { libraryWorkCheckpoint } from './library-work-scheduler';
 import type { LibraryBook } from './library';
 import {
   resolveBookCover,
@@ -25,12 +27,15 @@ async function enrichReaderBook(
   coverLookup?: ExtensionCoverLookup,
   coverLookupKey?: string,
   forceCatalogRefresh = false,
+  providerOptions: ProviderMetadataOptions = {},
 ): Promise<{
   book: LibraryBook;
   warning?: string;
 }> {
   if (book.local) return { book };
-  const warnings: string[] = [];
+  const provider = await enrichProviderMetadata(book, providerOptions);
+  book = provider.book;
+  const warnings: string[] = provider.warning ? [provider.warning] : [];
   const catalogFetchOptions = forceCatalogRefresh
     ? { fetchFn: fetch }
     : undefined;
@@ -62,7 +67,7 @@ async function enrichReaderBook(
   }
 
   let extensionCover = null;
-  if (!metadata?.cover && !book.coverSources?.catalog && coverLookup) {
+  if (!book.cover && !book.coverSources?.local && !metadata?.cover && !book.coverSources?.catalog && coverLookup) {
     try {
       extensionCover = await coverLookup(book);
     } catch (err: any) {
@@ -130,7 +135,7 @@ async function enrichReaderBook(
 export async function enrichIndexedReaderCatalog(
   initialBooks: LibraryBook[],
   onBookUpdated?: (book: LibraryBook) => void,
-  options: {
+  options: ProviderMetadataOptions & {
     force?: boolean;
     forceCatalogRefresh?: boolean;
     onProgress?: (completed: number, total: number) => void;
@@ -150,6 +155,7 @@ export async function enrichIndexedReaderCatalog(
       !book.coverSources?.catalog &&
       Object.keys(book.coverSources?.providers ?? {}).length === 0;
     return (
+      providerMetadataDue(book, options.providerLookupKey, options.forceCatalogRefresh) ||
       shouldEnrichReaderMetadata(book, now, options.force) ||
       (!!options.coverLookupKey &&
         coverMissing &&
@@ -160,6 +166,7 @@ export async function enrichIndexedReaderCatalog(
   options.onProgress?.(completed, candidates.length);
 
   for (let offset = 0; offset < candidates.length; offset += METADATA_BATCH_SIZE) {
+    await libraryWorkCheckpoint();
     const batch = candidates.slice(offset, offset + METADATA_BATCH_SIZE);
     const results = await Promise.all(
       batch.map((book) =>
@@ -168,6 +175,7 @@ export async function enrichIndexedReaderCatalog(
           options.coverLookup,
           options.coverLookupKey,
           options.forceCatalogRefresh,
+          options,
         )
       )
     );

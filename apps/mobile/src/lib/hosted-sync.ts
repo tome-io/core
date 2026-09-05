@@ -1,3 +1,4 @@
+import { newerCoverPreference, type CoverPreferenceRecord } from './book-cover';
 import { syncBookIdentity } from './sync-book-identity';
 import { publicationAliases } from '@tomeio/domain';
 import { libraryWorkCheckpoint } from './library-work-scheduler';
@@ -144,7 +145,7 @@ interface SyncIdentityRecord {
   aliases: string[];
 }
 
-interface HostedCollectionRecord {
+interface HostedCollectionRecord extends CoverPreferenceRecord {
   document: string;
   documentAliases?: string[];
   fingerprintKind:
@@ -762,6 +763,7 @@ async function syncRecordsRevision(records: SyncIdentityRecord[]): Promise<strin
             addedAt: value.addedAt,
             sortAt: value.sortAt,
             sourceUrl: value.sourceUrl,
+            ...newerCoverPreference({}, value),
           };
         })
         .sort((left, right) => left.identity.localeCompare(right.identity)),
@@ -793,6 +795,7 @@ function collectionPayload(
       },
     },
     filename: document.filename,
+    ...newerCoverPreference({}, record),
     addedAt: record.addedAt,
     sortAt: record.sortAt,
     updatedAt: record.updatedAt,
@@ -1064,6 +1067,7 @@ function collectionRecordFromHosted(
     format: metadata.format ?? "",
     sourceUrl:
       metadata.identifiers?.[SOURCE_URL_IDENTIFIER] ?? local?.sourceUrl,
+    ...newerCoverPreference({}, record),
     addedAt: record.addedAt,
     sortAt: record.sortAt,
     updatedAt: record.updatedAt,

@@ -83,6 +83,7 @@ interface SearchResponse {
   start?: number;
 }
 
+const CATALOG_FIELDS = 'key,title,author_name,cover_i,cover_edition_key,first_publish_year,ratings_average,ratings_count';
 const SEARCH_FIELDS =
   'key,title,author_name,cover_i,cover_edition_key,first_publish_year,subject,isbn,ratings_average,ratings_count,description,ia,public_scan_b';
 const MODERN_FROM_YEAR = new Date().getUTCFullYear() - 10;
@@ -367,7 +368,7 @@ export function createOpenLibraryExtension(options: SourceHttpOptions = {}): Boo
     const limit = Math.min(50, Math.max(1, query.limit ?? 30));
     const parameters = new URLSearchParams({
       q,
-      fields: SEARCH_FIELDS,
+      fields: sort ? CATALOG_FIELDS : SEARCH_FIELDS,
       page: String(page),
       limit: String(limit),
       lang: query.language ?? 'en',
@@ -425,7 +426,7 @@ export function createOpenLibraryExtension(options: SourceHttpOptions = {}): Boo
         `subject_key:${catalogId.replaceAll('-', '_').toLowerCase()}`;
       const catalogQuery =
         catalogId === 'trending'
-          ? `trending_score_hourly_sum:[1 TO *] AND ${QUALITY_FILTER}`
+          ? `trending_z_score:{0 TO *] AND ${QUALITY_FILTER}`
           : `${subjectQuery} AND ${QUALITY_FILTER}`;
       return requestPage(query, catalogQuery, 'trending');
     },

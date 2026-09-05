@@ -1,3 +1,4 @@
+import { needsProviderMetadata, type ProviderMetadata } from '@/lib/provider-metadata';
 import { groupLibraryBooks, sameLibraryBook } from '@/lib/library-book-groups';
 import {
   createContext,
@@ -17,6 +18,7 @@ import { useExtensions } from "@/context/extensions-context";
 import { bookIdentity } from "@/lib/book-metadata";
 import {
   isUsableBookCoverSize,
+  resolveBookCover,
   type BookCoverPreference,
   type ExtensionCoverLookup,
 } from "@/lib/book-cover";
@@ -40,8 +42,6 @@ import {
   loadProgressSyncCatalog,
   markCatalogBookRead,
   persistCatalogBookProgress,
-  persistCatalogBook,
-  persistLocalBook,
   removeLibrarySyncBook,
   removeProgressSyncBook,
   setCatalogBookCoverPreference,
@@ -417,6 +417,30 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
     [extensions],
   );
 
+  const providerLookup = useCallback(async (book: LibraryBook): Promise<ProviderMetadata> => {
+    const selectedProvider = book.coverPreference?.startsWith('provider:') ? book.coverPreference.slice(9) : undefined;
+    const providers = extensions.coverProviders()
+      .filter((provider) => needsProviderMetadata(book, provider.id))
+      .sort((left, right) => Number(right.id === selectedProvider) - Number(left.id === selectedProvider));
+    const result: ProviderMetadata = { covers: {} };
+    const warnings: string[] = [];
+    for (const provider of providers) {
+      try {
+        const matches = await extensions.resolveBooks(provider.id, toExtensionLibraryBook(book));
+        const match = matches.find((candidate) =>
+          (book.extension?.extensionId === provider.id && book.extension.book.id === candidate.id) ||
+          candidate.authors.some((author) => bookIdentity(candidate.title, author) === bookIdentity(book.title, book.author)));
+        if (match?.seriesPosition != null && result.seriesPosition == null) result.seriesPosition = match.seriesPosition;
+        if (provider.id === selectedProvider && match?.coverUrl && isSafeProviderCover(match.coverUrl)) result.covers[provider.id] = match.coverUrl;
+      } catch (cause) {
+        warnings.push(`${provider.name}: ${cause instanceof Error ? cause.message : String(cause)}`);
+      }
+    }
+    if (warnings.length) result.warning = warnings.join(' · ');
+    return result;
+  }, [extensions]);
+  const providerLookupKey = `${coverProviderKey}|provider-metadata:2`;
+
   const refreshLocalBooks = useCallback((forceHostedSync = false): Promise<void> => {
     if (!automaticSyncEnabled || !settingsReady || !readerConfigurationReady || !ready)
       return Promise.resolve();
@@ -623,6 +647,8 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
             directoryKey: localKey,
             books: localWithMoonReaderMetadata,
             onProgress: trackEnrichment("local"),
+            coverLookup: extensionCoverLookup,
+            providerLookup, providerLookupKey,
           }).catch((err: any) => ({
             books: localWithMoonReaderMetadata,
             warnings: [
@@ -634,6 +660,7 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
             onProgress: trackEnrichment("reader"),
             coverLookup: extensionCoverLookup,
             coverLookupKey: coverProviderKey,
+            providerLookup, providerLookupKey,
           }).catch(
             (err: any) => ({
               books: enrichmentMoonReaderBooks,
@@ -646,6 +673,7 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
             onProgress: trackEnrichment("progress"),
             coverLookup: extensionCoverLookup,
             coverLookupKey: coverProviderKey,
+            providerLookup, providerLookupKey,
           }).catch(
             (err: any) => ({
               books: enrichmentProgressBooks,
@@ -658,6 +686,7 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
             onProgress: trackEnrichment("collection"),
             coverLookup: extensionCoverLookup,
             coverLookupKey: coverProviderKey,
+            providerLookup, providerLookupKey,
           }).catch((err: any) => ({
               books: collectionOnlyBooks,
               warnings: [
@@ -736,6 +765,7 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
     reportHostedSyncProgress,
     extensionCoverLookup,
     coverProviderKey,
+    providerLookup, providerLookupKey,
   ]);
 
   const refreshProgressSyncBooks = useCallback(async (): Promise<void> => {
@@ -747,10 +777,11 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
       force: true,
       coverLookup: extensionCoverLookup,
       coverLookupKey: coverProviderKey,
+            providerLookup, providerLookupKey,
     });
     setProgressSyncBooks(enriched.books);
     if (enriched.warnings.length) setWarning(enriched.warnings.join(" "));
-  }, [coverProviderKey, extensionCoverLookup]);
+  }, [coverProviderKey, extensionCoverLookup, providerLookup, providerLookupKey]);
 
   useEffect(() => {
     if (!automaticSyncEnabled) {
@@ -805,6 +836,7 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
             },
             coverLookup: extensionCoverLookup,
             coverLookupKey: coverProviderKey,
+            providerLookup, providerLookupKey,
           },
         );
         const [refreshedProgress, refreshedState] = await Promise.all([
@@ -836,7 +868,7 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
         });
       });
     },
-    [coverProviderKey, extensionCoverLookup],
+    [coverProviderKey, extensionCoverLookup, providerLookup, providerLookupKey],
   );
 
   const synchronizePendingChanges = useCallback(async (): Promise<void> => {
@@ -1325,7 +1357,9 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
           const result = await enrichIndexedLocalLibrary({
             directoryKey,
             books: [invalidated],
+            coverLookup: extensionCoverLookup,
             forceCatalogRefresh: true,
+            providerLookup, providerLookupKey,
           });
           const refreshedBook = result.books[0];
           if (!refreshedBook) {
@@ -1345,6 +1379,7 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
             {
               coverLookup: extensionCoverLookup,
               coverLookupKey: coverProviderKey,
+            providerLookup, providerLookupKey,
               forceCatalogRefresh: true,
             },
           );
@@ -1367,49 +1402,6 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
           const refreshedState = await loadLibrary();
           stateRef.current = refreshedState;
           setState(refreshedState);
-        }
-
-        const hardcover = extensions
-          .coverProviders()
-          .find((provider) => provider.id === "community.tomeio.hardcover");
-        if (hardcover) {
-          try {
-            const matches = await extensions.resolveBooks(
-              hardcover.id,
-              toExtensionLibraryBook(refreshed),
-            );
-            const matchedPosition = matches.find(
-              (candidate) => candidate.seriesPosition != null,
-            )?.seriesPosition;
-            if (matchedPosition != null) {
-              refreshed = { ...refreshed, seriesPosition: matchedPosition };
-              if (refreshed.local) {
-                refreshed = await persistLocalBook(
-                  settings.localLibraryLocation ?? "__app_downloads__",
-                  refreshed,
-                );
-              } else {
-                refreshed = await persistCatalogBook(refreshed);
-              }
-              const applySeriesPosition = (item: LibraryBook): LibraryBook =>
-                item.key === refreshed.key ? refreshed : item;
-              setLocalBooks((current) => current.map(applySeriesPosition));
-              setMoonReaderBooks((current) => current.map(applySeriesPosition));
-              setProgressSyncBooks((current) => current.map(applySeriesPosition));
-              await commit((current) => ({
-                downloaded: current.downloaded.map(applySeriesPosition),
-                readingList: current.readingList.map(applySeriesPosition),
-              }));
-            } else if (refreshed.genre.toUpperCase().includes("SERIES:")) {
-              warnings.push(
-                `Hardcover did not return a series position for “${refreshed.title}”.`,
-              );
-            }
-          } catch (cause) {
-            warnings.push(
-              `Hardcover series lookup failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-            );
-          }
         }
 
         if (warnings.length) {
@@ -1455,10 +1447,9 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
       }
     },
     [
-      commit,
       coverProviderKey,
+      providerLookup, providerLookupKey,
       extensionCoverLookup,
-      extensions,
       settings.localLibraryLocation,
     ],
   );
@@ -1603,17 +1594,20 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
         book.key,
         preference,
       );
-      const applyCover = (item: LibraryBook): LibraryBook =>
-        item.key === book.key
-          ? {
-              ...item,
-              cover: persisted.cover,
-              fallbackCover: persisted.fallbackCover,
-              coverSources: persisted.coverSources,
-              coverPreference: persisted.coverPreference,
-              coverPreferenceUpdatedAt: persisted.coverPreferenceUpdatedAt,
-            }
-          : item;
+      const applyCover = (item: LibraryBook): LibraryBook => {
+        if (!sameLibraryBook(item, book)) return item;
+        const sources = item.key === book.key ? persisted.coverSources : {
+          ...item.coverSources,
+          providers: { ...item.coverSources?.providers, ...persisted.coverSources?.providers },
+        };
+        return {
+          ...item,
+          coverSources: sources,
+          ...resolveBookCover(sources, persisted.coverPreference, [item.cover, item.fallbackCover]),
+          coverPreference: persisted.coverPreference,
+          coverPreferenceUpdatedAt: persisted.coverPreferenceUpdatedAt,
+        };
+      };
       setLocalBooks((current) => current.map(applyCover));
       setMoonReaderBooks((current) => current.map(applyCover));
       setProgressSyncBooks((current) => current.map(applyCover));
@@ -1621,8 +1615,9 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
         downloaded: current.downloaded.map(applyCover),
         readingList: current.readingList.map(applyCover),
       }));
+      void synchronizePendingChanges();
     },
-    [commit, extensions],
+    [commit, extensions, synchronizePendingChanges],
   );
 
   const downloaded = useMemo(() => {

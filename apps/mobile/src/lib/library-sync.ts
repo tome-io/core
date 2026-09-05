@@ -1,3 +1,4 @@
+import type { ProviderMetadataOptions } from './provider-metadata';
 import type { LibraryBook } from './library';
 import {
   loadLocalCatalog,
@@ -69,7 +70,10 @@ export async function enrichIndexedLocalLibrary({
   onBookUpdated,
   onProgress,
   forceCatalogRefresh,
-}: {
+  coverLookup,
+  providerLookup,
+  providerLookupKey,
+}: ProviderMetadataOptions & {
   directoryKey: string;
   books: LibraryBook[];
   onBookUpdated?: (book: LibraryBook) => void;
@@ -91,7 +95,7 @@ export async function enrichIndexedLocalLibrary({
       onBookUpdated?.(persisted);
     },
     onProgress,
-    { forceCatalogRefresh },
+    { forceCatalogRefresh, providerLookup, providerLookupKey, coverLookup },
   );
   if (metadataWarnings.length) {
     warnings.push(

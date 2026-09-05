@@ -92,3 +92,16 @@ describe('Open Library acquisitions', () => {
     expect(acquisitions[0]?.downloadUrl).toBeUndefined();
   });
 });
+
+test('weekly trending uses its weekly score and a compact card payload', async () => {
+  let requested: URL | undefined;
+  const extension = createOpenLibraryExtension({ fetchFn: async (input) => {
+    requested = new URL(String(input));
+    return Response.json({ docs: [], numFound: 0 });
+  } });
+  await extension.catalog!({ catalogId: 'trending', page: 1 });
+  expect(requested?.searchParams.get('q')).toContain('trending_z_score:{0 TO *]');
+  expect(requested?.searchParams.get('sort')).toBe('trending');
+  expect(requested?.searchParams.get('fields')?.split(',')).not.toContain('isbn');
+  expect(requested?.searchParams.get('fields')?.split(',')).not.toContain('subject');
+});

@@ -33,6 +33,9 @@ export interface LibraryBook extends FeedBook {
   metadataPending?: boolean;
   metadataUpdatedAt?: number;
   metadataVersion?: number;
+  providerMetadataKey?: string;
+  providerMetadataUpdatedAt?: number;
+  providerMetadataRetryAt?: number;
   coverLookupKey?: string;
   coverSourcesLookupKey?: string;
   coverSourcesUpdatedAt?: number;
