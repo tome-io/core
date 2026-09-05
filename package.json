@@ -28,7 +28,7 @@
     "desktop": "bun run --cwd \"$PWD/apps/desktop\" start",
     "desktop:install": "bun run --cwd \"$PWD/apps/desktop\" electron:install",
     "desktop:package": "bun run --cwd \"$PWD/apps/desktop\" package",
-    "test": "bun --workspaces --if-present test",
+    "test": "bun run --workspaces --if-present test",
     "typecheck": "bun --workspaces --if-present typecheck",
     "lint": "bun --workspaces --if-present lint"
   },
