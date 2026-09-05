@@ -2,6 +2,37 @@ const DEFAULT_READING_TIME_PER_POSITION_MS = 60_000;
 const MIN_READING_TIME_PER_POSITION_MS = 15_000;
 const MAX_READING_TIME_PER_POSITION_MS = 5 * 60_000;
 
+export interface ReadingSpeedSample {
+  readingTimeMs: number;
+  positions: number;
+  anchor?: { position: number; time: number };
+}
+
+// Only completed, consecutive forward intervals teach the estimator. Navigation,
+// duplicate events, and time spent away must never shrink the sample denominator.
+export function sampleReadingSpeed(
+  sample: ReadingSpeedSample,
+  position: number | null,
+  time: number,
+): ReadingSpeedSample {
+  if (position == null || !Number.isFinite(position)) {
+    return { ...sample, anchor: undefined };
+  }
+  const anchor = { position, time };
+  if (!sample.anchor) return { ...sample, anchor };
+  const delta = position - sample.anchor.position;
+  const elapsed = time - sample.anchor.time;
+  if (delta === 0 && elapsed <= MAX_READING_TIME_PER_POSITION_MS) return sample;
+  if (delta <= 0 || delta > 10 || elapsed < 2_000 || elapsed > MAX_READING_TIME_PER_POSITION_MS) {
+    return { ...sample, anchor };
+  }
+  return {
+    readingTimeMs: sample.readingTimeMs + elapsed,
+    positions: sample.positions + delta,
+    anchor,
+  };
+}
+
 type PositionedLocator = {
   locations?: {
     totalProgression?: number;
@@ -66,11 +97,15 @@ export function timeLeftLabel(
   progress: number,
 ): string {
   if (progress >= 100) return 'Finished';
-  if (remainingPositions < 1) return 'Estimating time left';
+  if (!Number.isFinite(remainingPositions) || remainingPositions <= 0) return 'Time unavailable';
 
   const sampledTimePerPosition =
-    sampledPositions >= 2 && sampledReadingTimeMs >= 60_000
-      ? sampledReadingTimeMs / sampledPositions
+    // Blend the existing one-minute baseline with completed samples rather than
+    // abruptly switching rates at two positions or resetting after navigation.
+    Number.isFinite(sampledPositions) && sampledPositions > 0 &&
+    Number.isFinite(sampledReadingTimeMs) && sampledReadingTimeMs > 0
+      ? (sampledReadingTimeMs + 20 * DEFAULT_READING_TIME_PER_POSITION_MS) /
+        (sampledPositions + 20)
       : DEFAULT_READING_TIME_PER_POSITION_MS;
   const readingTimePerPosition = Math.max(
     MIN_READING_TIME_PER_POSITION_MS,
