@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   isCollectionRecordRemoved,
   mergeCollectionSyncRecords,
+  mergeCollectionSnapshots,
   type CollectionSyncRecord,
 } from "../src/lib/library-sync-model";
 import {
@@ -102,4 +103,26 @@ test('cover preference merges independently from library membership, including a
     assert.equal(merged?.coverPreference, 'auto');
     assert.equal(merged?.coverPreferenceUpdatedAt, 30);
   }
+});
+
+test("file rediscovery preserves logical membership and removals", () => {
+  const stored = record({ aliases: ["isbn:123"], sortAt: 12, updatedAt: 20 });
+  const rendition = record({ identity: "file:other", aliases: ["isbn:123"], sortAt: 999, updatedAt: 999 });
+  const [merged] = mergeCollectionSnapshots([stored], [rendition]);
+  assert.equal(merged?.sortAt, 12);
+  assert.equal(merged?.updatedAt, 20);
+  assert.equal(merged?.identity, stored.identity);
+  const [removed] = mergeCollectionSnapshots([{ ...stored, removedAt: 30, updatedAt: 30 }], [rendition]);
+  assert.equal(isCollectionRecordRemoved(removed!), true);
+  const [readded] = mergeCollectionSyncRecords([removed!], [record({ updatedAt: 40, sortAt: 40 })]);
+  assert.equal(isCollectionRecordRemoved(readded!), false);
+  assert.equal(readded?.sortAt, 40);
+});
+
+test("rediscovered renditions can carry a newer explicit cover preference", () => {
+  const [merged] = mergeCollectionSnapshots([record()], [record({
+    coverPreference: "provider:hardcover", coverPreferenceUpdatedAt: 50, updatedAt: 99,
+  })]);
+  assert.equal(merged?.coverPreference, "provider:hardcover");
+  assert.equal(merged?.updatedAt, 10);
 });
