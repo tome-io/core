@@ -1,3 +1,4 @@
+import { groupLibraryBooks, sameLibraryBook } from '@/lib/library-book-groups';
 import {
   createContext,
   useCallback,
@@ -1089,9 +1090,7 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
 
   const toggleReadingList = useCallback(
     async (book: LibraryBook) => {
-      const identity = bookIdentity(book.title, book.author);
-      const matchesBook = (item: LibraryBook) =>
-        bookIdentity(item.title, item.author) === identity;
+      const matchesBook = (item: LibraryBook) => sameLibraryBook(item, book);
       const exists = stateRef.current.readingList.some(matchesBook);
       await commit((current) => ({
         ...current,
@@ -1128,11 +1127,6 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
     [commit, refreshLocalBooks],
   );
 
-  const isOnReadingList = useCallback(
-    (key: string) =>
-      stateRef.current.readingList.some((item) => item.key === key),
-    [],
-  );
   const dismissError = useCallback(() => {
     setError(null);
     setSyncError(null);
@@ -1245,22 +1239,21 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
         }
         if (book.local?.uri) await deleteLocalCatalogBook(book.local.uri);
         await removeProgressSyncBook(book, documentAlias ?? undefined);
-        const identity = bookIdentity(book.title, book.author);
         setLocalBooks((current) =>
           current.filter(
-            (item) => item.key !== book.key && (!uri || item.local?.uri !== uri),
+            (item) => !sameLibraryBook(item, book) && (!uri || item.local?.uri !== uri),
           ),
         );
         setProgressSyncBooks((current) =>
           current.filter(
             (item) =>
               item.key !== book.key &&
-              bookIdentity(item.title, item.author) !== identity,
+              !sameLibraryBook(item, book),
           ),
         );
         setMoonReaderBooks((current) =>
           current.filter(
-            (item) => bookIdentity(item.title, item.author) !== identity,
+            (item) => !sameLibraryBook(item, book),
           ),
         );
         await commit((current) => ({
@@ -1268,13 +1261,13 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
             (item) =>
               item.key !== book.key &&
               (!uri || (item.local?.uri ?? item.fileUri) !== uri) &&
-              bookIdentity(item.title, item.author) !== identity,
+              !sameLibraryBook(item, book),
           ),
           readingList: current.readingList.filter(
             (item) =>
               item.key !== book.key &&
               (!uri || (item.local?.uri ?? item.fileUri) !== uri) &&
-              bookIdentity(item.title, item.author) !== identity,
+              !sameLibraryBook(item, book),
           ),
         }));
         schedulePendingChanges(
@@ -1762,7 +1755,7 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
     );
     // The scanner entry is live and gains embedded/MoonReader metadata as it is
     // enriched. Prefer it over the immutable download record for the same URI.
-    return [...catalog.values(), ...state.downloaded].filter((book, index) => {
+    return groupLibraryBooks([...catalog.values(), ...state.downloaded].filter((book, index) => {
       const rawKey = book.fileUri || book.key;
       let key = rawKey;
       try {
@@ -1782,11 +1775,11 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
       }
       seen.add(key);
       return true;
-    });
+    }));
   }, [localBooks, moonReaderBooks, progressSyncBooks, state.downloaded]);
 
   const readingList = useMemo(() => {
-    const libraryByKey = new Map(downloaded.map((book) => [book.key, book]));
+    const libraryByKey = new Map(downloaded.flatMap((book) => [book.key, ...(book.linkedBookKeys ?? [])].map((key) => [key, book] as const)));
     const localByIdentity = new Map<string, LibraryBook>();
     for (const book of downloaded) {
       if (
@@ -1797,7 +1790,7 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
       }
     }
     const seen = new Set<string>();
-    return state.readingList.flatMap((book) => {
+    return groupLibraryBooks(state.readingList.flatMap((book) => {
       const identity = bookIdentity(book.title, book.author);
       if (seen.has(identity)) return [];
       seen.add(identity);
@@ -1824,8 +1817,13 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
         wordsRead: linkedLocal.wordsRead ?? enriched.wordsRead,
         lastReadAt: linkedLocal.lastReadAt ?? enriched.lastReadAt,
       }];
-    });
+    }));
   }, [downloaded, state.readingList]);
+
+  const isOnReadingList = useCallback(
+    (key: string) => readingList.some((book) => book.key === key || book.linkedBookKeys?.includes(key)),
+    [readingList],
+  );
 
   const catalogValue = useMemo<LibraryCatalogValue>(
     () => ({ downloaded, ready }),

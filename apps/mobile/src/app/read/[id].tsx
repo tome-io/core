@@ -1,5 +1,7 @@
 import { Feather } from '@expo/vector-icons';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { ReaderSession } from '@/components/reader-session';
+import { useKeepAwake } from 'expo-keep-awake';
+import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -38,6 +40,8 @@ import type { LibraryBook } from '@/lib/library';
 import {
   locatorAtProgress,
   sameReaderLocator,
+  sampleReadingSpeed,
+  type ReadingSpeedSample,
   shouldApplyRemoteProgress,
   shouldUploadReaderProgress,
   timeLeftLabel,
@@ -63,7 +67,7 @@ import {
 } from '@/lib/reader-state';
 
 const HIGHLIGHT_COLOR = '#F0C94B';
-const READER_FOOTER_HEIGHT = 28;
+const READER_FOOTER_HEIGHT = 42;
 let readerInstanceSequence = 0;
 
 function locatorLogValue(locator?: ReaderLocator | Locator | null) {
@@ -187,9 +191,7 @@ export default function ReadScreen() {
   const highlightsRef = useRef<ReaderHighlight[]>([]);
   const initialReadingTimeRef = useRef(0);
   const sessionStartedAtRef = useRef<number | null>(null);
-  const estimateReadingTimeRef = useRef(0);
-  const estimateSessionStartedAtRef = useRef<number | null>(null);
-  const estimateStartedPositionRef = useRef<number | null>(null);
+  const speedSampleRef = useRef<ReadingSpeedSample>({ readingTimeMs: 0, positions: 0 });
   const stateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const exitFlushStartedRef = useRef(false);
   const activeRef = useRef(true);
@@ -209,14 +211,21 @@ export default function ReadScreen() {
   const [positionCount, setPositionCount] = useState(0);
   const [viewportPosition, setViewportPosition] = useState<number | null>(null);
   const [viewportPositionCount, setViewportPositionCount] = useState(0);
-  const [estimateReadingTimeMs, setEstimateReadingTimeMs] = useState(0);
-  const [estimateStartedPosition, setEstimateStartedPosition] = useState<
-    number | null
-  >(null);
+  const [speedSample, setSpeedSample] = useState(speedSampleRef.current);
+  const [publicationReady, setPublicationReady] = useState(false);
   const [readerPositionReady, setReaderPositionReady] = useState(true);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [tocVisible, setTocVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isFocused, setIsFocused] = useState(false);
+  const [isAppActive, setIsAppActive] = useState(AppState.currentState === 'active');
+
+  useFocusEffect(
+    useCallback(() => {
+      setIsFocused(true);
+      return () => setIsFocused(false);
+    }, []),
+  );
 
   useEffect(() => {
     bookRef.current = book;
@@ -225,6 +234,7 @@ export default function ReadScreen() {
   const expectLocatorRestore = useCallback(
     (locator: ReaderLocator, source: string) => {
       if (restoreTimeoutRef.current) clearTimeout(restoreTimeoutRef.current);
+      speedSampleRef.current = { ...speedSampleRef.current, anchor: undefined };
       restoringLocatorRef.current = locator;
       setReaderPositionReady(false);
       if (__DEV__) {
@@ -316,15 +326,12 @@ export default function ReadScreen() {
       setPreferences(stored.preferences);
       setHighlights(stored.book.highlights);
       const initialProgress = useSyncedProgress ? syncedProgress : storedProgress;
-      estimateReadingTimeRef.current = 0;
-      estimateSessionStartedAtRef.current =
-        AppState.currentState === 'active' ? Date.now() : null;
+      speedSampleRef.current = { readingTimeMs: 0, positions: 0 };
+      setSpeedSample(speedSampleRef.current);
+      setPublicationReady(false);
       const initialPosition = useSyncedProgress
         ? null
         : (stored.book.locator?.locations?.position ?? null);
-      estimateStartedPositionRef.current = initialPosition;
-      setEstimateReadingTimeMs(0);
-      setEstimateStartedPosition(initialPosition);
       setProgress(initialProgress);
       setPosition(initialPosition);
       setPositionCount(0);
@@ -377,19 +384,7 @@ export default function ReadScreen() {
       initialReadingTimeRef.current += Math.max(0, now - sessionStartedAt);
       sessionStartedAtRef.current = null;
     }
-    const estimateSessionStartedAt = estimateSessionStartedAtRef.current;
-    if (estimateSessionStartedAt != null) {
-      estimateReadingTimeRef.current += Math.max(0, now - estimateSessionStartedAt);
-      estimateSessionStartedAtRef.current = null;
-    }
-  }, []);
-
-  const currentEstimateReadingTime = useCallback(() => {
-    const sessionStartedAt = estimateSessionStartedAtRef.current;
-    return (
-      estimateReadingTimeRef.current +
-      (sessionStartedAt == null ? 0 : Math.max(0, Date.now() - sessionStartedAt))
-    );
+    speedSampleRef.current = { ...speedSampleRef.current, anchor: undefined };
   }, []);
 
   const flushState = useCallback(
@@ -462,10 +457,10 @@ export default function ReadScreen() {
   useEffect(() => {
     activeRef.current = true;
     const subscription = AppState.addEventListener('change', (state) => {
+      setIsAppActive(state === 'active');
       if (state === 'active') {
         const now = Date.now();
         sessionStartedAtRef.current ??= now;
-        estimateSessionStartedAtRef.current ??= now;
         return;
       }
       pauseReadingSession();
@@ -520,28 +515,14 @@ export default function ReadScreen() {
         }
       }
       setReaderPositionReady(true);
-      const previousPosition = previousLocator?.locations?.position;
       locatorRef.current = asReaderLocator(locator);
       const nextPosition = locator.locations?.position ?? null;
-      if (nextPosition != null) {
-        const estimateStartedPosition = estimateStartedPositionRef.current;
-        const jumped =
-          previousPosition != null && Math.abs(nextPosition - previousPosition) > 10;
-        if (
-          estimateStartedPosition == null ||
-          nextPosition < estimateStartedPosition ||
-          jumped
-        ) {
-          estimateStartedPositionRef.current = nextPosition;
-          estimateReadingTimeRef.current = 0;
-          estimateSessionStartedAtRef.current =
-            AppState.currentState === 'active' ? Date.now() : null;
-          setEstimateReadingTimeMs(0);
-          setEstimateStartedPosition(nextPosition);
-        } else {
-          setEstimateReadingTimeMs(currentEstimateReadingTime());
-        }
-      }
+      speedSampleRef.current = sampleReadingSpeed(
+        speedSampleRef.current,
+        AppState.currentState === 'active' ? nextPosition : null,
+        Date.now(),
+      );
+      setSpeedSample(speedSampleRef.current);
       setPosition(nextPosition);
       setViewportPosition(locator.locations?.viewportPosition ?? null);
       setViewportPositionCount(
@@ -556,7 +537,7 @@ export default function ReadScreen() {
         void flushState(false).catch(reportSaveError);
       }, 700);
     },
-    [currentEstimateReadingTime, flushState, readerInstanceId, reportSaveError],
+    [flushState, readerInstanceId, reportSaveError],
   );
 
   const handlePublicationReady = useCallback(
@@ -570,6 +551,7 @@ export default function ReadScreen() {
           pendingProgress: pendingSyncedProgressRef.current,
         });
       }
+      setPublicationReady(true);
       setToc(flattenToc(publication.tableOfContents));
       publicationPositionsRef.current = publication.positions;
       setPositionCount(publication.positions.length);
@@ -793,6 +775,7 @@ export default function ReadScreen() {
   );
 
   const navigateToTocItem = useCallback((item: ReaderTocItem) => {
+    speedSampleRef.current = { ...speedSampleRef.current, anchor: undefined };
     readerRef.current?.goTo(
       toReadiumLocator({
         href: item.href,
@@ -816,24 +799,31 @@ export default function ReadScreen() {
   const progressLabel = `${Math.max(0, Math.min(100, progress)).toFixed(
     progress < 10 && progress % 1 !== 0 ? 1 : 0,
   )}%`;
-  const remainingLabel = timeLeftLabel(
-    estimateReadingTimeMs,
-    position == null || estimateStartedPosition == null
-      ? 0
-      : Math.max(0, position - estimateStartedPosition),
-    position == null || !positionCount ? 0 : Math.max(0, positionCount - position),
+  const remainingLabel = !publicationReady ? 'Loading…' : timeLeftLabel(
+    speedSample.readingTimeMs,
+    speedSample.positions,
+    positionCount * Math.max(0, 1 - progress / 100),
     progress,
   );
+  const bookPositionLabel = positionCount && position != null
+    ? `${Math.max(1, Math.min(positionCount, position))} / ${positionCount}`
+    : 'Unavailable';
   const positionLabel = viewportPosition
     ? viewportPositionCount
       ? `${viewportPosition} / ${viewportPositionCount}`
       : String(viewportPosition)
-    : '';
+    : 'Unavailable';
   const footerBottom = safeAreaInsets.bottom + 4;
   const readerBottomInset = footerBottom + READER_FOOTER_HEIGHT;
 
   return (
     <View className="flex-1" style={{ backgroundColor: themeColors.backgroundColor }}>
+      {file && !error && readerPositionReady && isFocused && isAppActive ? (
+        <>
+          <ReaderKeepAwake />
+          {book ? <ReaderSession key={readerSourceKey} book={book} onError={reportSaveError} /> : null}
+        </>
+      ) : null}
       <StatusBar style={preferences.theme === 'dark' ? 'light' : 'dark'} />
       <Stack.Screen
         options={
@@ -982,23 +972,23 @@ export default function ReadScreen() {
           </View>
           <View className="mt-1 flex-row items-center">
             <Text
-              numberOfLines={1}
+              numberOfLines={2}
               className="flex-1 text-[10px] font-medium"
               style={{ color: `${themeColors.textColor}AA` }}
             >
-              {remainingLabel}
+              {remainingLabel}{'\n'}{progressLabel}
             </Text>
             <Text
               className="flex-1 text-center text-[10px] font-medium"
               style={{ color: `${themeColors.textColor}AA` }}
             >
-              {positionLabel}
+              {positionLabel}{'\n'}Chapter pages
             </Text>
             <Text
               className="flex-1 text-right text-[10px] font-medium"
               style={{ color: `${themeColors.textColor}AA` }}
             >
-              {progressLabel}
+              {bookPositionLabel}{'\n'}Book locations
             </Text>
           </View>
         </View>
@@ -1018,6 +1008,11 @@ export default function ReadScreen() {
       />
     </View>
   );
+}
+
+function ReaderKeepAwake() {
+  useKeepAwake(undefined, { suppressDeactivateWarnings: true });
+  return null;
 }
 
 function ReaderButton({

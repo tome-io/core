@@ -70,6 +70,9 @@ export default function SearchScreen() {
   const searchGeneration = useRef(0);
   const [query, setQuery] = useState(params.q ?? '');
   const [format, setFormat] = useState('');
+  const [subject, setSubject] = useState('');
+  const [searchedSubject, setSearchedSubject] = useState('');
+  const [subjectPickerOpen, setSubjectPickerOpen] = useState(false);
   const [formatPickerOpen, setFormatPickerOpen] = useState(false);
   const [books, setBooks] = useState<SearchBook[]>([]);
   const [page, setPage] = useState(1);
@@ -89,19 +92,28 @@ export default function SearchScreen() {
     ];
     return manifests.find((manifest) => manifest.id === extensions.searchExtensionId) ?? null;
   }, [extensions.bundled, extensions.searchExtensionId, extensions.thirdParty]);
+  const subjectOptions = [
+    { label: 'All genres', value: '' },
+    ...(searchManifest?.resources.find((resource) => resource.name === 'search')?.subjectFilters ?? [])
+      .map((filter) => ({ label: filter.name, value: filter.id })),
+  ];
+
 
   useEffect(() => {
     setSearchActive(true);
     return () => setSearchActive(false);
   }, [setSearchActive]);
 
-  const runSearch = useCallback(async (q: string, fmt: string, generation: number) => {
+  const runSearch = useCallback(async (q: string, fmt: string, generation: number, genre = '') => {
     const cleanQuery = q.trim();
-    if (cleanQuery.length < 2) return;
+    if (cleanQuery.length < 2 && !genre) return;
     setLoading(true);
+    setLoadingMore(false);
+    setBooks([]);
     setError(null);
     setSearchedFor(cleanQuery);
     setSearchedFormat(fmt);
+    setSearchedSubject(genre);
     try {
       if (!extensions.searchExtensionId) {
         throw new Error('Choose an enabled search provider in Add-ons first.');
@@ -111,6 +123,7 @@ export default function SearchScreen() {
         page: 1,
         limit: 25,
         format: fmt || undefined,
+        subject: genre || undefined,
       });
       if (searchGeneration.current !== generation) return;
       setBooks(result.items.map((book) => searchBook(book, extensions.searchExtensionId!)));
@@ -123,13 +136,19 @@ export default function SearchScreen() {
     } finally {
       if (searchGeneration.current === generation) setLoading(false);
     }
-  }, [extensions]);
+  }, [extensions.search, extensions.searchExtensionId]);
 
   useEffect(() => {
     const routeQuery = typeof params.q === 'string' ? params.q : '';
     const timeout = setTimeout(() => {
       setQuery((current) => (current === routeQuery ? current : routeQuery));
       const cleanQuery = routeQuery.trim();
+      setSubject('');
+      setSearchedSubject('');
+      setBooks([]);
+      setSearchedFor('');
+      setLoading(false);
+      searchGeneration.current += 1;
       if (cleanQuery.length < 2) return;
       const generation = ++searchGeneration.current;
       setLoadingMore(false);
@@ -139,27 +158,42 @@ export default function SearchScreen() {
   }, [params.q, runSearch]);
 
   const submitSearch = useCallback(() => {
-    if (query.trim().length < 2) return;
+    if (query.trim().length < 2 && !subject) return;
     Keyboard.dismiss();
     const generation = ++searchGeneration.current;
-    runSearch(query, format, generation);
-  }, [format, query, runSearch]);
+    runSearch(query, format, generation, subject);
+  }, [format, query, runSearch, subject]);
 
   const selectFormat = useCallback(
     (nextFormat: string) => {
       setFormat(nextFormat);
-      if (query.trim().length < 2) return;
+      if (query.trim().length < 2 && !subject) return;
       Keyboard.dismiss();
       const generation = ++searchGeneration.current;
       setLoadingMore(false);
-      void runSearch(query, nextFormat, generation);
+      void runSearch(query, nextFormat, generation, subject);
     },
-    [query, runSearch]
+    [query, runSearch, subject]
   );
+
+  const selectSubject = (nextSubject: string) => {
+    setSubject(nextSubject);
+    setSubjectPickerOpen(false);
+    Keyboard.dismiss();
+    const generation = ++searchGeneration.current;
+    if (!nextSubject && query.trim().length < 2) {
+      setBooks([]); setSearchedFor(''); setSearchedSubject('');
+      setLoading(false); setLoadingMore(false); setError(null);
+      return;
+    }
+    void runSearch(query, format, generation, nextSubject);
+  };
 
   const clearSearch = useCallback(() => {
     searchGeneration.current += 1;
     setQuery('');
+    setSubject('');
+    setSearchedSubject('');
     setBooks([]);
     setError(null);
     setSearchedFor('');
@@ -169,7 +203,7 @@ export default function SearchScreen() {
   }, []);
 
   const loadMore = useCallback(async () => {
-    if (loadingMore || !searchedFor || !hasMore) return;
+    if (loading || loadingMore || (!searchedFor && !searchedSubject) || !hasMore) return;
     const generation = searchGeneration.current;
     setLoadingMore(true);
     setError(null);
@@ -183,6 +217,7 @@ export default function SearchScreen() {
         page: nextPage,
         limit: 25,
         format: searchedFormat || undefined,
+        subject: searchedSubject || undefined,
       });
       if (searchGeneration.current !== generation) return;
       setPage(nextPage);
@@ -196,7 +231,7 @@ export default function SearchScreen() {
     } finally {
       if (searchGeneration.current === generation) setLoadingMore(false);
     }
-  }, [extensions, hasMore, loadingMore, page, searchedFor, searchedFormat]);
+  }, [extensions, hasMore, loading, loadingMore, page, searchedFor, searchedFormat, searchedSubject]);
 
   const openBook = useCallback(
     (book: SearchBook) => {
@@ -256,6 +291,7 @@ export default function SearchScreen() {
           value={query}
           onChangeText={(value) => {
             if (value) setQuery(value);
+            else if (subject) { setQuery(''); void runSearch('', format, ++searchGeneration.current, subject); }
             else clearSearch();
           }}
           onSearch={submitSearch}
@@ -273,6 +309,16 @@ export default function SearchScreen() {
           style={{ width: width >= 700 ? 148 : 112, flexShrink: 0 }}
         />
       </View>
+      <View style={{ paddingHorizontal: gutter, paddingBottom: 12 }}>
+        {subjectOptions.length > 1 ? <CatalogSelect label="Genre"
+          value={subjectOptions.find((option) => option.value === subject)?.label ?? 'All genres'}
+          options={subjectOptions} selectedValue={subject} onSelect={selectSubject}
+          onPress={() => setSubjectPickerOpen(true)} style={{ width: '100%' }} />
+          : searchManifest ? <Text className="text-xs" style={{ color: colors.textMuted }}>Genre filters are not available from {searchManifest.name}.</Text> : null}
+      </View>
+      <CatalogOptionsDialog visible={Platform.OS !== 'ios' && subjectPickerOpen}
+        title="Genre" options={subjectOptions} selectedValue={subject} onSelect={selectSubject}
+        onClose={() => setSubjectPickerOpen(false)} />
       <CatalogOptionsDialog
         visible={Platform.OS !== 'ios' && formatPickerOpen}
         title="Format"
@@ -315,10 +361,10 @@ export default function SearchScreen() {
           onEndReached={loadMore}
           ListFooterComponent={footer}
         />
-      ) : searchedFor ? (
+      ) : searchedFor || searchedSubject ? (
         <View className="flex-1 items-center justify-center">
           <Text className="text-sm" style={{ color: colors.textMuted }}>
-            No results for “{searchedFor}”.
+            {searchedFor ? `No results for “${searchedFor}” with these filters.` : 'No books found in this genre.'}
           </Text>
         </View>
       ) : (

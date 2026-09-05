@@ -1,3 +1,4 @@
+import { publicationAliases } from '@tomeio/domain';
 import {
   isProgressSyncRecord,
   type ProgressSyncRecord,
@@ -63,6 +64,8 @@ export function sameProgressSyncContent(
 
 export interface HostedProgressRecord {
   document: string;
+  documentAliases?: string[];
+  locatorDocument?: string | null;
   documentMetadata: {
     title: string | null;
     authors: string[];
@@ -90,7 +93,13 @@ export function progressRecordFromHosted(
   record: HostedProgressRecord,
 ): ProgressSyncRecord | null {
   const embedded = record.metadata?.progressRecord;
-  if (isProgressSyncRecord(embedded)) return embedded;
+  if (isProgressSyncRecord(embedded)) return {
+    ...embedded,
+    aliases: [...new Set([...embedded.aliases,
+      ...(record.documentMetadata ? publicationAliases(record.documentMetadata.title ?? '', record.documentMetadata.authors, record.documentMetadata.identifiers) : []),
+      ...(record.documentAliases ?? [record.document]).flatMap((value) => [`hosted-document:koreader-partial-md5-v1:${value}`, `fingerprint:koreader-partial-md5-v1:${value}`]),
+    ])],
+  };
   const shared = record.documentMetadata;
   if (shared?.title == null) return null;
   const syncMetadata = record.metadata?.syncRecord;
@@ -107,7 +116,8 @@ export function progressRecordFromHosted(
       typeof syncRecord?.identity === 'string'
         ? syncRecord.identity
         : `fingerprint:koreader-partial-md5-v1:${record.document}`,
-    aliases,
+    aliases: [...aliases, ...publicationAliases(shared.title, shared.authors, shared.identifiers),
+      ...(record.documentAliases ?? [record.document]).flatMap((value) => [`hosted-document:koreader-partial-md5-v1:${value}`, `fingerprint:koreader-partial-md5-v1:${value}`])],
     title: shared.title,
     author: shared.authors.join(', ') || 'Unknown',
     format: shared.format ?? '',
@@ -124,7 +134,9 @@ export function progressRecordFromHosted(
 export function readerLocatorFromHosted(
   record: HostedProgressRecord,
   format?: string,
+  localDocument?: string,
 ): ReaderLocator | undefined {
+  if (!localDocument || record.locatorDocument !== localDocument) return undefined;
   const href = record.locator?.href;
   if (!href) return undefined;
   const progression = record.locator?.progression;

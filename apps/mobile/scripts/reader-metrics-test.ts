@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import {
   locatorAtProgress,
   sameReaderLocator,
+  sampleReadingSpeed,
   shouldApplyRemoteProgress,
   shouldUploadReaderProgress,
   timeLeftLabel,
@@ -17,12 +18,12 @@ test('formats long estimates as days, hours, and minutes', () => {
   assert.equal(timeLeftLabel(0, 0, 2_000, 12), '1d 9h 20m left');
 });
 
-test('uses measured reading speed after at least two positions and one minute', () => {
-  assert.equal(timeLeftLabel(240_000, 2, 10, 25), '20 min left');
+test('blends measured speed without an abrupt threshold change', () => {
+  assert.equal(timeLeftLabel(240_000, 2, 10, 25), '11 min left');
 });
 
 test('only estimates when publication positions are unavailable', () => {
-  assert.equal(timeLeftLabel(120_000, 2, 0, 25), 'Estimating time left');
+  assert.equal(timeLeftLabel(120_000, 2, 0, 25), 'Time unavailable');
   assert.equal(timeLeftLabel(120_000, 2, 10, 100), 'Finished');
 });
 
@@ -99,4 +100,29 @@ test('does not upload an unchanged remote reader position', () => {
     }),
     true,
   );
+});
+
+
+test('backtracking and seeks preserve completed reading samples', () => {
+  let sample = sampleReadingSpeed({ readingTimeMs: 0, positions: 0 }, 20, 0);
+  sample = sampleReadingSpeed(sample, 21, 60_000);
+  sample = sampleReadingSpeed(sample, 20, 120_000);
+  sample = sampleReadingSpeed(sample, 200, 180_000);
+  assert.equal(sample.positions, 1);
+  assert.equal(sample.readingTimeMs, 60_000);
+});
+
+test('duplicate locators retain elapsed time while idle and rapid navigation do not teach speed', () => {
+  let sample = sampleReadingSpeed({ readingTimeMs: 0, positions: 0 }, 1, 0);
+  sample = sampleReadingSpeed(sample, 1, 30_000);
+  sample = sampleReadingSpeed(sample, 2, 60_000);
+  assert.equal(sample.readingTimeMs, 60_000);
+  sample = sampleReadingSpeed(sample, 3, 60_100);
+  sample = sampleReadingSpeed(sample, 4, 900_000);
+  assert.equal(sample.positions, 1);
+});
+
+test('last partial position has an estimate, unavailable data has a terminal label', () => {
+  assert.equal(timeLeftLabel(0, 0, 0.2, 99), '1 min left');
+  assert.equal(timeLeftLabel(0, 0, Number.NaN, 50), 'Time unavailable');
 });

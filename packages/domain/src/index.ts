@@ -202,3 +202,4 @@ export function filenameFromUri(uri: string): string {
     return encodedDocument;
   }
 }
+export { normalizeIsbn, publicationAliases, identityGroups } from './book-identity';

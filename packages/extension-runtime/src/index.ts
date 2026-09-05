@@ -542,6 +542,7 @@ function endpointFor(
   if (values.limit) url.searchParams.set('limit', values.limit);
   if (values.language) url.searchParams.set('language', values.language);
   if (values.format) url.searchParams.set('format', values.format);
+  if (values.subject) url.searchParams.set('subject', values.subject);
   const allowedHosts = manifest.permissions?.hosts;
   if (allowedHosts?.length) {
     const allowed = allowedHosts.some((host) => new URL(host).origin === url.origin);
@@ -562,6 +563,7 @@ function queryValues(query: ExtensionQuery): Record<string, string> {
     limit: String(query.limit ?? 30),
     language: query.language ?? '',
     format: query.format ?? '',
+    subject: query.subject ?? '',
   };
 }
 

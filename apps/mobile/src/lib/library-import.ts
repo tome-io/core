@@ -1,3 +1,4 @@
+import { publicationAliases } from '@tomeio/domain';
 import * as DocumentPicker from "expo-document-picker";
 import type {
   ExtensionLibraryImport,
@@ -72,6 +73,7 @@ function syncAliases(book: ExtensionReaderBook, author: string, format: string):
   const filename = normalizedFilename(book.sourceFilename || book.sourcePath || book.sourceId);
   return [
     `identity:${bookIdentity(book.title, author, format)}`,
+    ...publicationAliases(book.title, book.authors, book.identifiers),
     filename ? `filename:${filename}` : "",
     ...Object.entries(book.identifiers).map(
       ([kind, value]) => `identifier:${kind.toLowerCase()}:${value.toLowerCase()}`,
