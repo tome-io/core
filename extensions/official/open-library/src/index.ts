@@ -397,7 +397,10 @@ export function createOpenLibraryExtension(options: SourceHttpOptions = {}): Boo
     const subjectQuery = query.subject ? SUBJECT_QUERIES[query.subject] : undefined;
     if (query.subject && !subjectQuery) throw new Error('Unsupported Open Library genre.');
     const textQuery = openLibraryQuery(rawQuery) || '*:*';
-    const result = await requestPage(query, subjectQuery ? `(${textQuery}) AND ${subjectQuery}` : textQuery);
+    const sourceQuery = subjectQuery
+      ? rawQuery && rawQuery !== '*:*' ? `(${textQuery}) AND ${subjectQuery}` : subjectQuery
+      : textQuery;
+    const result = await requestPage(query, sourceQuery);
     return {
       ...result,
       items: rankSearchResults(result.items, rawQuery),
