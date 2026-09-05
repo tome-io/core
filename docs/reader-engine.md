@@ -50,3 +50,5 @@ The footer shows only time remaining, chapter viewport count, and total publicat
 Restoration accepts the viewport containing the saved text offset, while sync equality remains exact. A matching already-observed location can complete restoration even when navigating to the same page emits no new event. On timeout the last actual navigator event is retained instead of leaving the footer without counts.
 
 After installing the updated patch, rebuild the native iOS app; Metro reload alone cannot hide the native label. Runtime validation remains developer-controlled.
+
+The iOS prebuild command now verifies that the installed Readium source includes the hidden native position label. A tracked patch alone is insufficient if node_modules was installed before the patch changed. The installed source was brought into agreement with the tracked hide-label change; rebuilding the native client remains required. Merely pressing i in Metro opens the existing binary and cannot change that native label.

@@ -136,3 +136,11 @@ test('restoration accepts a saved offset within its laid-out page, without weake
   assert.equal(restoredReaderLocator(target, { ...actual, href: 'other.xhtml' }), false);
   assert.equal(restoredReaderLocator(target, { ...actual, locations: { ...actual.locations, viewportPosition: 15 } }), false);
 });
+
+test('unchanged chapter locators do not upload layout-dependent percentage differences', () => {
+  const locator = { href: 'chapter.xhtml', locations: { progression: 0.4 } };
+  assert.equal(shouldUploadReaderProgress({ remoteKnown: true, remoteProgress: 6.73, remoteLocator: locator,
+    currentProgress: 6.34, currentLocator: locator }), false);
+  assert.equal(shouldUploadReaderProgress({ remoteKnown: true, remoteProgress: 6.73, remoteLocator: locator,
+    currentProgress: 6.34, currentLocator: { ...locator, locations: { progression: 0.5 } } }), true);
+});
