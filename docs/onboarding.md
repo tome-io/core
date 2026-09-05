@@ -1,8 +1,9 @@
 # Onboarding
 
-A full-bleed welcome screen layers the Tomeio icon and wordmark over five columns
+A full-bleed welcome screen layers the Tomeio icon and wordmark over responsive columns
 of bundled book covers. Columns move in alternating directions at different
 speeds and fade into the same background gradient used by book detail screens.
+The rotating wall extends beyond the viewport to keep its corners covered.
 Artwork works offline; sources and licensing are recorded alongside the assets.
 Motion stops off-screen and in the background, and respects Reduce Motion.
 
