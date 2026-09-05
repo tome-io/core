@@ -48,7 +48,7 @@ Development builds emit `[sync-timing]` start/done/failed events with `stageId`,
 - `hosted.reading-sessions`: interval backlog count and upload concurrency.
 - `refresh.foreground-finished`: foreground refresh duration. Background metadata continues independently.
 - `refresh.enrichment`, `enrichment.dequeued.queueMs`, `local.candidates`, `reader.candidates`, `local.epub-parse`, `local.provider-only`, `local.persist`: enrichment queue, candidate counts and work timings.
-- `[source-timing]`: upstream queue wait, rate-limit pacing, network time and response status. Open Library remains limited to one anonymous request start per 1.1 seconds.
+- `[source-timing]`: upstream queue wait, rate-limit pacing, network time and response status. Open Library remains limited to one anonymous request start per 1.1 seconds. Start slots release independently of responses, allowing slow in-flight requests to overlap rather than serializing them.
 
 Ordinary pull-to-refresh now uses hosted cursors/version checks, rather than forcing a full progress download. The explicit full-pull option remains available to existing repair callers. The native refresh indicator follows the foreground scanning state.
 
