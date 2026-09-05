@@ -375,4 +375,3 @@ export function HostedSyncDialog({
     </AppDialog>
   );
 }
-
