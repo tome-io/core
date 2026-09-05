@@ -58,6 +58,7 @@ function readerBook(
   const key = local?.key ?? `reader:${extensionId}:${encodeURIComponent(record.sourceId)}`;
   const base: LibraryBook = local ?? {
     key,
+    identifiers: record.identifiers,
     id: record.id ?? key,
     title: record.title,
     author,
