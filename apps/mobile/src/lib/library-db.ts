@@ -1,6 +1,5 @@
 import { newerCoverPreference } from './book-cover';
-import { syncBookIdentity } from './sync-book-identity';
-import { publicationAliases } from '@tomeio/domain';
+import { syncBookIdentity, syncAliases, withBookSyncAliases } from './sync-book-identity';
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy";
 import { openDatabaseAsync, type SQLiteDatabase } from "expo-sqlite";
@@ -25,6 +24,8 @@ import {
   mergeProgressRecords,
   type ProgressSyncRecord,
 } from "./progress-sync-model";
+
+export { syncAliases } from './sync-book-identity';
 
 const DATABASE_NAME = "reader-library.db";
 const LEGACY_LIBRARY_KEY = "reader_library_v1";
@@ -193,7 +194,7 @@ async function upsertBook(
   const existingRow = await database.getFirstAsync<CatalogRow>('SELECT book_json FROM catalog_books WHERE book_key = ?', book.key);
   if (existingRow) {
     const existing = parseBook(existingRow.book_json);
-    book = { ...book,
+    book = { ...withBookSyncAliases(book, existing.syncAliases ?? []),
       identifiers: { ...existing.identifiers, ...book.identifiers },
       linkedBookKeys: [...new Set([...(existing.linkedBookKeys ?? []), ...(book.linkedBookKeys ?? [])])],
     };
@@ -1497,21 +1498,6 @@ export async function persistCatalogBookProgress(
   });
 }
 
-export function syncAliases(book: LibraryBook): string[] {
-  const format = book.format || book.local?.format || "";
-  return [
-    `key:${book.key}`,
-    ...(book.linkedBookKeys ?? []).map((key) => `key:${key}`),
-    ...publicationAliases(book.title, [book.author], { ...book.extension?.book.identifiers, ...book.identifiers }),
-    ...(/^(?:unknown(?: author)?)?$/i.test(book.author.trim()) ? [] : [`identity:${bookIdentity(book.title, book.author, format)}`]),
-    book.discovery?.id ? `discovery:${book.discovery.id}` : "",
-    book.local?.filename ? `filename:${book.local.filename.toLowerCase()}` : "",
-    book.moonReader?.sourceFilename
-      ? `filename:${book.moonReader.sourceFilename.toLowerCase()}`
-      : "",
-  ].filter(Boolean);
-}
-
 function collectionSyncBook(record: CollectionSyncRecord): LibraryBook {
   const key = `synced:${record.identity}`;
   return {
@@ -1796,7 +1782,7 @@ export async function applyCollectionSyncRecords(
         for (const row of matches.values()) {
           const book = parseBook(row.book_json);
           const preference = newerCoverPreference(book, record);
-          const linked = { ...book, ...preference, ...resolveBookCover(book.coverSources, preference.coverPreference, [book.cover, book.fallbackCover]), linkedBookKeys: [...new Set([...(book.linkedBookKeys ?? []), ...linkedBookKeys])] };
+          const linked = { ...withBookSyncAliases(book, [record.identity, ...record.aliases]), ...preference, ...resolveBookCover(book.coverSources, preference.coverPreference, [book.cover, book.fallbackCover]), linkedBookKeys: [...new Set([...(book.linkedBookKeys ?? []), ...linkedBookKeys])] };
           await upsertBook(transaction, linked);
           row.book_json = JSON.stringify(linked);
         }
@@ -2125,6 +2111,7 @@ export async function applyProgressSyncRecords(
     }
 
     let updated = 0;
+    let aliasUpdates = 0;
     await database.withExclusiveTransactionAsync(async (transaction) => {
       for (const record of records) {
         const matches = new Map<string, ProgressSnapshotRow>();
@@ -2231,6 +2218,20 @@ export async function applyProgressSyncRecords(
           }
         }
         for (const row of matches.values()) {
+          // Alias knowledge is independent of whether remote progress wins.
+          // Retain it even when the reading position and counters are unchanged.
+          const book = parseBook(row.book_json);
+          const linked = withBookSyncAliases(book, [record.identity, ...record.aliases]);
+          if (linked !== book) {
+            aliasUpdates += 1;
+            await upsertBook(transaction, linked);
+            row.book_json = JSON.stringify(linked);
+            for (const alias of syncAliases(linked)) {
+              const aliasRows = rowsByAlias.get(alias) ?? [];
+              if (!aliasRows.some((candidate) => candidate.book_key === row.book_key)) aliasRows.push(row);
+              rowsByAlias.set(alias, aliasRows);
+            }
+          }
           const localRead = row.override_is_read === 1 || row.is_read === 1;
           const localUpdatedAt = Math.max(
             row.progress_synced_at ?? 0,
@@ -2289,6 +2290,7 @@ export async function applyProgressSyncRecords(
         }
       }
     });
+    if (aliasUpdates) console.info("[hosted-sync] retained progress aliases", { books: aliasUpdates });
     return updated;
   });
 }

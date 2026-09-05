@@ -11,6 +11,8 @@ export interface LibraryBook extends FeedBook {
   key: string;
   identifiers?: Record<string, string>;
   linkedBookKeys?: string[];
+  /** Known logical-book and file aliases retained across incremental syncs. */
+  syncAliases?: string[];
   localFiles?: { bookKey: string; file: LocalFileBook }[];
   genre: string;
   fallbackCover?: string;

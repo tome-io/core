@@ -67,3 +67,9 @@ Upload fingerprints now compare canonical content: object/alias order, top-level
 When chapter locators exist on both sides, reader exit compares those rather than mixing furthest-read or rendition-dependent percentages with the current position. Without a known remote state, an unchanged first observed location also skips the write. New session intervals still upload independently. A valid saved locator is used at startup instead of first navigating to the catalog's furthest percentage and then back to the remote locator.
 
 Library snapshot discovery preserves existing logical membership timestamps and tombstones across file variants. Catalog writes, cover updates, and local file bookkeeping are not membership events. Only explicit membership changes update ordering. Generated cover paths are checked in the current Documents directory after an iOS container move before invalidating embedded metadata.
+
+## Android restart alias regression
+
+A release-device trace on 6 September showed an unchanged 16-file folder, unchanged library and reading-list streams, but progress uploads of 12, then 1, then 2 records. Production progress rows retained identical percentages, locators, and reading counters while their alias metadata changed. Incremental progress responses supplied aliases that were used for the upload acknowledgement but discarded from the persisted local catalog. A later window omitting that book reconstructed fewer document aliases and made its payload appear dirty again.
+
+Learned aliases now persist with the catalog book independently of progress conflict resolution and survive catalog metadata rewrites. Collection imports retain them too. Unchanged alias sets do not add catalog writes. The `retained progress aliases` log reports only the count of books whose alias knowledge grew. This is a client fix and requires an updated app binary; there is no D1 migration.
