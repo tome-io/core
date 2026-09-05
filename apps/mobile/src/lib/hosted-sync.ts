@@ -1,5 +1,6 @@
 import { syncBookIdentity } from './sync-book-identity';
 import { publicationAliases } from '@tomeio/domain';
+import { libraryWorkCheckpoint } from './library-work-scheduler';
 import * as Device from "expo-device";
 import * as Crypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
@@ -870,6 +871,7 @@ async function localDocumentIdentifiers(): Promise<
   const localDocuments = await loadHostedSyncLocalDocuments();
   const identifiersByAlias = new Map<string, HostedDocumentIds | null>();
   for (const local of localDocuments) {
+    await libraryWorkCheckpoint();
     const logical = await md5(local.identity);
     let partial: string;
     try {
@@ -972,6 +974,7 @@ async function documentIds<T extends SyncIdentityRecord>(
   const byRecord = new Map<T, HostedDocumentIds>();
   const recordsByDocument = new Map<string, T>();
   for (const record of records) {
+    await libraryWorkCheckpoint();
     const logical = await md5(record.identity);
     const matches = [...record.aliases, record.identity]
       .map((alias) => identifiersByAlias.get(alias))
@@ -1141,6 +1144,7 @@ async function performHostedCollectionSync(
   const identifiers = await documentIds(merged, localIdentifiers);
   const fingerprints = new Map<CollectionSyncRecord, string>();
   for (const record of merged) {
+    await libraryWorkCheckpoint();
     const document = identifiers.byRecord.get(record);
     if (document == null)
       throw new Error(`No hosted sync identifier for ${record.identity}.`);
@@ -1150,6 +1154,7 @@ async function performHostedCollectionSync(
     );
   }
   for (const [index, hosted] of remote.records.entries()) {
+    await libraryWorkCheckpoint();
     const remoteRecord = remoteRecords[index];
     const mergedRecord = matchingSyncRecord(remoteRecord, merged);
     const document = mergedRecord && identifiers.byRecord.get(mergedRecord);
@@ -1242,6 +1247,7 @@ async function performHostedProgressSync(
   notify: (progress: HostedSyncProgress) => void,
   forceRemotePull = false,
 ): Promise<HostedSyncResult> {
+  await libraryWorkCheckpoint();
   const status = hostedSyncStatus(
     await authenticatedRequest<unknown>("/v1/sync/status"),
   );
@@ -1389,6 +1395,7 @@ async function performHostedProgressSync(
   );
   let importedLocators = 0;
   for (const hosted of remote.records) {
+    await libraryWorkCheckpoint();
     const remoteRecord = remoteComparableByDocument.get(hosted.document);
     if (remoteRecord == null) continue;
     const mergedRecord = matchingSyncRecord(remoteRecord, merged);
@@ -1425,6 +1432,7 @@ async function performHostedProgressSync(
     imported: importedLocators,
   });
   for (const record of merged) {
+    await libraryWorkCheckpoint();
     const document = identifiers.byRecord.get(record);
     if (document == null)
       throw new Error(`No hosted sync identifier for ${record.identity}.`);
@@ -1441,6 +1449,7 @@ async function performHostedProgressSync(
     );
   }
   for (const hosted of remote.records) {
+    await libraryWorkCheckpoint();
     const remoteRecord = remoteComparableByDocument.get(hosted.document);
     if (remoteRecord == null) continue;
     const mergedRecord = matchingSyncRecord(remoteRecord, merged);

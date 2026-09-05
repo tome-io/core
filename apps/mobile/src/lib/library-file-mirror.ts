@@ -1,3 +1,4 @@
+import { libraryWorkCheckpoint } from './library-work-scheduler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import {
@@ -99,6 +100,7 @@ async function saveState(
   const files: Record<string, MirrorEntryState> = {};
   const paths = new Set([...primaryFiles.keys(), ...mirrorFiles.keys()]);
   for (const path of paths) {
+    await libraryWorkCheckpoint();
     files[path] = {
       primary: signature(primaryFiles.get(path)),
       mirror: signature(mirrorFiles.get(path)),
@@ -130,6 +132,7 @@ async function scanBookFiles(
   visited.add(directoryUri);
   const entries = await listNativeDirectoryEntries(directoryUri);
   for (const entry of entries) {
+    await libraryWorkCheckpoint();
     const normalizedName = entry.name.toLowerCase();
     if (entry.isDirectory) {
       if (entry.name.startsWith('.') || IGNORED_DIRECTORIES.has(normalizedName)) continue;
@@ -165,6 +168,7 @@ async function destinationDirectory(
   let currentUri = rootUri;
   let currentPath = '';
   for (const segment of directoryPath.split('/')) {
+    await libraryWorkCheckpoint();
     currentPath = childPath(currentPath, segment);
     const known = cache.get(currentPath);
     if (known) {
@@ -260,6 +264,7 @@ export async function synchronizeLibraryBookFiles(
   });
 
   for (let index = 0; index < paths.length; index += 1) {
+    await libraryWorkCheckpoint();
     const path = paths[index];
     if (!path) continue;
     options.onProgress?.({
