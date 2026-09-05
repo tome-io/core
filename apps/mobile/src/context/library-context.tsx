@@ -1,3 +1,4 @@
+import { groupLibraryBooks } from '@/lib/library-book-groups';
 import {
   createContext,
   useCallback,
@@ -1756,7 +1757,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     );
     // The scanner entry is live and gains embedded/MoonReader metadata as it is
     // enriched. Prefer it over the immutable download record for the same URI.
-    return [...catalog.values(), ...state.downloaded].filter((book, index) => {
+    return groupLibraryBooks([...catalog.values(), ...state.downloaded].filter((book, index) => {
       const rawKey = book.fileUri || book.key;
       let key = rawKey;
       try {
@@ -1776,7 +1777,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       }
       seen.add(key);
       return true;
-    });
+    }));
   }, [localBooks, moonReaderBooks, progressSyncBooks, state.downloaded]);
 
   const readingList = useMemo(() => {
@@ -1791,7 +1792,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       }
     }
     const seen = new Set<string>();
-    return state.readingList.flatMap((book) => {
+    return groupLibraryBooks(state.readingList.flatMap((book) => {
       const identity = bookIdentity(book.title, book.author);
       if (seen.has(identity)) return [];
       seen.add(identity);
@@ -1818,7 +1819,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         wordsRead: linkedLocal.wordsRead ?? enriched.wordsRead,
         lastReadAt: linkedLocal.lastReadAt ?? enriched.lastReadAt,
       }];
-    });
+    }));
   }, [downloaded, state.readingList]);
 
   const catalogValue = useMemo<LibraryCatalogValue>(

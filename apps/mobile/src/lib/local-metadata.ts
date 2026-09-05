@@ -1,3 +1,4 @@
+import { normalizeIsbn } from '@tomeio/domain';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Image } from 'expo-image';
 import JSZip from 'jszip';
@@ -28,10 +29,11 @@ const SERIAL_EPUB_PARSE_THRESHOLD = 32 * 1024 * 1024;
 const ENRICH_BATCH_SIZE = 3;
 const METADATA_REFRESH_MS = 7 * 24 * 60 * 60 * 1000;
 const METADATA_FAILURE_RETRY_MS = 15 * 60 * 1000;
-const LOCAL_METADATA_VERSION = 6;
-const LARGE_EPUB_METADATA_VERSION = 7;
+const LOCAL_METADATA_VERSION = 8;
+const LARGE_EPUB_METADATA_VERSION = 9;
 
 export interface EmbeddedMetadata {
+  identifiers?: Record<string, string>;
   title?: string;
   author?: string;
   cover?: string;
@@ -200,6 +202,13 @@ async function readEpubMetadata(book: LibraryBook, base64: string): Promise<Embe
 
   const date = elementValue(packageXml, 'date');
   const metadata: EmbeddedMetadata = {
+    identifiers: Object.fromEntries(
+      [...packageXml.matchAll(/<(?:[\w.-]+:)?identifier\b[^>]*>([\s\S]*?)<\/(?:[\w.-]+:)?identifier>/gi)]
+        .flatMap((match) => {
+          const isbn = normalizeIsbn(decodeXml(match[1]));
+          return isbn ? [[`isbn:${isbn}`, isbn]] : [];
+        }),
+    ),
     title: elementValue(packageXml, 'title'),
     author: elementValue(packageXml, 'creator'),
     description: elementValue(packageXml, 'description'),
@@ -235,6 +244,7 @@ async function readEpubMetadata(book: LibraryBook, base64: string): Promise<Embe
 function applyMetadata(book: LibraryBook, metadata: EmbeddedMetadata): LibraryBook {
   return {
     ...book,
+    identifiers: { ...book.identifiers, ...metadata.identifiers },
     title: metadata.title || book.title,
     author: metadata.author || book.author,
     cover: metadata.cover || book.cover,
@@ -407,6 +417,7 @@ async function enrichLocalBook(
     book.fallbackCover,
   ]);
   const metadata: EmbeddedMetadata = {
+    identifiers: embedded.identifiers,
     title:
       catalogMetadata?.title || moonReaderMetadata?.title || embedded.title || book.title,
     author:

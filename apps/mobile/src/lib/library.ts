@@ -9,6 +9,9 @@ import type { DiscoveryBook, FeedBook } from './openlibrary';
 
 export interface LibraryBook extends FeedBook {
   key: string;
+  identifiers?: Record<string, string>;
+  linkedBookKeys?: string[];
+  localFiles?: { bookKey: string; file: LocalFileBook }[];
   genre: string;
   fallbackCover?: string;
   coverSources?: BookCoverSources;

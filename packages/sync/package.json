@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "dependencies": { "@tomeio/domain": "workspace:*" },
   "scripts": {
     "typecheck": "tsc --noEmit"
   }

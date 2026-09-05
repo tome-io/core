@@ -27,7 +27,7 @@ test('creates a remote-only library record from shared document metadata', () =>
     removedAt: null,
   }), {
     identity: 'fingerprint:koreader-partial-md5-v1:0415cf9c2d689bf88caea70729528842',
-    aliases: [],
+    aliases: ['publication:["project hail mary",["andy weir"]]', 'hosted-document:koreader-partial-md5-v1:0415cf9c2d689bf88caea70729528842'],
     title: 'Project Hail Mary',
     author: 'Andy Weir',
     format: 'epub',
@@ -40,8 +40,9 @@ test('creates a remote-only library record from shared document metadata', () =>
   });
 });
 
-test('converts hosted progress into a Readium locator', () => {
+test('converts hosted progress into a Readium locator for the same file', () => {
   assert.deepEqual(readerLocatorFromHosted({
+    locatorDocument: 'document',
     document: '0415cf9c2d689bf88caea70729528842',
     documentMetadata: null,
     percentage: 0.0661,
@@ -54,7 +55,7 @@ test('converts hosted progress into a Readium locator', () => {
     updatedAt: 1_780_000_000_000,
     serverUpdatedAt: 1_780_000_000_100,
     removedAt: null,
-  }, 'epub'), {
+  }, 'epub', 'document'), {
     href: 'OEBPS/Text/Section0002.xhtml',
     type: 'application/xhtml+xml',
     locations: {
@@ -151,4 +152,13 @@ test('detects meaningful collection changes without repeating timestamp-only wri
   };
   assert.equal(sameCollectionSyncContent(base, { ...base, updatedAt: 40 }), true);
   assert.equal(sameCollectionSyncContent(base, { ...base, sortAt: 21 }), false);
+});
+
+
+test('never imports exact locators from another EPUB or legacy untagged data', () => {
+  const remote = { document: 'canonical', locatorDocument: 'file-a', documentMetadata: null,
+    percentage: 0.5, locator: { href: 'chapter.xhtml', progression: 0.3 }, metadata: null,
+    source: 'tomeio' as const, updatedAt: 1, serverUpdatedAt: 1, removedAt: null };
+  assert.equal(readerLocatorFromHosted(remote, 'epub', 'file-b'), undefined);
+  assert.equal(readerLocatorFromHosted({ ...remote, locatorDocument: undefined }, 'epub', 'file-a'), undefined);
 });
