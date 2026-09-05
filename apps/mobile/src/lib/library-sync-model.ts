@@ -1,7 +1,8 @@
+import { newerCoverPreference, type CoverPreferenceRecord } from './book-cover';
 import { identityGroups } from '@tomeio/domain';
 export type SyncedCollection = "library" | "reading-list";
 
-export interface CollectionSyncRecord {
+export interface CollectionSyncRecord extends CoverPreferenceRecord {
   identity: string;
   aliases: string[];
   title: string;
@@ -59,6 +60,7 @@ export function mergeCollectionSyncRecords(
     const winner = eventTime(record) >= eventTime(current) ? record : current;
     const next: CollectionSyncRecord = {
       ...winner,
+      ...newerCoverPreference(current, record),
       aliases: [...new Set([...current.aliases, ...record.aliases])].sort(),
       addedAt: Math.min(current.addedAt, record.addedAt),
     };

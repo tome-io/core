@@ -67,3 +67,15 @@ export function resolveBookCover(
     fallbackCover: candidates[1],
   };
 }
+
+export interface CoverPreferenceRecord {
+  coverPreference?: BookCoverPreference;
+  coverPreferenceUpdatedAt?: number;
+}
+
+export function newerCoverPreference(a: CoverPreferenceRecord, b: CoverPreferenceRecord): CoverPreferenceRecord {
+  const at = a.coverPreferenceUpdatedAt ?? 0;
+  const bt = b.coverPreferenceUpdatedAt ?? 0;
+  const winner = bt > at || (bt === at && (b.coverPreference ?? '') > (a.coverPreference ?? '')) ? b : a;
+  return winner.coverPreference ? { coverPreference: winner.coverPreference, coverPreferenceUpdatedAt: winner.coverPreferenceUpdatedAt ?? 0 } : {};
+}

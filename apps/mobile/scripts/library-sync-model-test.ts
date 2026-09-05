@@ -91,3 +91,15 @@ test("a strictly newer progress event can re-add a removed book", () => {
   assert.equal(isProgressRecordRemoved(merged[0]!), false);
   assert.equal(merged[0]?.progress, 40);
 });
+
+test('cover preference merges independently from library membership, including an explicit reset', () => {
+  const current = record({ updatedAt: 100, coverPreference: 'provider:hardcover', coverPreferenceUpdatedAt: 20 });
+  const remote = record({ updatedAt: 50, removedAt: 50, coverPreference: 'auto', coverPreferenceUpdatedAt: 30 });
+  for (const groups of [[[current], [remote]], [[remote], [current]]]) {
+    const [merged] = mergeCollectionSyncRecords(...groups);
+    assert.equal(merged?.updatedAt, 100);
+    assert.equal(merged?.removedAt, undefined);
+    assert.equal(merged?.coverPreference, 'auto');
+    assert.equal(merged?.coverPreferenceUpdatedAt, 30);
+  }
+});

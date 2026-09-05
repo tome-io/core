@@ -1,3 +1,4 @@
+import { fetchSource } from '@tomeio/sources';
 /**
  * Open Library discovery feeds — real popularity data, free, no API key:
  *  - /search.json?...&sort=trending : engaged, trending works and categories
@@ -296,7 +297,7 @@ async function getJson(
       }
     }
 
-    const resp = await doFetch(proxied(url));
+    const resp = await fetchSource(url, (input, init) => doFetch(proxied(String(input)), init));
     if (!resp.ok) throw new Error(`Open Library request failed (${resp.status})`);
     const value = await resp.json();
     if (shouldCache) {
@@ -388,7 +389,7 @@ export async function getTrendingPage(
   opts?: FetchOpts
 ): Promise<FeedBook[]> {
   return getSearchPage(
-    `trending_score_hourly_sum:[1 TO *] AND ${QUALITY_FILTER}`,
+    `trending_z_score:{0 TO *] AND ${QUALITY_FILTER}`,
     page,
     limit,
     opts

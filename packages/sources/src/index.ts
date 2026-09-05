@@ -29,9 +29,49 @@ export class SourceRequestError extends Error {
   }
 }
 
+const originQueues = new Map<string, { pending: Promise<void>; nextStart: number }>();
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// Share Open Library's anonymous-client budget across discovery and enrichment.
+export async function fetchSource(url: string, fetchFn: typeof fetch = fetch, init: RequestInit = {}, timeoutMs = 20_000): Promise<Response> {
+  const origin = new URL(url).origin;
+  const paced = origin === 'https://openlibrary.org';
+  const queue = originQueues.get(origin) ?? { pending: Promise.resolve(), nextStart: 0 };
+  if (paced) originQueues.set(origin, queue);
+  const attempt = async () => {
+    if (paced) {
+      await sleep(Math.max(0, queue.nextStart - Date.now()));
+      queue.nextStart = Date.now() + 1_100;
+    }
+    return fetchFn(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  };
+  for (let index = 0; ; index += 1) {
+    let response: Response;
+    try {
+      const operation = paced ? queue.pending.then(attempt) : attempt();
+      if (paced) queue.pending = operation.then(() => {}, () => {});
+      response = await operation;
+    } catch (cause) {
+      if (index < 1) { await sleep(750); continue; }
+      throw new SourceRequestError(`Could not reach ${new URL(url).hostname}. Please retry.`, url, { cause });
+    }
+    if (index < 1 && [429, 500, 502, 503, 504].includes(response.status)) {
+      const retryAfter = response.headers.get('retry-after');
+      const seconds = retryAfter == null ? NaN : Number(retryAfter);
+      const delay = Number.isFinite(seconds) ? seconds * 1000 : retryAfter ? Date.parse(retryAfter) - Date.now() : 750;
+      // Do not retry earlier than the server asks; long backoffs stay user-driven.
+      if (delay > 5000) return response;
+      await response.body?.cancel();
+      await sleep(Math.max(750, Number.isFinite(delay) ? delay : 750));
+      continue;
+    }
+    return response;
+  }
+}
+
 export function createSourceHttpClient(options: SourceHttpOptions = {}): SourceHttpClient {
   const fetchFn = options.fetchFn ?? fetch;
-  const timeoutMs = options.timeoutMs ?? 12_000;
+  const timeoutMs = options.timeoutMs ?? 20_000;
   const pending = new Map<string, Promise<unknown>>();
 
   async function request<T>(
@@ -51,16 +91,15 @@ export function createSourceHttpClient(options: SourceHttpOptions = {}): SourceH
       try {
         const headers = new Headers(options.headers);
         headers.set('Accept', kind === 'json' ? 'application/json' : '*/*');
-        response = await fetchFn(url, {
-          headers,
-          signal: AbortSignal.timeout(timeoutMs),
-        });
+        response = await fetchSource(url, fetchFn, { headers }, timeoutMs);
       } catch (cause) {
-        throw new SourceRequestError(`Source request failed for ${url}.`, url, { cause });
+        if (cause instanceof SourceRequestError) throw cause;
+        throw new SourceRequestError(`Could not reach ${new URL(url).hostname}. Please retry.`, url, { cause });
       }
       if (!response.ok) {
+        await response.body?.cancel();
         throw new SourceRequestError(
-          `Source request failed (${response.status}) for ${url}.`,
+          `Source returned HTTP ${response.status}. Please retry.`,
           url
         );
       }

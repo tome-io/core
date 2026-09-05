@@ -1,3 +1,5 @@
+import { epubSeriesPosition } from './epub-series';
+import { enrichProviderMetadata, providerMetadataDue, type ProviderMetadataOptions } from './provider-metadata';
 import { normalizeIsbn } from '@tomeio/domain';
 import { libraryWorkCheckpoint } from './library-work-scheduler';
 import { File } from 'expo-file-system';
@@ -31,10 +33,11 @@ const SERIAL_EPUB_PARSE_THRESHOLD = 32 * 1024 * 1024;
 const ENRICH_BATCH_SIZE = 3;
 const METADATA_REFRESH_MS = 7 * 24 * 60 * 60 * 1000;
 const METADATA_FAILURE_RETRY_MS = 15 * 60 * 1000;
-const LOCAL_METADATA_VERSION = 8;
-const LARGE_EPUB_METADATA_VERSION = 9;
+const LOCAL_METADATA_VERSION = 10;
+const LARGE_EPUB_METADATA_VERSION = 11;
 
 export interface EmbeddedMetadata {
+  seriesPosition?: number;
   identifiers?: Record<string, string>;
   title?: string;
   author?: string;
@@ -204,6 +207,7 @@ async function readEpubMetadata(book: LibraryBook, bytes: Uint8Array): Promise<E
 
   const date = elementValue(packageXml, 'date');
   const metadata: EmbeddedMetadata = {
+    seriesPosition: epubSeriesPosition(packageXml),
     identifiers: Object.fromEntries(
       [...packageXml.matchAll(/<(?:[\w.-]+:)?identifier\b[^>]*>([\s\S]*?)<\/(?:[\w.-]+:)?identifier>/gi)]
         .flatMap((match) => {
@@ -247,6 +251,7 @@ function applyMetadata(book: LibraryBook, metadata: EmbeddedMetadata): LibraryBo
   return {
     ...book,
     identifiers: { ...book.identifiers, ...metadata.identifiers },
+    seriesPosition: metadata.seriesPosition ?? book.seriesPosition,
     title: metadata.title || book.title,
     author: metadata.author || book.author,
     cover: metadata.cover || book.cover,
@@ -264,76 +269,27 @@ function applyMetadata(book: LibraryBook, metadata: EmbeddedMetadata): LibraryBo
 async function enrichLocalBook(
   book: LibraryBook,
   catalogFetchOptions?: FetchOpts,
+  providerOptions: ProviderMetadataOptions = {},
 ): Promise<{ book: LibraryBook; sources: LocalMetadataSources; warning?: MetadataWarning }> {
   if (!book.local) return { book, sources: { embedded: {}, catalog: null } };
 
+  const localFile = book.local;
   let embedded: EmbeddedMetadata = {};
   let catalogMetadata: DiscoveryBook | null = null;
   const warningMessages: string[] = [];
   let catalogLookupFailed = false;
-  const moonReaderMetadata = book.moonReader;
-  const filenameMetadata = metadataFromFilename(book.local.filename, book.local.format);
-  const lookupAuthorCandidate = moonReaderMetadata?.author || book.author;
-  const hasNamedAuthor = !!lookupAuthorCandidate && lookupAuthorCandidate !== 'Unknown';
-  const lookupTitle =
-    book.discovery?.title ||
-    moonReaderMetadata?.title ||
-    (hasNamedAuthor ? book.title : filenameMetadata.title) ||
-    book.title;
-  const lookupAuthor =
-    book.discovery?.author ||
-    (hasNamedAuthor ? lookupAuthorCandidate : '') ||
-    filenameMetadata.author;
-
-  try {
-    catalogMetadata = await findBookMetadata(
-      lookupTitle,
-      lookupAuthor,
-      catalogFetchOptions,
-    );
-  } catch (err: any) {
-    catalogLookupFailed = true;
-    warningMessages.push(`Catalog metadata lookup failed: ${err.message || String(err)}`);
-  }
-
-  if (
-    catalogMetadata &&
-    (!catalogMetadata.cover ||
-      !catalogMetadata.description ||
-      catalogMetadata.genre === 'Other') &&
-    catalogMetadata.id.startsWith('/works/')
-  ) {
-    try {
-      const details = await getWorkDetails(
-        catalogMetadata.id,
-        catalogFetchOptions,
-      );
-      catalogMetadata = {
-        ...catalogMetadata,
-        cover: catalogMetadata.cover || details.cover,
-        description: catalogMetadata.description || details.description,
-        genre:
-          catalogMetadata.genre !== 'Other'
-            ? catalogMetadata.genre
-            : details.subjects[0] || catalogMetadata.genre,
-      };
-    } catch (err: any) {
-      warningMessages.push(`Catalog description lookup failed: ${err.message || String(err)}`);
-    }
-  }
-
   const canReadEmbedded =
-    (book.local.format === 'epub' && book.local.size <= MAX_EPUB_PARSE_SIZE) ||
-    (book.local.format === 'pdf' && book.local.size <= MAX_PDF_PARSE_SIZE);
+    (localFile.format === 'epub' && localFile.size <= MAX_EPUB_PARSE_SIZE) ||
+    (localFile.format === 'pdf' && localFile.size <= MAX_PDF_PARSE_SIZE);
   let readableEmbeddedUri: string | null = null;
   const readableLocalFile = async () => {
     readableEmbeddedUri ??= await materializeNativeFolderFile(
-      book.local!.uri,
-      book.local!.filename
+      localFile.uri,
+      localFile.filename
     );
     return readableEmbeddedUri;
   };
-  if (book.local.format === 'pdf') {
+  if (localFile.format === 'pdf') {
     try {
       const cover = await savePdfCover(book, await readableLocalFile());
       if (cover) embedded.cover = cover;
@@ -348,7 +304,7 @@ async function enrichLocalBook(
       const bytes = new Uint8Array(await new File(readableUri).arrayBuffer());
       await libraryWorkCheckpoint();
       const parsed =
-        book.local.format === 'epub'
+        localFile.format === 'epub'
           ? await readEpubMetadata(book, bytes)
           : await readPdfMetadata(bytes);
       embedded = { ...parsed, ...(embedded.cover ? { cover: embedded.cover } : {}) };
@@ -357,23 +313,45 @@ async function enrichLocalBook(
     }
   }
 
-  const embeddedIdentityChanged =
-    !!embedded.title &&
-    (embedded.title !== book.title || (!!embedded.author && embedded.author !== book.author));
-  if (!catalogMetadata && !catalogLookupFailed && embeddedIdentityChanged) {
+  const moonReaderMetadata = book.moonReader;
+  const filenameMetadata = metadataFromFilename(localFile.filename, localFile.format);
+  const lookupAuthorCandidate = moonReaderMetadata?.author || book.author;
+  const hasNamedAuthor = !!lookupAuthorCandidate && lookupAuthorCandidate !== 'Unknown';
+  const lookupTitle =
+    embedded.title || book.discovery?.title ||
+    moonReaderMetadata?.title ||
+    (hasNamedAuthor ? book.title : filenameMetadata.title) ||
+    book.title;
+  const lookupAuthor =
+    embedded.author || book.discovery?.author ||
+    (hasNamedAuthor ? lookupAuthorCandidate : '') ||
+    filenameMetadata.author;
+
+  const needsCatalog = providerOptions.forceCatalogRefresh ||
+    !(embedded.cover || book.coverSources?.local || book.coverSources?.catalog) ||
+    !(embedded.description || book.description) ||
+    !(embedded.genre || (book.genre !== 'Other' && book.genre !== 'Local' ? book.genre : '')) ||
+    !(embedded.author || (hasNamedAuthor ? book.author : ''));
+  if (needsCatalog) {
     try {
       catalogMetadata = await findBookMetadata(
-        embedded.title || book.title,
-        embedded.author || book.author,
+        lookupTitle,
+        lookupAuthor,
         catalogFetchOptions,
       );
-      if (
-        catalogMetadata &&
-        (!catalogMetadata.cover ||
-          !catalogMetadata.description ||
-          catalogMetadata.genre === 'Other') &&
-        catalogMetadata.id.startsWith('/works/')
-      ) {
+    } catch (err: any) {
+      catalogLookupFailed = true;
+      warningMessages.push(`Catalog metadata lookup failed: ${err.message || String(err)}`);
+    }
+
+    if (
+      catalogMetadata &&
+      (!catalogMetadata.cover ||
+        !catalogMetadata.description ||
+        catalogMetadata.genre === 'Other') &&
+      catalogMetadata.id.startsWith('/works/')
+    ) {
+      try {
         const details = await getWorkDetails(
           catalogMetadata.id,
           catalogFetchOptions,
@@ -387,10 +365,18 @@ async function enrichLocalBook(
               ? catalogMetadata.genre
               : details.subjects[0] || catalogMetadata.genre,
         };
+      } catch (err: any) {
+        warningMessages.push(`Catalog description lookup failed: ${err.message || String(err)}`);
       }
-    } catch (err: any) {
-      warningMessages.push(`Catalog metadata retry failed: ${err.message || String(err)}`);
     }
+
+  }
+  const provider = await enrichProviderMetadata({ ...book, seriesPosition: embedded.seriesPosition ?? book.seriesPosition }, providerOptions);
+  book = provider.book;
+  if (provider.warning) warningMessages.push(provider.warning);
+  if (!embedded.cover && !book.coverSources?.local && !catalogMetadata?.cover && !book.coverSources?.catalog && !book.cover && providerOptions.coverLookup) {
+    const fallback = await providerOptions.coverLookup(book);
+    if (fallback) book = { ...book, coverSources: { ...book.coverSources, providers: { ...book.coverSources?.providers, [fallback.providerId]: fallback.uri } } };
   }
 
   const coverSources: BookCoverSources = {
@@ -419,26 +405,22 @@ async function enrichLocalBook(
     book.fallbackCover,
   ]);
   const metadata: EmbeddedMetadata = {
+    seriesPosition: embedded.seriesPosition,
     identifiers: embedded.identifiers,
     title:
-      catalogMetadata?.title || moonReaderMetadata?.title || embedded.title || book.title,
+      embedded.title || moonReaderMetadata?.title || catalogMetadata?.title || book.title,
     author:
-      catalogMetadata?.author || moonReaderMetadata?.author || embedded.author || book.author,
+      embedded.author || moonReaderMetadata?.author || catalogMetadata?.author || book.author,
     cover: resolvedCover.cover,
     description:
-      catalogMetadata?.description ||
-      moonReaderMetadata?.description ||
       embedded.description ||
+      moonReaderMetadata?.description ||
+      catalogMetadata?.description ||
       book.description,
-    year: catalogMetadata?.year
-      ? String(catalogMetadata.year)
-      : embedded.year || (book.year ? String(book.year) : undefined),
-    genre:
-      catalogMetadata?.genre && catalogMetadata.genre !== 'Other'
-        ? catalogMetadata.genre
-        : moonReaderMetadata?.genre ||
-          embedded.genre ||
-          (book.genre !== 'Local' ? book.genre : ''),
+    year: embedded.year || (catalogMetadata?.year ? String(catalogMetadata.year) : book.year ? String(book.year) : undefined),
+    genre: embedded.genre || moonReaderMetadata?.genre ||
+      (catalogMetadata?.genre !== 'Other' ? catalogMetadata?.genre : undefined) ||
+      (book.genre !== 'Local' ? book.genre : ''),
     rating: catalogMetadata?.rating,
     ratingsCount: catalogMetadata?.ratingsCount,
   };
@@ -452,7 +434,7 @@ async function enrichLocalBook(
     book: catalogLookupFailed ? { ...enriched, metadataPending: true } : enriched,
     sources: { embedded, catalog: catalogMetadata },
     warning: warningMessages.length
-      ? { filename: book.local.filename, message: warningMessages.join(' ') }
+      ? { filename: localFile.filename, message: warningMessages.join(' ') }
       : undefined,
   };
 }
@@ -461,13 +443,14 @@ export async function enrichLocalLibrary(
   books: LibraryBook[],
   onBook: (book: LibraryBook, sources: LocalMetadataSources) => void | Promise<void>,
   onProgress?: (completed: number, total: number) => void,
-  options: { forceCatalogRefresh?: boolean } = {},
+  options: ProviderMetadataOptions = {},
 ): Promise<MetadataWarning[]> {
   const warnings: MetadataWarning[] = [];
   const retryFailuresBefore = Date.now() - METADATA_FAILURE_RETRY_MS;
   const staleBefore = Date.now() - METADATA_REFRESH_MS;
   const candidates = books.filter(
     (book) =>
+      providerMetadataDue(book, options.providerLookupKey, options.forceCatalogRefresh) ||
       !book.metadataUpdatedAt ||
       book.metadataVersion !== metadataVersionFor(book) ||
       book.metadataUpdatedAt < staleBefore ||
@@ -493,7 +476,7 @@ export async function enrichLocalLibrary(
       ? { fetchFn: fetch }
       : undefined;
     const results = await Promise.allSettled(
-      batch.map((book) => enrichLocalBook(book, catalogFetchOptions)),
+      batch.map((book) => enrichLocalBook(book, catalogFetchOptions, options)),
     );
     for (let index = 0; index < results.length; index += 1) {
       const result = results[index];

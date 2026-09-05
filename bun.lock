@@ -65,6 +65,7 @@
         "@tomeio/extension-runtime": "workspace:*",
         "@tomeio/official-extensions": "workspace:*",
         "@tomeio/sync": "workspace:*",
+        "@tomeio/sources": "workspace:*",
         "expo": "~57.0.17",
         "expo-application": "~57.0.2",
         "expo-build-properties": "~57.0.15",

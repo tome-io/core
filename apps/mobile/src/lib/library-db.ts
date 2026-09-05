@@ -1,3 +1,4 @@
+import { newerCoverPreference } from './book-cover';
 import { syncBookIdentity } from './sync-book-identity';
 import { publicationAliases } from '@tomeio/domain';
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -218,8 +219,9 @@ function preserveStoredCoverPreference(
   const existingPreferenceUpdatedAt = existing.coverPreferenceUpdatedAt ?? 0;
   const incomingPreferenceUpdatedAt = incoming.coverPreferenceUpdatedAt ?? 0;
   const shouldPreserve =
-    existing.coverPreference !== "auto" ||
-    existingPreferenceUpdatedAt > incomingPreferenceUpdatedAt;
+    existingPreferenceUpdatedAt > incomingPreferenceUpdatedAt ||
+    (existingPreferenceUpdatedAt === incomingPreferenceUpdatedAt &&
+      existing.coverPreference >= (incoming.coverPreference ?? ''));
   if (!shouldPreserve) return incoming;
 
   const providers = {
@@ -1118,6 +1120,9 @@ function preserveCatalogMetadata(
     metadataPending: existing.metadataPending,
     metadataUpdatedAt: existing.metadataUpdatedAt,
     metadataVersion: existing.metadataVersion,
+    providerMetadataKey: existing.providerMetadataKey,
+    providerMetadataUpdatedAt: existing.providerMetadataUpdatedAt,
+    providerMetadataRetryAt: existing.providerMetadataRetryAt,
     coverLookupKey: existing.coverLookupKey,
     coverSourcesLookupKey: existing.coverSourcesLookupKey,
     coverSourcesUpdatedAt: existing.coverSourcesUpdatedAt,
@@ -1517,6 +1522,7 @@ function collectionSyncBook(record: CollectionSyncRecord): LibraryBook {
     genre: "Other",
     format: record.format || undefined,
     sourceUrl: record.sourceUrl,
+    ...newerCoverPreference({}, record),
     addedAt: record.addedAt,
     availableLocally: false,
     metadataPending: true,
@@ -1542,6 +1548,7 @@ function collectionRecordFromBook(
     author: book.author,
     format: book.format || book.local?.format || "",
     sourceUrl: book.sourceUrl,
+    ...newerCoverPreference({}, book),
     addedAt: book.addedAt || sortAt,
     sortAt,
     updatedAt,
@@ -1625,6 +1632,7 @@ export async function loadCollectionSyncRecords(
       ...record,
       title: book.title,
       author: book.author,
+      ...newerCoverPreference(record, book),
       format: book.format || book.local?.format || record.format,
       aliases: [...new Set([...record.aliases, ...syncAliases(book)])],
     };
@@ -1784,7 +1792,8 @@ export async function applyCollectionSyncRecords(
         const linkedBookKeys = [...matches.keys()];
         for (const row of matches.values()) {
           const book = parseBook(row.book_json);
-          const linked = { ...book, linkedBookKeys: [...new Set([...(book.linkedBookKeys ?? []), ...linkedBookKeys])] };
+          const preference = newerCoverPreference(book, record);
+          const linked = { ...book, ...preference, ...resolveBookCover(book.coverSources, preference.coverPreference, [book.cover, book.fallbackCover]), linkedBookKeys: [...new Set([...(book.linkedBookKeys ?? []), ...linkedBookKeys])] };
           await upsertBook(transaction, linked);
           row.book_json = JSON.stringify(linked);
         }
