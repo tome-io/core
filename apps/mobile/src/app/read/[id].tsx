@@ -1,4 +1,5 @@
 import { Feather } from '@expo/vector-icons';
+import { ReaderSession } from '@/components/reader-session';
 import { useKeepAwake } from 'expo-keep-awake';
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -818,7 +819,10 @@ export default function ReadScreen() {
   return (
     <View className="flex-1" style={{ backgroundColor: themeColors.backgroundColor }}>
       {file && !error && readerPositionReady && isFocused && isAppActive ? (
-        <ReaderKeepAwake />
+        <>
+          <ReaderKeepAwake />
+          {book ? <ReaderSession key={readerSourceKey} book={book} onError={reportSaveError} /> : null}
+        </>
       ) : null}
       <StatusBar style={preferences.theme === 'dark' ? 'light' : 'dark'} />
       <Stack.Screen
