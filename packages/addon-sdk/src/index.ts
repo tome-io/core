@@ -139,6 +139,7 @@ function queryFromUrl(url: URL): ExtensionQuery {
     limit: numberParameter(url, 'limit'),
     language: url.searchParams.get('language') ?? undefined,
     format: url.searchParams.get('format') ?? undefined,
+    subject: url.searchParams.get('subject') ?? undefined,
   };
 }
 
