@@ -34,7 +34,7 @@ interface LibraryFileMirrorContextValue {
 
 const LibraryFileMirrorContext = createContext<LibraryFileMirrorContextValue | null>(null);
 
-export function LibraryFileMirrorProvider({ children }: { children: ReactNode }) {
+export function LibraryFileMirrorProvider({ children, automaticSyncEnabled = true }: { children: ReactNode; automaticSyncEnabled?: boolean }) {
   const { settings, ready } = useSettings();
   const { refreshLocalBooks } = useLibraryActions();
   const [state, setState] = useState<LibraryFileMirrorState>('idle');
@@ -103,7 +103,7 @@ export function LibraryFileMirrorProvider({ children }: { children: ReactNode })
   }, [refreshLocalBooks, settings]);
 
   useEffect(() => {
-    if (!ready || !settings.libraryMirrorEnabled) {
+    if (!automaticSyncEnabled || !ready || !settings.libraryMirrorEnabled) {
       initialConfiguration.current = null;
       if (!settings.libraryMirrorEnabled) {
         const timeout = setTimeout(() => {
@@ -121,7 +121,7 @@ export function LibraryFileMirrorProvider({ children }: { children: ReactNode })
     if (initialConfiguration.current === configuration) return;
     initialConfiguration.current = configuration;
     void syncNow().catch(() => {});
-  }, [ready, settings, syncNow]);
+  }, [automaticSyncEnabled, ready, settings, syncNow]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -130,6 +130,7 @@ export function LibraryFileMirrorProvider({ children }: { children: ReactNode })
       const returningToApp = /inactive|background/.test(previousState) && nextState === 'active';
       previousState = nextState;
       if (
+        automaticSyncEnabled &&
         returningToApp &&
         settings.libraryMirrorEnabled &&
         settings.localLibraryLocation &&
@@ -140,7 +141,7 @@ export function LibraryFileMirrorProvider({ children }: { children: ReactNode })
       }
     });
     return () => subscription.remove();
-  }, [settings, syncNow]);
+  }, [automaticSyncEnabled, settings, syncNow]);
 
   const value = useMemo(
     () => ({

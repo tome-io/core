@@ -11,6 +11,7 @@ import {
   SafeAreaView,
 } from "react-native-safe-area-context";
 
+import { setLibraryWorkPaused } from "@/lib/library-work-scheduler";
 import { onboardingPreview } from "@/lib/onboarding-preview";
 import { Sidebar } from "@/components/sidebar";
 import { LibraryActivityToast } from "@/components/library-activity-toast";
@@ -51,6 +52,11 @@ export default function RootLayout() {
     previewOpened.current = true;
     router.replace('/onboarding');
   }, [ready, router]);
+  const automaticSyncEnabled = ready && !isOnboarding && pathname !== "/";
+  useEffect(() => {
+    setLibraryWorkPaused(!automaticSyncEnabled);
+    return () => setLibraryWorkPaused(true);
+  }, [automaticSyncEnabled]);
   const settingsRef = useRef(settings);
   const settingsQueue = useRef<Promise<void>>(Promise.resolve());
 
@@ -97,8 +103,8 @@ export default function RootLayout() {
       <ThemeProvider value={theme}>
         <SettingsContext.Provider value={value}>
           <ExtensionsProvider>
-            <LibraryProvider>
-              <LibraryFileMirrorProvider>
+            <LibraryProvider automaticSyncEnabled={automaticSyncEnabled}>
+              <LibraryFileMirrorProvider automaticSyncEnabled={automaticSyncEnabled}>
                 <DownloadProvider>
                   <HomeNavigationProvider>
                     <StatusBar style="light" />

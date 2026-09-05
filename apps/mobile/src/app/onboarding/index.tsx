@@ -9,7 +9,6 @@ import { onboardingPreview } from '@/lib/onboarding-preview';
 import { AppDialog, colors, PillButton, SelectField } from '@/components/app-ui';
 import { HostedSyncDialog } from '@/components/hosted-sync-dialog';
 import { useExtensions } from '@/context/extensions-context';
-import { useLibraryActions } from '@/context/library-context';
 import { useSettings } from '@/context/settings-context';
 import { describeFolderLocation, folderLocationLabel, isExternalFolderLocation, pickDownloadFolder } from '@/lib/download';
 import { beginFolderPicker, endFolderPicker } from '@/lib/folder-picker-lock';
@@ -32,7 +31,6 @@ export default function OnboardingScreen() {
   const router = useRouter();
   const { settings, ready, update } = useSettings();
   const extensions = useExtensions();
-  const { refreshLocalBooks } = useLibraryActions();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [picker, setPicker] = useState<Role | null>(null);
@@ -197,7 +195,6 @@ export default function OnboardingScreen() {
     </AppDialog> : null}
     {showAccount ? <HostedSyncDialog onClose={() => setShowAccount(false)} onAuthenticated={(value) => {
       setAccount(value); setShowAccount(false);
-      void refreshLocalBooks(true).catch(reportError);
     }} /> : null}
   </View>;
 }
