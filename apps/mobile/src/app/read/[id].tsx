@@ -1,5 +1,6 @@
 import { Feather } from '@expo/vector-icons';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useKeepAwake } from 'expo-keep-awake';
+import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -217,6 +218,15 @@ export default function ReadScreen() {
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [tocVisible, setTocVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isFocused, setIsFocused] = useState(false);
+  const [isAppActive, setIsAppActive] = useState(AppState.currentState === 'active');
+
+  useFocusEffect(
+    useCallback(() => {
+      setIsFocused(true);
+      return () => setIsFocused(false);
+    }, []),
+  );
 
   useEffect(() => {
     bookRef.current = book;
@@ -462,6 +472,7 @@ export default function ReadScreen() {
   useEffect(() => {
     activeRef.current = true;
     const subscription = AppState.addEventListener('change', (state) => {
+      setIsAppActive(state === 'active');
       if (state === 'active') {
         const now = Date.now();
         sessionStartedAtRef.current ??= now;
@@ -834,6 +845,9 @@ export default function ReadScreen() {
 
   return (
     <View className="flex-1" style={{ backgroundColor: themeColors.backgroundColor }}>
+      {file && !error && readerPositionReady && isFocused && isAppActive ? (
+        <ReaderKeepAwake />
+      ) : null}
       <StatusBar style={preferences.theme === 'dark' ? 'light' : 'dark'} />
       <Stack.Screen
         options={
@@ -1018,6 +1032,11 @@ export default function ReadScreen() {
       />
     </View>
   );
+}
+
+function ReaderKeepAwake() {
+  useKeepAwake(undefined, { suppressDeactivateWarnings: true });
+  return null;
 }
 
 function ReaderButton({
