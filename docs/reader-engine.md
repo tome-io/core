@@ -42,3 +42,11 @@ language on Android.
   production-ready.
 - Search and notes are intentionally deferred; highlights already persist in Tomeio's
   state so those features can be layered on without changing engine ownership.
+
+## Footer and restoration follow-up
+
+The footer shows only time remaining, chapter viewport count, and total publication position count. Readium's separate iOS position label is hidden by the dependency patch. The total remains Readium's stable publication-position count, not a screen-page total that changes with typography.
+
+Restoration accepts the viewport containing the saved text offset, while sync equality remains exact. A matching already-observed location can complete restoration even when navigating to the same page emits no new event. On timeout the last actual navigator event is retained instead of leaving the footer without counts.
+
+After installing the updated patch, rebuild the native iOS app; Metro reload alone cannot hide the native label. Runtime validation remains developer-controlled.

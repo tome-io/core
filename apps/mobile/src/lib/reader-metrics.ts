@@ -70,6 +70,20 @@ export function sameReaderLocator(
   );
 }
 
+// A saved text offset is laid out at the start of its containing viewport page.
+// Keep this tolerance separate from sync equality, which must remain precise.
+export function restoredReaderLocator(target: SyncLocator, actual: SyncLocator & {
+  locations?: SyncLocator['locations'] & { viewportPosition?: number; viewportPositionCount?: number };
+}): boolean {
+  if (sameReaderLocator(target, actual)) return true;
+  if (target.href !== actual.href) return false;
+  const progression = target.locations?.progression;
+  const page = actual.locations?.viewportPosition;
+  const count = actual.locations?.viewportPositionCount;
+  if (progression == null || !page || !count || page > count) return false;
+  return progression >= (page - 1) / count - 0.000001 && progression < page / count + 0.000001;
+}
+
 export function shouldUploadReaderProgress({
   remoteKnown,
   remoteProgress,

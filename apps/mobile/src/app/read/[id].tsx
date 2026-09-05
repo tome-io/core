@@ -39,7 +39,7 @@ import {
 import type { LibraryBook } from '@/lib/library';
 import {
   locatorAtProgress,
-  sameReaderLocator,
+  restoredReaderLocator,
   sampleReadingSpeed,
   type ReadingSpeedSample,
   shouldApplyRemoteProgress,
@@ -67,7 +67,7 @@ import {
 } from '@/lib/reader-state';
 
 const HIGHLIGHT_COLOR = '#F0C94B';
-const READER_FOOTER_HEIGHT = 42;
+const READER_FOOTER_HEIGHT = 28;
 let readerInstanceSequence = 0;
 
 function locatorLogValue(locator?: ReaderLocator | Locator | null) {
@@ -211,7 +211,7 @@ export default function ReadScreen() {
   const [positionCount, setPositionCount] = useState(0);
   const [viewportPosition, setViewportPosition] = useState<number | null>(null);
   const [viewportPositionCount, setViewportPositionCount] = useState(0);
-  const [speedSample, setSpeedSample] = useState(speedSampleRef.current);
+  const [speedSample, setSpeedSample] = useState<ReadingSpeedSample>({ readingTimeMs: 0, positions: 0 });
   const [publicationReady, setPublicationReady] = useState(false);
   const [readerPositionReady, setReaderPositionReady] = useState(true);
   const [settingsVisible, setSettingsVisible] = useState(false);
@@ -231,10 +231,19 @@ export default function ReadScreen() {
     bookRef.current = book;
   }, [book]);
 
+  const observedLocatorRef = useRef<Locator | null>(null);
+  const locationHandlerRef = useRef<((locator: Locator) => void) | null>(null);
   const expectLocatorRestore = useCallback(
     (locator: ReaderLocator, source: string) => {
       if (restoreTimeoutRef.current) clearTimeout(restoreTimeoutRef.current);
       speedSampleRef.current = { ...speedSampleRef.current, anchor: undefined };
+      const observed = observedLocatorRef.current;
+      if (observed && restoredReaderLocator(locator, observed)) {
+        restoringLocatorRef.current = null;
+        setReaderPositionReady(true);
+        locationHandlerRef.current?.(observed);
+        return;
+      }
       restoringLocatorRef.current = locator;
       setReaderPositionReady(false);
       if (__DEV__) {
@@ -249,6 +258,8 @@ export default function ReadScreen() {
         restoringLocatorRef.current = null;
         restoreTimeoutRef.current = null;
         setReaderPositionReady(true);
+        // A failed navigation must not discard the navigator's actual location.
+        if (observedLocatorRef.current) locationHandlerRef.current?.(observedLocatorRef.current);
         console.warn('[reader-locator] locator restore timed out', {
           readerInstanceId,
           source,
@@ -283,6 +294,7 @@ export default function ReadScreen() {
     }
     setError(null);
     setFile(null);
+    observedLocatorRef.current = null;
     void (async () => {
       const stored = await loadReaderState(currentBook.key);
       if (!active) return;
@@ -482,6 +494,7 @@ export default function ReadScreen() {
 
   const handleLocationChange = useCallback(
     (locator: Locator) => {
+      observedLocatorRef.current = locator;
       const previousLocator = locatorRef.current;
       const expectedLocator = restoringLocatorRef.current;
       if (__DEV__) {
@@ -493,7 +506,7 @@ export default function ReadScreen() {
           expected: locatorLogValue(expectedLocator),
         });
       }
-      if (expectedLocator && !sameReaderLocator(expectedLocator, locator)) {
+      if (expectedLocator && !restoredReaderLocator(expectedLocator, locator)) {
         if (__DEV__) {
           console.info('[reader-locator] transient restore event ignored', {
             readerInstanceId,
@@ -539,6 +552,10 @@ export default function ReadScreen() {
     },
     [flushState, readerInstanceId, reportSaveError],
   );
+
+  useEffect(() => {
+    locationHandlerRef.current = handleLocationChange;
+  }, [handleLocationChange]);
 
   const handlePublicationReady = useCallback(
     (publication: PublicationReadyEvent) => {
@@ -796,9 +813,6 @@ export default function ReadScreen() {
   }, [flushState, reportSaveError, router]);
 
   const themeColors = readerThemeColors(preferences.theme);
-  const progressLabel = `${Math.max(0, Math.min(100, progress)).toFixed(
-    progress < 10 && progress % 1 !== 0 ? 1 : 0,
-  )}%`;
   const remainingLabel = !publicationReady ? 'Loading…' : timeLeftLabel(
     speedSample.readingTimeMs,
     speedSample.positions,
@@ -972,23 +986,23 @@ export default function ReadScreen() {
           </View>
           <View className="mt-1 flex-row items-center">
             <Text
-              numberOfLines={2}
+              numberOfLines={1}
               className="flex-1 text-[10px] font-medium"
               style={{ color: `${themeColors.textColor}AA` }}
             >
-              {remainingLabel}{'\n'}{progressLabel}
+              {remainingLabel}
             </Text>
             <Text
               className="flex-1 text-center text-[10px] font-medium"
               style={{ color: `${themeColors.textColor}AA` }}
             >
-              {positionLabel}{'\n'}Chapter pages
+              {positionLabel}
             </Text>
             <Text
               className="flex-1 text-right text-[10px] font-medium"
               style={{ color: `${themeColors.textColor}AA` }}
             >
-              {bookPositionLabel}{'\n'}Book locations
+              {bookPositionLabel}
             </Text>
           </View>
         </View>
