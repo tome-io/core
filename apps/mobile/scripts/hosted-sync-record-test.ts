@@ -1,8 +1,10 @@
-import { syncPayloadContent } from '../src/lib/hosted-sync-record';
+import { syncAliases, withBookSyncAliases } from '../src/lib/sync-book-identity';
+import type { LibraryBook } from '../src/lib/library';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  syncPayloadContent,
   hostedAccountMetadata,
   matchingSyncRecord,
   progressRecordFromHosted,
@@ -182,4 +184,39 @@ test('learning local sync aliases does not dirty unchanged reading content', () 
 test('absent and zero reading counters are the same upload content', () => {
   assert.equal(syncPayloadContent({ metadata: { syncRecord: {} } }),
     syncPayloadContent({ metadata: { syncRecord: { readingTimeMs: 0, wordsRead: 0, lastReadAt: 0 } } }));
+});
+
+test('remote file aliases survive storage and an incremental window without that book', () => {
+  const file = '0415cf9c2d689bf88caea70729528842';
+  const otherFile = '1415cf9c2d689bf88caea70729528842';
+  const remote = progressRecordFromHosted({
+    document: file,
+    documentAliases: [file, otherFile],
+    documentMetadata: { title: 'Book', authors: ['Author'], format: 'epub' },
+    percentage: 0.4, metadata: null, source: 'tomeio', updatedAt: 10,
+    serverUpdatedAt: 20, removedAt: null,
+  })!;
+  const book: LibraryBook = {
+    key: 'local:book', id: 'book', title: 'Book', author: 'Author',
+    cover: '', description: '', genre: 'Fiction', year: '', addedAt: 1,
+    format: 'epub', progress: 40,
+  };
+  const saved = withBookSyncAliases(book, [remote.identity, ...remote.aliases]);
+  const reopened = JSON.parse(JSON.stringify(saved)) as LibraryBook;
+  // A later incremental response can omit this book. Learned file aliases
+  // must still contribute exactly the previously acknowledged payload.
+  const documentAliases = (aliases: string[]) => aliases
+    .filter((alias) => alias.startsWith('hosted-document:'))
+    .map((alias) => alias.split(':').at(-1)!);
+  const acknowledged = syncPayloadContent({ percentage: 0.4, aliases: documentAliases(remote.aliases) });
+  const afterReopen = syncPayloadContent({ percentage: 0.4, aliases: documentAliases(syncAliases(reopened)) });
+  assert.equal(afterReopen, acknowledged);
+  assert.equal(reopened.progress, book.progress);
+  assert.strictEqual(withBookSyncAliases(reopened, remote.aliases), reopened,
+    'an unchanged pull must not require another catalog write');
+  const metadataRefresh = withBookSyncAliases({ ...book, description: 'Updated details' }, reopened.syncAliases!);
+  assert.equal(syncPayloadContent({ percentage: 0.4, aliases: documentAliases(syncAliases(metadataRefresh)) }), acknowledged);
+  const newAlias = 'hosted-document:koreader-partial-md5-v1:2415cf9c2d689bf88caea70729528842';
+  assert.notEqual(syncPayloadContent({ percentage: 0.4, aliases: documentAliases(syncAliases(withBookSyncAliases(reopened, [newAlias]))) }), acknowledged,
+    'a new file association must still be synchronized');
 });
