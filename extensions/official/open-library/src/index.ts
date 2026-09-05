@@ -15,7 +15,7 @@ import {
 export const manifest: ExtensionManifest = {
   manifestVersion: 1,
   id: 'org.tomeio.open-library',
-  version: '0.4.1',
+  version: '0.5.0',
   name: 'Open Library',
   description: 'Book discovery, metadata, covers, and open-access downloads from Open Library.',
   author: 'Tomeio',
@@ -23,7 +23,17 @@ export const manifest: ExtensionManifest = {
   types: ['book'],
   resources: [
     { name: 'catalog', supportsPagination: true },
-    { name: 'search', supportsPagination: true },
+    { name: 'search', supportsPagination: true, subjectFilters: [
+      { id: 'horror', name: 'Horror & ghosts' },
+      { id: 'fantasy', name: 'Fantasy' },
+      { id: 'science-fiction', name: 'Science fiction' },
+      { id: 'romance', name: 'Romance' },
+      { id: 'mystery', name: 'Mystery & crime' },
+      { id: 'historical-fiction', name: 'Historical fiction' },
+      { id: 'self-help', name: 'Self-help' },
+      { id: 'business', name: 'Business' },
+      { id: 'science', name: 'Science' },
+    ] },
     { name: 'meta' },
     { name: 'resolve', supportsPagination: true },
     { name: 'acquisition' },
@@ -32,6 +42,7 @@ export const manifest: ExtensionManifest = {
   catalogs: [
     { id: 'trending', name: 'Trending this week', resource: 'catalog' },
     { id: 'fantasy', name: 'Fantasy', resource: 'catalog' },
+    { id: 'horror', name: 'Horror & ghosts', resource: 'catalog' },
     { id: 'science-fiction', name: 'Science fiction', resource: 'catalog' },
     { id: 'romance', name: 'Romance', resource: 'catalog' },
     { id: 'mystery', name: 'Mystery & crime', resource: 'catalog' },
@@ -82,6 +93,7 @@ const QUALITY_FILTER = [
   'readinglog_count:[4 TO *]',
 ].join(' AND ');
 const SUBJECT_QUERIES: Record<string, string> = {
+  horror: 'subject_key:(horror OR horror_fiction OR ghost_stories)',
   fantasy: 'subject_key:(fantasy OR fantasy_fiction)',
   'science-fiction': 'subject_key:(science_fiction OR science_fiction_english)',
   romance: 'subject_key:(romance OR love_stories)',
@@ -382,7 +394,10 @@ export function createOpenLibraryExtension(options: SourceHttpOptions = {}): Boo
 
   const search = async (query: ExtensionQuery): Promise<ExtensionPage<BookMetadata>> => {
     const rawQuery = query.query?.trim() ?? '';
-    const result = await requestPage(query, openLibraryQuery(rawQuery));
+    const subjectQuery = query.subject ? SUBJECT_QUERIES[query.subject] : undefined;
+    if (query.subject && !subjectQuery) throw new Error('Unsupported Open Library genre.');
+    const textQuery = openLibraryQuery(rawQuery) || '*:*';
+    const result = await requestPage(query, subjectQuery ? `(${textQuery}) AND ${subjectQuery}` : textQuery);
     return {
       ...result,
       items: rankSearchResults(result.items, rawQuery),

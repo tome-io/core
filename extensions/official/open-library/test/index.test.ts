@@ -1,10 +1,43 @@
 import { describe, expect, test } from 'bun:test';
 
 import { createOpenLibraryExtension } from '../src';
+import { createAddonHandler, parseExtensionManifest } from '@tomeio/addon-sdk';
 
 function jsonResponse(value: unknown): Response {
   return Response.json(value);
 }
+
+describe('Open Library genre search', () => {
+  test('filters at the source and retains the genre on later pages', async () => {
+    const requested: URL[] = [];
+    const extension = createOpenLibraryExtension({ fetchFn: async (input) => {
+      requested.push(new URL(String(input)));
+      return jsonResponse({ docs: [], numFound: 0 });
+    } });
+    await extension.search!({ subject: 'horror', page: 1 });
+    await extension.search!({ query: 'ghost', subject: 'horror', page: 2 });
+    expect(requested[0].searchParams.get('q')).toContain('(*:*) AND subject_key:');
+    expect(requested[1].searchParams.get('q')).toContain('ghost_stories');
+    expect(requested[1].searchParams.get('page')).toBe('2');
+    expect(parseExtensionManifest(extension.manifest).resources.find((resource) => resource.name === 'search')?.subjectFilters)
+      .toContainEqual({ id: 'horror', name: 'Horror & ghosts' });
+  });
+  test('rejects unsupported genre IDs', async () => {
+    const extension = createOpenLibraryExtension();
+    await expect(extension.search!({ subject: 'not-a-genre' })).rejects.toThrow('Unsupported Open Library genre');
+  });
+  test('preserves genre through the HTTP add-on transport', async () => {
+    let requested: URL | undefined;
+    const extension = createOpenLibraryExtension({ fetchFn: async (input) => {
+      requested = new URL(String(input));
+      return jsonResponse({ docs: [], numFound: 0 });
+    } });
+    const response = await createAddonHandler(extension)(new Request('https://addon.example/search/book.json?subject=horror&page=2'));
+    expect(response.status).toBe(200);
+    expect(requested?.searchParams.get('q')).toContain('horror_fiction');
+    expect(requested?.searchParams.get('page')).toBe('2');
+  });
+});
 
 describe('Open Library acquisitions', () => {
   test('returns rights-verified files from an Open Library work scan', async () => {
