@@ -12,6 +12,8 @@ import {
   loadProgressSyncRecords,
   setSyncFingerprint,
   syncAliases,
+  pendingReadingIntervals,
+  acknowledgeReadingInterval,
 } from "./library-db";
 import type { LibraryBook } from "./library";
 import { sameReaderLocator } from "./reader-metrics";
@@ -312,6 +314,7 @@ async function refreshSession(
 async function authenticatedRequest<T>(
   path: string,
   init: RequestInit = {},
+  expectedAccountId?: string,
 ): Promise<T> {
   const stored = await loadSession();
   if (stored == null)
@@ -320,6 +323,9 @@ async function authenticatedRequest<T>(
     stored.accessTokenExpiresAt <= Math.floor(Date.now() / 1_000) + 30
       ? await refreshSession(stored)
       : stored;
+  if (expectedAccountId && session.account.id !== expectedAccountId) {
+    throw new Error("The sync account changed before uploading reading sessions.");
+  }
   try {
     return await jsonRequest<T>(path, {
       ...init,
@@ -332,6 +338,9 @@ async function authenticatedRequest<T>(
     if (!(error instanceof HostedSyncError) || error.status !== 401)
       throw error;
     const refreshed = await refreshSession(session);
+    if (expectedAccountId && refreshed.account.id !== expectedAccountId) {
+      throw new Error("The sync account changed before uploading reading sessions.");
+    }
     return jsonRequest<T>(path, {
       ...init,
       headers: {
@@ -1812,6 +1821,7 @@ export function synchronizeHostedProgress(
         notifyHostedSync,
         forceRemotePull,
       );
+      await uploadReadingSessions(account.id);
       result = {
         importedRecords: result.importedRecords + next.importedRecords,
         pushedRecords: result.pushedRecords + next.pushedRecords,
@@ -1839,7 +1849,9 @@ export async function synchronizeHostedBookChangesIfEnabled(
     const account = await getHostedSyncAccount();
     if (account == null)
       throw new Error("Sign in to Tomeio Sync before synchronizing.");
-    return performHostedBookChanges(account.id, changes, notify);
+    const result = await performHostedBookChanges(account.id, changes, notify);
+    await uploadReadingSessions(account.id);
+    return result;
   });
 }
 
@@ -1931,4 +1943,24 @@ export async function synchronizeHostedProgressIfEnabled(
   return (await getHostedSyncAccount()) == null
     ? null
     : synchronizeHostedProgress(options);
+}
+
+async function uploadReadingSessions(accountId: string): Promise<void> {
+  // Bound a sync pass; a large offline backlog continues on subsequent passes.
+  for (const interval of await pendingReadingIntervals(accountId)) {
+    if ((await getHostedSyncAccount())?.id !== accountId) return;
+    const { accountId: _account, bookKey: _book, ...payload } = interval;
+    const response = await authenticatedRequest<{ id: string }>("/v1/reading-sessions", {
+      method: "PUT", body: JSON.stringify(payload),
+    }, accountId);
+    if (response.id !== interval.id) throw new Error("Reading session acknowledgement did not match.");
+    await acknowledgeReadingInterval(accountId, interval.id);
+  }
+}
+
+export async function synchronizeReadingSessionsIfEnabled(): Promise<void> {
+  await serializeHostedSync(async () => {
+    const account = await getHostedSyncAccount();
+    if (account) await uploadReadingSessions(account.id);
+  });
 }

@@ -3,6 +3,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import { openDatabaseAsync, type SQLiteDatabase } from "expo-sqlite";
 
 import { bookIdentity } from "./book-metadata";
+import type { ReadingInterval } from "./reading-session-model";
 import {
   resolveBookCover,
   type BookCoverPreference,
@@ -357,6 +358,14 @@ async function initializeDatabase(): Promise<SQLiteDatabase> {
     PRAGMA busy_timeout = 5000;
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
+
+    CREATE TABLE IF NOT EXISTS reading_sessions (
+      id TEXT PRIMARY KEY NOT NULL,
+      account_id TEXT,
+      record_json TEXT NOT NULL,
+      uploaded_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS reading_sessions_pending ON reading_sessions(account_id, uploaded_at);
 
     CREATE TABLE IF NOT EXISTS catalog_books (
       book_key TEXT PRIMARY KEY NOT NULL,
@@ -2389,6 +2398,31 @@ export async function deleteLocalCatalogBook(uri: string): Promise<void> {
       );
     }),
   );
+}
+
+export async function saveReadingIntervals(intervals: ReadingInterval[]): Promise<void> {
+  await withDatabaseWrite(async (database) => {
+    for (const interval of intervals) {
+      await database.runAsync(
+        'INSERT INTO reading_sessions (id, account_id, record_json) VALUES (?, ?, ?) ON CONFLICT(id) DO NOTHING',
+        interval.id, interval.accountId, JSON.stringify(interval),
+      );
+    }
+  });
+}
+
+export async function pendingReadingIntervals(accountId: string): Promise<ReadingInterval[]> {
+  const database = await getLibraryDatabase();
+  const rows = await database.getAllAsync<{ record_json: string }>(
+    'SELECT record_json FROM reading_sessions WHERE account_id = ? AND uploaded_at IS NULL ORDER BY id LIMIT 100', accountId,
+  );
+  return rows.map((row) => JSON.parse(row.record_json) as ReadingInterval);
+}
+
+export async function acknowledgeReadingInterval(accountId: string, id: string): Promise<void> {
+  await withDatabaseWrite((database) => database.runAsync(
+    'UPDATE reading_sessions SET uploaded_at = ? WHERE account_id = ? AND id = ?', Date.now(), accountId, id,
+  ));
 }
 
 export async function getSyncFingerprint(
