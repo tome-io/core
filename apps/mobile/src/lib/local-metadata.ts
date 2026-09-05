@@ -1,3 +1,4 @@
+import { syncDiagnostic, traceSyncStage } from './sync-diagnostics';
 import { epubSeriesPosition } from './epub-series';
 import { enrichProviderMetadata, providerMetadataDue, type ProviderMetadataOptions } from './provider-metadata';
 import { normalizeIsbn } from '@tomeio/domain';
@@ -266,6 +267,13 @@ function applyMetadata(book: LibraryBook, metadata: EmbeddedMetadata): LibraryBo
   };
 }
 
+function localMetadataDue(book: LibraryBook, force = false): boolean {
+  const now = Date.now();
+  return force || !book.metadataUpdatedAt || book.metadataVersion !== metadataVersionFor(book) ||
+    book.metadataUpdatedAt < now - METADATA_REFRESH_MS ||
+    !!(book.metadataPending && book.metadataUpdatedAt < now - METADATA_FAILURE_RETRY_MS);
+}
+
 async function enrichLocalBook(
   book: LibraryBook,
   catalogFetchOptions?: FetchOpts,
@@ -273,6 +281,11 @@ async function enrichLocalBook(
 ): Promise<{ book: LibraryBook; sources: LocalMetadataSources; warning?: MetadataWarning }> {
   if (!book.local) return { book, sources: { embedded: {}, catalog: null } };
 
+  if (!localMetadataDue(book, providerOptions.forceCatalogRefresh)) {
+    const provider = await traceSyncStage('local.provider-only', () => enrichProviderMetadata(book, providerOptions), {}, 500);
+    return { ...provider, sources: { embedded: {}, catalog: null },
+      warning: provider.warning ? { filename: book.local.filename, message: provider.warning } : undefined };
+  }
   const localFile = book.local;
   let embedded: EmbeddedMetadata = {};
   let catalogMetadata: DiscoveryBook | null = null;
@@ -305,7 +318,7 @@ async function enrichLocalBook(
       await libraryWorkCheckpoint();
       const parsed =
         localFile.format === 'epub'
-          ? await readEpubMetadata(book, bytes)
+          ? await traceSyncStage('local.epub-parse', () => readEpubMetadata(book, bytes), { bytes: bytes.length })
           : await readPdfMetadata(bytes);
       embedded = { ...parsed, ...(embedded.cover ? { cover: embedded.cover } : {}) };
     } catch (err: any) {
@@ -446,20 +459,16 @@ export async function enrichLocalLibrary(
   options: ProviderMetadataOptions = {},
 ): Promise<MetadataWarning[]> {
   const warnings: MetadataWarning[] = [];
-  const retryFailuresBefore = Date.now() - METADATA_FAILURE_RETRY_MS;
-  const staleBefore = Date.now() - METADATA_REFRESH_MS;
-  const candidates = books.filter(
-    (book) =>
-      providerMetadataDue(book, options.providerLookupKey, options.forceCatalogRefresh) ||
-      !book.metadataUpdatedAt ||
-      book.metadataVersion !== metadataVersionFor(book) ||
-      book.metadataUpdatedAt < staleBefore ||
-      (book.metadataPending && book.metadataUpdatedAt < retryFailuresBefore)
-  );
+  const candidates = books.filter((book) => localMetadataDue(book, options.forceCatalogRefresh) ||
+    providerMetadataDue(book, options.providerLookupKey, options.forceCatalogRefresh));
+  syncDiagnostic('local.candidates', { total: books.length, selected: candidates.length,
+    metadata: candidates.filter((book) => localMetadataDue(book, options.forceCatalogRefresh)).length,
+    providerOnly: candidates.filter((book) => !localMetadataDue(book, options.forceCatalogRefresh)).length });
   let completed = 0;
   onProgress?.(completed, candidates.length);
   for (let offset = 0; offset < candidates.length; ) {
     await libraryWorkCheckpoint();
+    if (options.shouldContinue?.() === false) break;
     const nextCandidates = candidates.slice(offset, offset + ENRICH_BATCH_SIZE);
     const largeEpubIndex = nextCandidates.findIndex(
       (book) =>
@@ -481,7 +490,7 @@ export async function enrichLocalLibrary(
     for (let index = 0; index < results.length; index += 1) {
       const result = results[index];
       if (result.status === 'fulfilled') {
-        await onBook(result.value.book, result.value.sources);
+        await traceSyncStage('local.persist', async () => { await onBook(result.value.book, result.value.sources); }, {}, 250);
         if (result.value.warning) warnings.push(result.value.warning);
       } else {
         await onBook(

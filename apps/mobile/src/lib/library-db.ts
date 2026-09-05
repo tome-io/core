@@ -1659,6 +1659,8 @@ export interface HostedSyncLocalDocument {
   identity: string;
   aliases: string[];
   uri: string;
+  size: number;
+  modifiedAt: number;
   filename: string;
   format: string;
   identifiers: Record<string, string>;
@@ -1691,6 +1693,8 @@ export async function loadHostedSyncLocalDocuments(): Promise<
       identity,
       aliases: [identity, syncBookIdentity(book), ...syncAliases(book)],
       uri,
+      size: book.local?.size ?? 0,
+      modifiedAt: book.local?.modificationTime ?? 0,
       filename: book.local?.filename ?? uri.split("/").at(-1) ?? "",
       format: book.local?.format ?? book.format ?? "",
       identifiers: { ...book.extension?.book.identifiers, ...book.identifiers },

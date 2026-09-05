@@ -1,3 +1,4 @@
+import { syncDiagnostic, traceSyncStage } from '@/lib/sync-diagnostics';
 import { needsProviderMetadata, type ProviderMetadata } from '@/lib/provider-metadata';
 import { groupLibraryBooks, sameLibraryBook } from '@/lib/library-book-groups';
 import {
@@ -451,6 +452,8 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
     if (pendingScan.current?.key === key) return pendingScan.current.promise;
 
     const generation = ++scanGeneration.current;
+    const refreshStarted = performance.now();
+    syncDiagnostic('refresh.requested', { runId: generation, forceHostedSync });
     const directoryChanged = lastScanKey.current !== key;
     lastScanKey.current = key;
     setScanning(true);
@@ -471,13 +474,13 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
         missingReaderCatalogCleared.current = false;
       }
       const [cachedLocal, cachedMoonReader, cachedProgressBooks] =
-        await Promise.all([
+        await traceSyncStage('local.load-catalogs', () => Promise.all([
           loadLocalCatalog(localKey),
           readerSourceKey
             ? loadMoonReaderCatalog(readerKey)
             : Promise.resolve([]),
           loadProgressSyncCatalog(),
-        ]);
+        ]), { runId: generation });
       if (scanGeneration.current !== generation) return;
       if (directoryChanged) {
         setLocalBooks(cachedLocal);
@@ -493,10 +496,10 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
       };
       let localIndexSucceeded = false;
       try {
-        local = await indexLocalLibrary({
+        local = await traceSyncStage('local.index', () => indexLocalLibrary({
           directoryKey: localKey,
           directoryUri: settings.localLibraryLocation,
-        });
+        }), { runId: generation });
         localIndexSucceeded = true;
       } catch (err: any) {
         warnings.push(
@@ -505,9 +508,9 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
       }
       if (scanGeneration.current !== generation) return;
       if (localIndexSucceeded) {
-        await commit((current) =>
+        await traceSyncStage('local.reconcile', () => commit((current) =>
           reconcileLibraryStateWithLocalCatalog(current, local.books),
-        );
+        ), { runId: generation, books: local.books.length });
       }
       if (scanGeneration.current !== generation) return;
       setLocalBooks(local.books);
@@ -525,9 +528,9 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
             readerIntegrations.map(async (integration) => ({
               extensionId: integration.id,
               extensionName: integration.name,
-              result: await extensions.readerSync(integration.id, {
+              result: await traceSyncStage('reader-addon.sync', () => extensions.readerSync(integration.id, {
                 books: requestBooks,
-              }),
+              }), { runId: generation }),
             })),
           );
           moonReader = await indexReaderExtensionCatalog(
@@ -551,10 +554,10 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
 
       try {
         lastHostedSyncStartedAt.current = Date.now();
-        const hosted = await synchronizeHostedProgressIfEnabled({
+        const hosted = await traceSyncStage('hosted.sync', () => synchronizeHostedProgressIfEnabled({
           onProgress: reportHostedSyncProgress,
           forceRemotePull: forceHostedSync,
-        });
+        }), { runId: generation });
         if (hosted != null) {
           setLastSyncedAt(hosted.syncedAt);
           if (hosted.importedRecords > 0) {
@@ -593,7 +596,9 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
       if (scanGeneration.current !== generation) return;
       setScanning(false);
 
-      const enrichmentOperation = enrichmentQueue.current.then(async () => {
+      const enrichmentQueuedAt = performance.now();
+      const enrichmentOperation = traceSyncStage('refresh.enrichment', () => enrichmentQueue.current.then(async () => {
+        syncDiagnostic('enrichment.dequeued', { runId: generation, queueMs: Math.round(performance.now() - enrichmentQueuedAt) });
         if (scanGeneration.current !== generation) return;
         const enrichmentProgress = new Map<
           string,
@@ -649,6 +654,7 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
             onProgress: trackEnrichment("local"),
             coverLookup: extensionCoverLookup,
             providerLookup, providerLookupKey,
+            shouldContinue: () => scanGeneration.current === generation,
           }).catch((err: any) => ({
             books: localWithMoonReaderMetadata,
             warnings: [
@@ -661,6 +667,7 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
             coverLookup: extensionCoverLookup,
             coverLookupKey: coverProviderKey,
             providerLookup, providerLookupKey,
+            shouldContinue: () => scanGeneration.current === generation,
           }).catch(
             (err: any) => ({
               books: enrichmentMoonReaderBooks,
@@ -674,6 +681,7 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
             coverLookup: extensionCoverLookup,
             coverLookupKey: coverProviderKey,
             providerLookup, providerLookupKey,
+            shouldContinue: () => scanGeneration.current === generation,
           }).catch(
             (err: any) => ({
               books: enrichmentProgressBooks,
@@ -687,6 +695,7 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
             coverLookup: extensionCoverLookup,
             coverLookupKey: coverProviderKey,
             providerLookup, providerLookupKey,
+            shouldContinue: () => scanGeneration.current === generation,
           }).catch((err: any) => ({
               books: collectionOnlyBooks,
               warnings: [
@@ -720,7 +729,7 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
             ? warnings.join(" ")
             : "Local books, reading progress, and covers are current.",
         });
-      });
+      }), { runId: generation });
       enrichmentQueue.current = enrichmentOperation.catch(() => {});
       void enrichmentOperation.catch((err) => {
         if (scanGeneration.current !== generation) return;
@@ -745,6 +754,7 @@ export function LibraryProvider({ children, automaticSyncEnabled = true }: { chi
         }
       })
       .finally(() => {
+        syncDiagnostic('refresh.foreground-finished', { runId: generation, elapsedMs: Math.round(performance.now() - refreshStarted) });
         if (scanGeneration.current === generation) setScanning(false);
         if (pendingScan.current?.promise === promise)
           pendingScan.current = null;

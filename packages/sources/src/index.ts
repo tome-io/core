@@ -1,3 +1,4 @@
+declare const __DEV__: boolean;
 export interface SourceCache {
   read<T>(key: string): Promise<T | null>;
   write<T>(key: string, value: T, ttlMs: number): Promise<void>;
@@ -29,6 +30,7 @@ export class SourceRequestError extends Error {
   }
 }
 
+let nextRequestId = 0;
 const originQueues = new Map<string, { pending: Promise<void>; nextStart: number }>();
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -39,18 +41,38 @@ export async function fetchSource(url: string, fetchFn: typeof fetch = fetch, in
   const queue = originQueues.get(origin) ?? { pending: Promise.resolve(), nextStart: 0 };
   if (paced) originQueues.set(origin, queue);
   const attempt = async () => {
+    const requestId = ++nextRequestId;
+    const queuedAt = performance.now();
+    let slotStartedAt = queuedAt;
     if (paced) {
-      await sleep(Math.max(0, queue.nextStart - Date.now()));
-      queue.nextStart = Date.now() + 1_100;
+      // Reserve a start slot, not the entire response lifetime. Slow upstream
+      // responses must not serialize otherwise independent requests.
+      const slot = queue.pending.then(async () => {
+        slotStartedAt = performance.now();
+        await sleep(Math.max(0, queue.nextStart - Date.now()));
+        queue.nextStart = Date.now() + 1_100;
+      });
+      queue.pending = slot.catch(() => {});
+      await slot;
     }
-    return fetchFn(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+    const startedAt = performance.now();
+    let status: number | undefined;
+    try {
+      const response = await fetchFn(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+      status = response.status;
+      return response;
+    } finally {
+      if (typeof __DEV__ !== 'undefined' && __DEV__) console.info('[source-timing]', {
+        requestId, origin, status: status ?? 'network-error',
+        queueMs: Math.round(slotStartedAt - queuedAt), pacingMs: Math.round(startedAt - slotStartedAt),
+        networkMs: Math.round(performance.now() - startedAt),
+      });
+    }
   };
   for (let index = 0; ; index += 1) {
     let response: Response;
     try {
-      const operation = paced ? queue.pending.then(attempt) : attempt();
-      if (paced) queue.pending = operation.then(() => {}, () => {});
-      response = await operation;
+      response = await attempt();
     } catch (cause) {
       if (index < 1) { await sleep(750); continue; }
       throw new SourceRequestError(`Could not reach ${new URL(url).hostname}. Please retry.`, url, { cause });

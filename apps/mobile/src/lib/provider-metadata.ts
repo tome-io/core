@@ -12,6 +12,7 @@ export interface ProviderMetadataOptions {
   providerLookupKey?: string;
   coverLookup?: ExtensionCoverLookup;
   forceCatalogRefresh?: boolean;
+  shouldContinue?: () => boolean;
 }
 
 // Only audited resolving providers with structured series positions belong here.
