@@ -1,6 +1,13 @@
 import { identityGroups, publicationAliases } from '@tomeio/domain';
 import type { LibraryBook } from './library';
 
+export function sameLibraryBook(left: LibraryBook, right: LibraryBook): boolean {
+  const aliases = (book: LibraryBook) => [book.key, ...(book.linkedBookKeys ?? []),
+    ...publicationAliases(book.title, [book.author], { ...book.extension?.book.identifiers, ...book.identifiers })];
+  const leftAliases = new Set(aliases(left));
+  return aliases(right).some((alias) => leftAliases.has(alias));
+}
+
 export function groupLibraryBooks(books: LibraryBook[]): LibraryBook[] {
   return identityGroups(books.map((book) => ({
     identity: book.key,

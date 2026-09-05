@@ -27,7 +27,7 @@ test('creates a remote-only library record from shared document metadata', () =>
     removedAt: null,
   }), {
     identity: 'fingerprint:koreader-partial-md5-v1:0415cf9c2d689bf88caea70729528842',
-    aliases: ['publication:["project hail mary",["andy weir"]]', 'hosted-document:koreader-partial-md5-v1:0415cf9c2d689bf88caea70729528842'],
+    aliases: ['publication:["project hail mary",["andy weir"]]', 'hosted-document:koreader-partial-md5-v1:0415cf9c2d689bf88caea70729528842', 'fingerprint:koreader-partial-md5-v1:0415cf9c2d689bf88caea70729528842'],
     title: 'Project Hail Mary',
     author: 'Andy Weir',
     format: 'epub',

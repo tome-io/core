@@ -186,6 +186,14 @@ async function upsertBook(
   database: SQLiteDatabase,
   book: LibraryBook,
 ): Promise<void> {
+  const existingRow = await database.getFirstAsync<CatalogRow>('SELECT book_json FROM catalog_books WHERE book_key = ?', book.key);
+  if (existingRow) {
+    const existing = parseBook(existingRow.book_json);
+    book = { ...book,
+      identifiers: { ...existing.identifiers, ...book.identifiers },
+      linkedBookKeys: [...new Set([...(existing.linkedBookKeys ?? []), ...(book.linkedBookKeys ?? [])])],
+    };
+  }
   await database.runAsync(
     `INSERT INTO catalog_books (book_key, file_uri, book_json, updated_at)
      VALUES (?, ?, ?, ?)
@@ -1700,6 +1708,19 @@ export async function applyCollectionSyncRecords(
       }
     }
 
+    // Older remote-only catalog entries may only know their stored fingerprint
+    // identity, before ISBN and canonical aliases were available.
+    const booksByKey = new Map(books.map((row) => [row.book_key, row]));
+    for (const stored of await storedCollectionRecords(database, collection)) {
+      const row = stored.book_key ? booksByKey.get(stored.book_key) : undefined;
+      if (!row) continue;
+      const record = JSON.parse(stored.record_json) as CollectionSyncRecord;
+      for (const alias of [record.identity, ...record.aliases]) {
+        const matches = booksByAlias.get(alias) ?? [];
+        if (!matches.includes(row)) matches.push(row);
+        booksByAlias.set(alias, matches);
+      }
+    }
     let updated = 0;
     await database.withExclusiveTransactionAsync(async (transaction) => {
       for (const record of records) {

@@ -1053,7 +1053,7 @@ function collectionRecordFromHosted(
         ...(local?.aliases ?? []),
         semanticIdentity,
         ...publicationAliases(metadata.title, metadata.authors, metadata.identifiers),
-        ...(record.documentAliases ?? [record.document]).map((value) => `${HOSTED_DOCUMENT_ALIAS_PREFIX}${value}`),
+        ...(record.documentAliases ?? [record.document]).flatMap((value) => [`${HOSTED_DOCUMENT_ALIAS_PREFIX}${value}`, `fingerprint:koreader-partial-md5-v1:${value}`]),
       ]),
     ],
     title: metadata.title,
