@@ -16,7 +16,7 @@ describe('Open Library genre search', () => {
     } });
     await extension.search!({ subject: 'horror', page: 1 });
     await extension.search!({ query: 'ghost', subject: 'horror', page: 2 });
-    expect(requested[0].searchParams.get('q')).toContain('(*:*) AND subject_key:');
+    expect(requested[0].searchParams.get('q')).toBe('subject_key:(horror OR horror_fiction OR ghost_stories)');
     expect(requested[1].searchParams.get('q')).toContain('ghost_stories');
     expect(requested[1].searchParams.get('page')).toBe('2');
     expect(parseExtensionManifest(extension.manifest).resources.find((resource) => resource.name === 'search')?.subjectFilters)
