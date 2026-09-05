@@ -22,6 +22,8 @@ export interface ExtensionResource {
   name: ExtensionResourceName;
   id?: string;
   supportsPagination?: boolean;
+  /** Provider-specific subject IDs accepted by its search resource. */
+  subjectFilters?: { id: string; name: string }[];
 }
 
 export interface ExtensionCatalog {
@@ -207,6 +209,7 @@ export interface ExtensionQuery {
   limit?: number;
   language?: string;
   format?: string;
+  subject?: string;
 }
 
 export function supportsExtensionProviderRole(
@@ -600,8 +603,25 @@ export function parseExtensionManifest(input: unknown): ExtensionManifest {
         if (!resource || !RESOURCE_NAMES.has(resource.name as ExtensionResourceName)) {
           throw new InvalidExtensionManifestError(`Invalid resource at index ${index}.`);
         }
+        let subjectFilters: ExtensionResource['subjectFilters'];
+        if (resource.subjectFilters != null) {
+          if (resource.name !== 'search' || !Array.isArray(resource.subjectFilters) || resource.subjectFilters.length > 100) {
+            throw new InvalidExtensionManifestError('Subject filters must belong to a search resource.');
+          }
+          const ids = new Set<string>();
+          subjectFilters = resource.subjectFilters.map((value) => {
+            const filter = record(value);
+            if (!filter || typeof filter.id !== 'string' || !filter.id.trim() || filter.id.length > 128 ||
+              typeof filter.name !== 'string' || !filter.name.trim() || filter.name.length > 80 || ids.has(filter.id)) {
+              throw new InvalidExtensionManifestError('Invalid or duplicate subject filter.');
+            }
+            ids.add(filter.id);
+            return { id: filter.id, name: filter.name };
+          });
+        }
         return {
           name: resource.name as ExtensionResourceName,
+          ...(subjectFilters ? { subjectFilters } : {}),
           ...(typeof resource.id === 'string' ? { id: resource.id } : {}),
           ...(typeof resource.supportsPagination === 'boolean'
             ? { supportsPagination: resource.supportsPagination }
