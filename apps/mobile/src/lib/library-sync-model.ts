@@ -1,3 +1,4 @@
+import { identityGroups } from '@tomeio/domain';
 export type SyncedCollection = "library" | "reading-list";
 
 export interface CollectionSyncRecord {
@@ -29,7 +30,11 @@ export function mergeCollectionSyncRecords(
   const merged: CollectionSyncRecord[] = [];
   const indexes = new Map<string, number>();
 
-  for (const record of groups.flat()) {
+  const connected = identityGroups(groups.flat()).flatMap((group) => {
+    const aliases = [...new Set(group.flatMap((record) => [record.identity, ...record.aliases]))];
+    return group.map((record) => ({ ...record, aliases }));
+  });
+  for (const record of connected) {
     const matching = [record.identity, ...record.aliases]
       .flatMap((alias) => {
         const index = indexes.get(alias);

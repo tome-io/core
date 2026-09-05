@@ -1,3 +1,4 @@
+import { identityGroups } from '@tomeio/domain';
 export const PROGRESS_SYNC_KIND = 'reader-progress-sync';
 export const PROGRESS_SYNC_VERSION = 3;
 export type ProgressSyncVersion = 1 | 2 | typeof PROGRESS_SYNC_VERSION;
@@ -106,7 +107,11 @@ export function mergeProgressRecords(
   const merged: ProgressSyncRecord[] = [];
   const indexes = new Map<string, number>();
 
-  for (const record of groups.flat()) {
+  const connected = identityGroups(groups.flat()).flatMap((group) => {
+    const aliases = [...new Set(group.flatMap((record) => [record.identity, ...record.aliases]))];
+    return group.map((record) => ({ ...record, aliases }));
+  });
+  for (const record of connected) {
     const matchingIndexes = [record.identity, ...record.aliases]
       .map((identifier) => indexes.get(identifier))
       .filter((index): index is number => index != null);

@@ -197,6 +197,9 @@
     "packages/sync": {
       "name": "@tomeio/sync",
       "version": "0.1.0",
+      "dependencies": {
+        "@tomeio/domain": "workspace:*",
+      },
     },
   },
   "patchedDependencies": {

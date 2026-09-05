@@ -1,3 +1,5 @@
+import { syncBookIdentity } from './sync-book-identity';
+import { publicationAliases } from '@tomeio/domain';
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy";
 import { openDatabaseAsync, type SQLiteDatabase } from "expo-sqlite";
@@ -184,6 +186,14 @@ async function upsertBook(
   database: SQLiteDatabase,
   book: LibraryBook,
 ): Promise<void> {
+  const existingRow = await database.getFirstAsync<CatalogRow>('SELECT book_json FROM catalog_books WHERE book_key = ?', book.key);
+  if (existingRow) {
+    const existing = parseBook(existingRow.book_json);
+    book = { ...book,
+      identifiers: { ...existing.identifiers, ...book.identifiers },
+      linkedBookKeys: [...new Set([...(existing.linkedBookKeys ?? []), ...(book.linkedBookKeys ?? [])])],
+    };
+  }
   await database.runAsync(
     `INSERT INTO catalog_books (book_key, file_uri, book_json, updated_at)
      VALUES (?, ?, ?, ?)
@@ -692,7 +702,7 @@ export async function loadMoonReaderCatalog(
   }
   const books = rows.map(withProgress).filter((book) => {
     const activityAt = Math.max(book.lastReadAt ?? 0, book.addedAt ?? 0);
-    return ![bookIdentity(book.title, book.author), ...syncAliases(book)].some(
+    return ![syncBookIdentity(book), ...syncAliases(book)].some(
       (alias) => (removedAtByAlias.get(alias) ?? 0) >= activityAt,
     );
   });
@@ -1483,7 +1493,9 @@ export function syncAliases(book: LibraryBook): string[] {
   const format = book.format || book.local?.format || "";
   return [
     `key:${book.key}`,
-    `identity:${bookIdentity(book.title, book.author, format)}`,
+    ...(book.linkedBookKeys ?? []).map((key) => `key:${key}`),
+    ...publicationAliases(book.title, [book.author], { ...book.extension?.book.identifiers, ...book.identifiers }),
+    ...(/^(?:unknown(?: author)?)?$/i.test(book.author.trim()) ? [] : [`identity:${bookIdentity(book.title, book.author, format)}`]),
     book.discovery?.id ? `discovery:${book.discovery.id}` : "",
     book.local?.filename ? `filename:${book.local.filename.toLowerCase()}` : "",
     book.moonReader?.sourceFilename
@@ -1517,7 +1529,7 @@ function collectionRecordFromBook(
   sortAt: number,
   updatedAt: number,
 ): CollectionSyncRecord {
-  const semanticIdentity = bookIdentity(book.title, book.author);
+  const semanticIdentity = syncBookIdentity(book);
   return {
     identity,
     aliases: [
@@ -1623,7 +1635,7 @@ export async function loadCollectionSyncRecords(
     records.push(
       collectionRecordFromBook(
         book,
-        bookIdentity(book.title, book.author),
+        syncBookIdentity(book),
         row.source_sort_at || book.addedAt,
         Math.max(row.catalog_updated_at, row.source_sort_at, book.addedAt),
       ),
@@ -1633,6 +1645,8 @@ export async function loadCollectionSyncRecords(
 }
 
 export interface HostedSyncLocalDocument {
+  title: string;
+  author: string;
   bookKey: string;
   identity: string;
   aliases: string[];
@@ -1661,15 +1675,17 @@ export async function loadHostedSyncLocalDocuments(): Promise<
     const book = parseBook(row.book_json);
     const uri = book.local?.uri ?? book.fileUri;
     if (!uri) return [];
-    const identity = row.sync_identity ?? bookIdentity(book.title, book.author);
+    const identity = row.sync_identity ?? syncBookIdentity(book);
     return [{
       bookKey: row.book_key,
+      title: book.title,
+      author: book.author,
       identity,
-      aliases: [identity, bookIdentity(book.title, book.author), ...syncAliases(book)],
+      aliases: [identity, syncBookIdentity(book), ...syncAliases(book)],
       uri,
       filename: book.local?.filename ?? uri.split("/").at(-1) ?? "",
       format: book.local?.format ?? book.format ?? "",
-      identifiers: book.extension?.book.identifiers ?? {},
+      identifiers: { ...book.extension?.book.identifiers, ...book.identifiers },
     }];
   });
 }
@@ -1685,13 +1701,26 @@ export async function applyCollectionSyncRecords(
     const booksByAlias = new Map<string, { book_key: string; book_json: string }[]>();
     for (const row of books) {
       const book = parseBook(row.book_json);
-      for (const alias of [bookIdentity(book.title, book.author), ...syncAliases(book)]) {
+      for (const alias of [syncBookIdentity(book), ...syncAliases(book)]) {
         const matches = booksByAlias.get(alias) ?? [];
         matches.push(row);
         booksByAlias.set(alias, matches);
       }
     }
 
+    // Older remote-only catalog entries may only know their stored fingerprint
+    // identity, before ISBN and canonical aliases were available.
+    const booksByKey = new Map(books.map((row) => [row.book_key, row]));
+    for (const stored of await storedCollectionRecords(database, collection)) {
+      const row = stored.book_key ? booksByKey.get(stored.book_key) : undefined;
+      if (!row) continue;
+      const record = JSON.parse(stored.record_json) as CollectionSyncRecord;
+      for (const alias of [record.identity, ...record.aliases]) {
+        const matches = booksByAlias.get(alias) ?? [];
+        if (!matches.includes(row)) matches.push(row);
+        booksByAlias.set(alias, matches);
+      }
+    }
     let updated = 0;
     await database.withExclusiveTransactionAsync(async (transaction) => {
       for (const record of records) {
@@ -1750,6 +1779,15 @@ export async function applyCollectionSyncRecords(
           }
         }
 
+        // Keep file rows independent, but persist their shared library reference.
+        // This also repairs previously downloaded duplicate cards on the next pull.
+        const linkedBookKeys = [...matches.keys()];
+        for (const row of matches.values()) {
+          const book = parseBook(row.book_json);
+          const linked = { ...book, linkedBookKeys: [...new Set([...(book.linkedBookKeys ?? []), ...linkedBookKeys])] };
+          await upsertBook(transaction, linked);
+          row.book_json = JSON.stringify(linked);
+        }
         const storedBook = stored?.book_key
           ? matches.get(stored.book_key)
           : undefined;
@@ -1842,13 +1880,13 @@ export async function setCollectionSyncMembership(
           row.book_key === book.key ||
           [record.identity, ...record.aliases].some((alias) =>
             [
-              bookIdentity(book.title, book.author),
+              syncBookIdentity(book),
               ...syncAliases(book),
             ].includes(alias),
           ),
       );
     const now = Date.now();
-    const identity = existing?.record.identity ?? bookIdentity(book.title, book.author);
+    const identity = existing?.record.identity ?? syncBookIdentity(book);
     const base = collectionRecordFromBook(
       book,
       identity,
@@ -1944,7 +1982,7 @@ function rowProgressRecord(
     row.last_read_at ?? 0,
     row.override_updated_at ?? 0,
   );
-  const semanticIdentity = bookIdentity(book.title, book.author);
+  const semanticIdentity = syncBookIdentity(book);
   return {
     identity: row.sync_identity ?? semanticIdentity,
     aliases: [
@@ -2025,7 +2063,7 @@ export async function loadProgressSyncLocalDocuments(): Promise<
         uri,
         filename: book.local?.filename ?? uri.split("/").at(-1) ?? "",
         format: book.local?.format ?? book.format ?? "",
-        identifiers: book.extension?.book.identifiers ?? {},
+        identifiers: { ...book.extension?.book.identifiers, ...book.identifiers },
       },
     ];
   });
@@ -2064,7 +2102,7 @@ export async function applyProgressSyncRecords(
       const book = parseBook(row.book_json);
       const aliases = [
         row.sync_identity ?? "",
-        bookIdentity(book.title, book.author),
+        syncBookIdentity(book),
         ...syncAliases(book),
       ].filter(Boolean);
       for (const alias of aliases) {
@@ -2249,7 +2287,7 @@ export async function removeProgressSyncBook(
 ): Promise<void> {
   await withDatabaseWrite(async (database) => {
     const rows = await progressSnapshotRows(database);
-    const identity = bookIdentity(book.title, book.author);
+    const identity = syncBookIdentity(book);
     const aliases = new Set([
       identity,
       ...syncAliases(book),

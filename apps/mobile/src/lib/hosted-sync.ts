@@ -1,3 +1,5 @@
+import { syncBookIdentity } from './sync-book-identity';
+import { publicationAliases } from '@tomeio/domain';
 import * as Device from "expo-device";
 import * as Crypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
@@ -143,6 +145,7 @@ interface SyncIdentityRecord {
 
 interface HostedCollectionRecord {
   document: string;
+  documentAliases?: string[];
   fingerprintKind:
     | "koreader-partial-md5-v1"
     | "koreader-filename-md5-v1"
@@ -889,7 +892,7 @@ async function localDocumentIdentifiers(): Promise<
     const identifiers = {
       bookKey: local.bookKey,
       primary: partial,
-      aliases: [logical],
+      aliases: [logical, ...await Promise.all(publicationAliases(local.title, [local.author], local.identifiers).map(md5))],
       fingerprintKind: "koreader-partial-md5-v1" as const,
       filename: local.filename || null,
       identifiers: local.identifiers,
@@ -897,7 +900,7 @@ async function localDocumentIdentifiers(): Promise<
     for (const alias of [...local.aliases, local.identity]) {
       const existing = identifiersByAlias.get(alias);
       if (existing != null && existing.primary !== partial) {
-        identifiersByAlias.set(alias, null);
+        identifiersByAlias.set(alias, { ...existing, aliases: [...new Set([...existing.aliases, partial, ...identifiers.aliases])] });
         continue;
       }
       if (existing === undefined) identifiersByAlias.set(alias, identifiers);
@@ -931,19 +934,19 @@ async function localDocumentIdentifiersForChanges(
       (await koreaderPartialMd5(
         await materializeNativeFolderFile(uri!, filename),
       ));
-    const identity = bookIdentity(book.title, book.author);
+    const identity = syncBookIdentity(book);
     const identifiers: HostedDocumentIds = {
       bookKey: book.key,
       primary: partial,
-      aliases: [await md5(identity)],
+      aliases: [await md5(identity), ...await Promise.all(publicationAliases(book.title, [book.author], { ...book.extension?.book.identifiers, ...book.identifiers }).map(md5))],
       fingerprintKind: "koreader-partial-md5-v1",
       filename: filename || null,
-      identifiers: book.extension?.book.identifiers ?? {},
+      identifiers: { ...book.extension?.book.identifiers, ...book.identifiers },
     };
     for (const alias of [identity, ...syncAliases(book)]) {
       const existing = identifiersByAlias.get(alias);
       if (existing != null && existing.primary !== partial) {
-        identifiersByAlias.set(alias, null);
+        identifiersByAlias.set(alias, { ...existing, aliases: [...new Set([...existing.aliases, partial, ...identifiers.aliases])] });
         continue;
       }
       if (existing === undefined) identifiersByAlias.set(alias, identifiers);
@@ -973,13 +976,8 @@ async function documentIds<T extends SyncIdentityRecord>(
     const matches = [...record.aliases, record.identity]
       .map((alias) => identifiersByAlias.get(alias))
       .filter((value): value is HostedDocumentIds => value != null);
-    const localIds = new Set(matches.map((match) => match.primary));
-    if (localIds.size > 1) {
-      throw new Error(
-        `Multiple local files match the sync record ${record.identity}.`,
-      );
-    }
-    const local = matches[0];
+    const firstLocal = matches.sort((a, b) => (a.bookKey ?? '').localeCompare(b.bookKey ?? ''))[0];
+    const local = firstLocal ? { ...firstLocal, aliases: [...new Set(matches.flatMap((match) => [match.primary, ...match.aliases]))].filter((alias) => alias !== firstLocal.primary) } : undefined;
     const storedFingerprints = [...record.aliases, record.identity].flatMap(
       (alias) => {
         const match = alias.match(
@@ -989,11 +987,6 @@ async function documentIds<T extends SyncIdentityRecord>(
       },
     );
     const uniqueStoredFingerprints = [...new Set(storedFingerprints)];
-    if (uniqueStoredFingerprints.length > 1) {
-      throw new Error(
-        `Multiple hosted documents match the sync record ${record.identity}.`,
-      );
-    }
     const storedFingerprint = uniqueStoredFingerprints[0];
     const remoteFingerprint = record.identity.match(
       /^fingerprint:koreader-partial-md5-v1:([a-f0-9]{32})$/u,
@@ -1023,6 +1016,7 @@ async function documentIds<T extends SyncIdentityRecord>(
             filename: null,
             identifiers: {},
           });
+    identifiers.aliases = [...new Set([...identifiers.aliases, ...uniqueStoredFingerprints])].filter((alias) => alias !== identifiers.primary);
     byRecord.set(record, identifiers);
     for (const identifier of [
       identifiers.primary,
@@ -1058,6 +1052,8 @@ function collectionRecordFromHosted(
       ...new Set([
         ...(local?.aliases ?? []),
         semanticIdentity,
+        ...publicationAliases(metadata.title, metadata.authors, metadata.identifiers),
+        ...(record.documentAliases ?? [record.document]).flatMap((value) => [`${HOSTED_DOCUMENT_ALIAS_PREFIX}${value}`, `fingerprint:koreader-partial-md5-v1:${value}`]),
       ]),
     ],
     title: metadata.title,
@@ -1127,7 +1123,7 @@ async function performHostedCollectionSync(
   const remoteRecords = remote.records.map((record) =>
     collectionRecordFromHosted(
       record,
-      identifiersBeforePull.recordsByDocument.get(record.document),
+      ([record.document, ...(record.documentAliases ?? [])].map((alias) => identifiersBeforePull.recordsByDocument.get(alias)).find(Boolean)),
     ),
   );
   const mergedBeforeImport = mergeCollectionSyncRecords(
@@ -1158,13 +1154,14 @@ async function performHostedCollectionSync(
     const mergedRecord = matchingSyncRecord(remoteRecord, merged);
     const document = mergedRecord && identifiers.byRecord.get(mergedRecord);
     const knownHostedRecord =
-      identifiersBeforePull.recordsByDocument.get(hosted.document);
+      ([hosted.document, ...(hosted.documentAliases ?? [])].map((alias) => identifiersBeforePull.recordsByDocument.get(alias)).find(Boolean));
     if (
       mergedRecord &&
       document &&
       (document.primary === hosted.document ||
         (knownHostedRecord != null &&
           matchingSyncRecord(knownHostedRecord, [mergedRecord]) != null)) &&
+      [document.primary, ...document.aliases].every((alias) => hosted.documentAliases?.includes(alias)) &&
       sameCollectionSyncContent(mergedRecord, remoteRecord)
     ) {
       checkpoint.acknowledgements[document.primary] = fingerprints.get(
@@ -1205,7 +1202,7 @@ async function performHostedCollectionSync(
     if (document == null) {
       throw new Error(`No hosted sync identifier for ${record.identity}.`);
     }
-    await authenticatedRequest(
+    await authenticatedDocumentRequest(
       `/v1/collections/${collection}/${encodeURIComponent(document.primary)}`,
       {
         method: "PUT",
@@ -1339,7 +1336,7 @@ async function performHostedProgressSync(
   const remoteComparableByDocument = new Map<string, ProgressSyncRecord>();
   const remoteRecords = remote.records.flatMap((record) => {
     const embedded = progressRecordFromHosted(record);
-    const local = identifiersBeforePull.recordsByDocument.get(record.document);
+    const local = ([record.document, ...(record.documentAliases ?? [])].map((alias) => identifiersBeforePull.recordsByDocument.get(alias)).find(Boolean));
     const linked = local ?? embedded;
     if (linked == null) {
       unmatched.push(record);
@@ -1397,7 +1394,7 @@ async function performHostedProgressSync(
     const mergedRecord = matchingSyncRecord(remoteRecord, merged);
     const document = mergedRecord && identifiers.byRecord.get(mergedRecord);
     const knownHostedRecord =
-      identifiersBeforePull.recordsByDocument.get(hosted.document);
+      ([hosted.document, ...(hosted.documentAliases ?? [])].map((alias) => identifiersBeforePull.recordsByDocument.get(alias)).find(Boolean));
     if (
       !mergedRecord ||
       !document?.bookKey ||
@@ -1409,7 +1406,7 @@ async function performHostedProgressSync(
     ) {
       continue;
     }
-    const remoteLocator = readerLocatorFromHosted(hosted, mergedRecord.format);
+    const remoteLocator = readerLocatorFromHosted(hosted, mergedRecord.format, document.primary);
     if (!remoteLocator) continue;
     const storedLocator = storedLocators.get(document.bookKey);
     const storedProgress =
@@ -1449,13 +1446,14 @@ async function performHostedProgressSync(
     const mergedRecord = matchingSyncRecord(remoteRecord, merged);
     const document = mergedRecord && identifiers.byRecord.get(mergedRecord);
     const knownHostedRecord =
-      identifiersBeforePull.recordsByDocument.get(hosted.document);
+      ([hosted.document, ...(hosted.documentAliases ?? [])].map((alias) => identifiersBeforePull.recordsByDocument.get(alias)).find(Boolean));
     if (
       mergedRecord &&
       document &&
       (document.primary === hosted.document ||
         (knownHostedRecord != null &&
           matchingSyncRecord(knownHostedRecord, [mergedRecord]) != null)) &&
+      [document.primary, ...document.aliases].every((alias) => hosted.documentAliases?.includes(alias)) &&
       sameProgressSyncContent(mergedRecord, remoteRecord) &&
       sameHostedLocator(locators.get(mergedRecord), hosted)
     ) {
@@ -1489,7 +1487,7 @@ async function performHostedProgressSync(
     const document = identifiers.byRecord.get(record);
     if (document == null)
       throw new Error(`No hosted sync identifier for ${record.identity}.`);
-    await authenticatedRequest(
+    await authenticatedDocumentRequest(
       `/v1/progress/${encodeURIComponent(document.primary)}`,
       {
         method: "PUT",
@@ -1545,7 +1543,7 @@ function recordMatchesBook(
   record: SyncIdentityRecord,
   book: LibraryBook,
 ): boolean {
-  const identity = bookIdentity(book.title, book.author);
+  const identity = syncBookIdentity(book);
   return (
     matchingSyncRecord(
       {
@@ -1612,7 +1610,7 @@ async function pushHostedCollectionChanges(
   await uploadConcurrently(
     recordsToPush,
     async ({ document, payload, fingerprint }) => {
-      await authenticatedRequest(
+      await authenticatedDocumentRequest(
         `/v1/collections/${collection}/${encodeURIComponent(document.primary)}`,
         { method: "PUT", body: JSON.stringify(payload) },
       );
@@ -1701,7 +1699,7 @@ async function pushHostedProgressChanges(
   await uploadConcurrently(
     recordsToPush,
     async ({ document, payload, fingerprint }) => {
-      await authenticatedRequest(
+      await authenticatedDocumentRequest(
         `/v1/progress/${encodeURIComponent(document.primary)}`,
         { method: "PUT", body: JSON.stringify(payload) },
       );
@@ -1863,7 +1861,7 @@ export async function synchronizeHostedBookProgressIfEnabled(
     const identifiersByAlias = await localDocumentIdentifiersForChanges([
       { book, streams: ["progress"] },
     ]);
-    const identity = bookIdentity(book.title, book.author);
+    const identity = syncBookIdentity(book);
     const identifiers = [identity, ...syncAliases(book)]
       .map((alias) => identifiersByAlias.get(alias))
       .find((candidate): candidate is HostedDocumentIds => candidate != null);
@@ -1909,7 +1907,7 @@ export async function synchronizeHostedBookProgressIfEnabled(
       );
     }
 
-    const locator = readerLocatorFromHosted(record, book.format);
+    const locator = readerLocatorFromHosted(record, book.format, identifiers.primary);
     if (locator) {
       const stored = await loadReaderState(book.key);
       const storedProgress =
@@ -1963,4 +1961,18 @@ export async function synchronizeReadingSessionsIfEnabled(): Promise<void> {
     const account = await getHostedSyncAccount();
     if (account) await uploadReadingSessions(account.id);
   });
+}
+
+
+async function authenticatedDocumentRequest(path: string, init: RequestInit): Promise<void> {
+  const payload = JSON.parse(init.body as string);
+  const aliases: string[] = payload.aliases ?? [];
+  const readerAliases: unknown[] = payload.readerAliases ?? [];
+  // Register arbitrarily many file variants through bounded API requests.
+  for (let offset = 0; offset < Math.max(1, aliases.length, readerAliases.length); offset += 20) {
+    await authenticatedRequest(path, { ...init, body: JSON.stringify({ ...payload,
+      aliases: aliases.slice(offset, offset + 20),
+      ...(payload.readerAliases ? { readerAliases: readerAliases.slice(offset, offset + 20) } : {}),
+    }) });
+  }
 }
