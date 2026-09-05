@@ -18,4 +18,4 @@ only after downloading a page.
 
 Run the Open Library search tests and validate genre-only search, combined text
 search, pagination, and changing providers. Tests and runtime validation were not
-run. Workspace typechecks pass except the documented stale onboarding route types.
+run. Scoped typechecks passed. This branch is independent of onboarding.
