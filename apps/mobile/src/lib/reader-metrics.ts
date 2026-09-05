@@ -98,6 +98,7 @@ export function shouldUploadReaderProgress({
   currentLocator?: SyncLocator | null;
 }): boolean {
   if (!remoteKnown || remoteProgress == null) return true;
+  if (remoteLocator && currentLocator) return !sameReaderLocator(remoteLocator, currentLocator);
   return (
     Math.abs(remoteProgress - currentProgress) >= 0.01 ||
     !sameReaderLocator(remoteLocator, currentLocator)

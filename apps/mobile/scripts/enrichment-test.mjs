@@ -9,6 +9,7 @@ import {
 import {
   isUsableBookCoverSize,
   resolveBookCover,
+  resolveGeneratedCoverUri,
 } from '../src/lib/book-cover.ts';
 import { findBookMetadata, getWorkDetails } from '../src/lib/openlibrary.ts';
 
@@ -153,4 +154,12 @@ test('known Moon+ catalog identities resolve to working remote covers', { skip: 
     assert.ok(response.ok, `${title} cover returned ${response.status}`);
     await response.body?.cancel();
   }
+});
+
+test('recovers generated covers after the app Documents path changes', async () => {
+  const old = 'file:///old/Documents/library-covers/book.jpg';
+  const current = 'file:///new/Documents/library-covers/book.jpg';
+  assert.equal(await resolveGeneratedCoverUri(old, 'file:///new/Documents/', async (uri) => uri === current), current);
+  assert.equal(await resolveGeneratedCoverUri(old, 'file:///new/Documents/', async () => false), undefined);
+  assert.equal(await resolveGeneratedCoverUri(old, null, async (uri) => uri === old), old);
 });

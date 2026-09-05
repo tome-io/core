@@ -79,3 +79,19 @@ export function newerCoverPreference(a: CoverPreferenceRecord, b: CoverPreferenc
   const winner = bt > at || (bt === at && (b.coverPreference ?? '') > (a.coverPreference ?? '')) ? b : a;
   return winner.coverPreference ? { coverPreference: winner.coverPreference, coverPreferenceUpdatedAt: winner.coverPreferenceUpdatedAt ?? 0 } : {};
 }
+
+export async function resolveGeneratedCoverUri(
+  uri: string,
+  documentDirectory: string | null,
+  exists: (uri: string) => Promise<boolean>,
+): Promise<string | undefined> {
+  if (await exists(uri)) return uri;
+  // iOS may move the Documents directory when replacing an app binary.
+  const marker = '/library-covers/';
+  const offset = uri.lastIndexOf(marker);
+  if (!documentDirectory || offset < 0) return undefined;
+  const relative = uri.slice(offset + 1);
+  const relocated = `${documentDirectory.replace(/\/$/, '')}/${relative}`;
+  if (relocated !== uri && await exists(relocated)) return relocated;
+  return undefined;
+}

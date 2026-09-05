@@ -57,3 +57,13 @@ Provider-only refreshes no longer reparse EPUBs or rerun catalog enrichment for 
 File hashes are reused within the app session only when URI, size and a positive modification timestamp match; unknown timestamps force rehashing. Cache entries are bounded to 256 and rejected hashes are evicted. Reading-session uploads use the existing concurrency limit of four instead of serial round trips (up to 100 pending intervals per pass).
 
 Network writes still scale with changed records because the current service API accepts individual records. First-time metadata enrichment also scales with books missing metadata. This change does not claim constant-time full-library synchronization; the timings distinguish those expected costs from redundant work. No new device trace was captured during implementation: use the next development refresh's timing output to measure the actual bottleneck on-device.
+
+## Unchanged writes and reader-only sync
+
+The supplied September 5 trace spent 21.082 seconds in hosted sync versus 334 ms indexing and 87 ms enrichment. Reader close sent one targeted progress record; the subsequent full-library pass began after the development-client reload, not reader disposal.
+
+Upload fingerprints now compare canonical content: object/alias order, top-level event timestamps, local sync identity bookkeeping and an implicit automatic-cover default cannot independently dirty a record. Actual progress, locators, reading statistics, explicit cover choices, removals and publication aliases remain significant. Checkpoint payload version 2 performs one full remote metadata read when upgrading old acknowledgements, allowing equivalent remote records to be acknowledged rather than blindly reuploaded. This does not change targeted reader entry/exit into a full-library sync.
+
+When chapter locators exist on both sides, reader exit compares those rather than mixing furthest-read or rendition-dependent percentages with the current position. Without a known remote state, an unchanged first observed location also skips the write. New session intervals still upload independently. A valid saved locator is used at startup instead of first navigating to the catalog's furthest percentage and then back to the remote locator.
+
+Library snapshot discovery preserves existing logical membership timestamps and tombstones across file variants. Catalog writes, cover updates, and local file bookkeeping are not membership events. Only explicit membership changes update ordering. Generated cover paths are checked in the current Documents directory after an iOS container move before invalidating embedded metadata.

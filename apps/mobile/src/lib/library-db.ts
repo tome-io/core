@@ -9,13 +9,14 @@ import { bookIdentity } from "./book-metadata";
 import type { ReadingInterval } from "./reading-session-model";
 import {
   resolveBookCover,
+  resolveGeneratedCoverUri,
   type BookCoverPreference,
   type BookCoverSources,
 } from "./book-cover";
 import type { LibraryBook, LibraryState } from "./library";
 import {
   isCollectionRecordRemoved,
-  mergeCollectionSyncRecords,
+  mergeCollectionSnapshots,
   type CollectionSyncRecord,
   type SyncedCollection,
 } from "./library-sync-model";
@@ -108,22 +109,23 @@ async function withValidGeneratedCover(
     !!uri?.startsWith("file:") && uri.includes("/library-covers/");
   const invalidCatalogCover = (uri?: string) =>
     !!uri?.includes("covers.openlibrary.org/b/isbn/");
+  const resolveGenerated = (uri: string) => resolveGeneratedCoverUri(
+    uri,
+    FileSystem.documentDirectory,
+    async (candidate) => (await FileSystem.getInfoAsync(candidate)).exists,
+  );
   let localCover = book.coverSources?.local;
   let missingGeneratedCover = false;
   if (generatedCover(localCover)) {
-    const info = await FileSystem.getInfoAsync(localCover!);
-    if (!info.exists) {
-      localCover = undefined;
-      missingGeneratedCover = true;
-    }
+    localCover = await resolveGenerated(localCover!);
+    missingGeneratedCover = !localCover;
   }
   let currentCover = book.cover;
-  if (generatedCover(currentCover) && currentCover !== localCover) {
-    const info = await FileSystem.getInfoAsync(currentCover);
-    if (!info.exists) {
-      currentCover = "";
-      missingGeneratedCover = true;
-    }
+  if (generatedCover(currentCover)) {
+    currentCover = currentCover === book.coverSources?.local
+      ? localCover ?? ''
+      : await resolveGenerated(currentCover) ?? '';
+    missingGeneratedCover ||= !currentCover;
   }
   const catalogCover = invalidCatalogCover(book.coverSources?.catalog)
     ? undefined
@@ -132,6 +134,7 @@ async function withValidGeneratedCover(
   if (
     !missingGeneratedCover &&
     !invalidLegacyCatalogCover &&
+    currentCover === book.cover &&
     localCover === book.coverSources?.local &&
     catalogCover === book.coverSources?.catalog
   ) {
@@ -155,9 +158,9 @@ async function withValidGeneratedCover(
     coverSources,
     cover: resolved.cover,
     fallbackCover: resolved.fallbackCover,
-    metadataPending: true,
-    metadataUpdatedAt: undefined,
-    metadataVersion: undefined,
+    ...(missingGeneratedCover || invalidLegacyCatalogCover || catalogCover !== book.coverSources?.catalog
+      ? { metadataPending: true, metadataUpdatedAt: undefined, metadataVersion: undefined }
+      : {}),
   };
 }
 
@@ -1579,13 +1582,8 @@ async function collectionSnapshotRows(
             synced.identity AS sync_identity,
             synced.record_json AS sync_record_json,
             books.updated_at AS catalog_updated_at,
-            MAX(
-              COALESCE((SELECT MAX(sort_at) FROM collections WHERE book_key = books.book_key), 0),
-              COALESCE((SELECT MAX(updated_at) FROM local_files WHERE book_key = books.book_key), 0),
-              COALESCE((SELECT MAX(sort_at) FROM moonreader_items WHERE book_key = books.book_key), 0),
-              COALESCE((SELECT MAX(sort_at) FROM progress_sync_items WHERE book_key = books.book_key), 0),
-              books.updated_at
-            ) AS source_sort_at
+            COALESCE((SELECT MAX(sort_at) FROM collections
+                      WHERE book_key = books.book_key AND collection = 'downloaded'), 0) AS source_sort_at
      FROM catalog_books AS books
      LEFT JOIN collection_sync_records AS synced
        ON synced.collection = ? AND synced.book_key = books.book_key
@@ -1637,19 +1635,20 @@ export async function loadCollectionSyncRecords(
       aliases: [...new Set([...record.aliases, ...syncAliases(book)])],
     };
   });
+  const snapshots: CollectionSyncRecord[] = [];
   for (const row of rows) {
     if (mappedBookKeys.has(row.book_key)) continue;
     const book = parseBook(row.book_json);
-    records.push(
+    snapshots.push(
       collectionRecordFromBook(
         book,
         syncBookIdentity(book),
         row.source_sort_at || book.addedAt,
-        Math.max(row.catalog_updated_at, row.source_sort_at, book.addedAt),
+        row.source_sort_at || book.addedAt,
       ),
     );
   }
-  return mergeCollectionSyncRecords(records);
+  return mergeCollectionSnapshots(records, snapshots);
 }
 
 export interface HostedSyncLocalDocument {

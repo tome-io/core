@@ -1,3 +1,4 @@
+import { syncPayloadContent } from '../src/lib/hosted-sync-record';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
@@ -161,4 +162,24 @@ test('never imports exact locators from another EPUB or legacy untagged data', (
     source: 'tomeio' as const, updatedAt: 1, serverUpdatedAt: 1, removedAt: null };
   assert.equal(readerLocatorFromHosted(remote, 'epub', 'file-b'), undefined);
   assert.equal(readerLocatorFromHosted({ ...remote, locatorDocument: undefined }, 'epub', 'file-a'), undefined);
+});
+
+test('upload content ignores bookkeeping timestamps, key order and alias ordering', () => {
+  const a = { updatedAt: 10, percentage: 0.4, aliases: ['b', 'a'], documentMetadata: { title: 'Book', format: 'epub' } };
+  const b = { documentMetadata: { format: 'epub', title: 'Book' }, aliases: ['a', 'b', 'a'], percentage: 0.4, updatedAt: 20, coverPreference: 'auto', coverPreferenceUpdatedAt: 0 };
+  assert.equal(syncPayloadContent(a), syncPayloadContent(b));
+  assert.notEqual(syncPayloadContent(a), syncPayloadContent({ ...a, percentage: 0.5 }));
+  assert.notEqual(syncPayloadContent(a), syncPayloadContent({ ...a, removedAt: 30 }));
+  assert.notEqual(syncPayloadContent(a), syncPayloadContent({ ...a, coverPreference: 'auto', coverPreferenceUpdatedAt: 30 }));
+});
+
+test('learning local sync aliases does not dirty unchanged reading content', () => {
+  const payload = { percentage: 0.4, metadata: { syncRecord: { identity: 'old', aliases: ['old'], readingTimeMs: 100 } } };
+  assert.equal(syncPayloadContent(payload), syncPayloadContent({ ...payload,
+    metadata: { syncRecord: { identity: 'new', aliases: ['new', 'old'], readingTimeMs: 100 } } }));
+});
+
+test('absent and zero reading counters are the same upload content', () => {
+  assert.equal(syncPayloadContent({ metadata: { syncRecord: {} } }),
+    syncPayloadContent({ metadata: { syncRecord: { readingTimeMs: 0, wordsRead: 0, lastReadAt: 0 } } }));
 });

@@ -1,3 +1,4 @@
+import { syncPayloadContent } from './hosted-sync-record';
 import { createDocumentHashCache } from './document-hash-cache';
 import { traceSyncStage, syncDiagnostic } from './sync-diagnostics';
 import { newerCoverPreference, type CoverPreferenceRecord } from './book-cover';
@@ -163,6 +164,7 @@ interface HostedCollectionRecord extends CoverPreferenceRecord {
 }
 
 interface SyncCheckpoint {
+  payloadVersion?: number;
   cursor: number | null;
   acknowledgements: Record<string, string>;
   localRevision?: string;
@@ -679,6 +681,7 @@ async function loadCheckpoint(
     throw new Error(`The stored ${stream} remote version is invalid.`);
   }
   return {
+    payloadVersion: value.payloadVersion === 2 ? 2 : undefined,
     cursor: value.cursor ?? null,
     acknowledgements: value.acknowledgements,
     ...(value.localRevision ? { localRevision: value.localRevision } : {}),
@@ -745,9 +748,9 @@ async function payloadFingerprint(
   return md5(
     JSON.stringify({
       document: document.primary,
-      aliases: [...document.aliases].sort(),
+      aliases: [...new Set(document.aliases)].sort(),
       fingerprintKind: document.fingerprintKind,
-      payload,
+      payload: syncPayloadContent(payload),
     }),
   );
 }
@@ -1103,6 +1106,7 @@ async function performHostedCollectionSync(
   const localBeforePull = await loadCollectionSyncRecords(collection);
   const localRevision = await syncRecordsRevision(localBeforePull);
   if (
+    checkpoint.payloadVersion === 2 &&
     checkpoint.localRevision === localRevision &&
     checkpoint.remoteVersion === remoteVersion
   ) {
@@ -1120,17 +1124,18 @@ async function performHostedCollectionSync(
   const remote = await authenticatedRequest<{
     records: HostedCollectionRecord[];
     serverTime: number;
-  }>(incrementalPath(`/v1/collections/${collection}`, checkpoint.cursor));
+  }>(incrementalPath(`/v1/collections/${collection}`, checkpoint.payloadVersion === 2 ? checkpoint.cursor : null));
   const windowRevision = await remoteWindowRevision(remote.records);
   const remoteIsUnchanged =
     remote.records.length === 0 ||
     checkpoint.remoteWindowRevision === windowRevision;
-  if (checkpoint.localRevision === localRevision && remoteIsUnchanged) {
+  if (checkpoint.payloadVersion === 2 && checkpoint.localRevision === localRevision && remoteIsUnchanged) {
     console.info("[hosted-sync] collection unchanged", {
       collection,
       remote: remote.records.length,
       local: localBeforePull.length,
     });
+    checkpoint.payloadVersion = 2;
     checkpoint.cursor = Math.max(0, remote.serverTime - 1);
     checkpoint.remoteVersion = remoteVersion;
     if (remote.records.length) checkpoint.remoteWindowRevision = windowRevision;
@@ -1247,6 +1252,7 @@ async function performHostedCollectionSync(
   });
   // Keep a one-millisecond overlap so a concurrent write that shares the
   // response timestamp cannot fall between incremental windows.
+  checkpoint.payloadVersion = 2;
   checkpoint.cursor = Math.max(0, remote.serverTime - 1);
   checkpoint.remoteVersion = remoteVersion;
   checkpoint.localRevision = await syncRecordsRevision(
@@ -1280,6 +1286,7 @@ async function performHostedProgressSync(
     (localIdentifiersPromise ??= traceSyncStage('hosted.local-identifiers', localDocumentIdentifiers));
   if (
     !forceRemotePull &&
+    checkpoint.payloadVersion === 2 &&
     checkpoint.localRevision === localRevision &&
     checkpoint.remoteVersion === status.versions.progress
   ) {
@@ -1311,13 +1318,14 @@ async function performHostedProgressSync(
   const remote = await authenticatedRequest<{
     records: HostedProgressRecord[];
     serverTime: number;
-  }>(incrementalPath("/v1/progress", forceRemotePull ? null : checkpoint.cursor));
+  }>(incrementalPath("/v1/progress", forceRemotePull || checkpoint.payloadVersion !== 2 ? null : checkpoint.cursor));
   const windowRevision = await remoteWindowRevision(remote.records);
   const remoteIsUnchanged =
     remote.records.length === 0 ||
     checkpoint.remoteWindowRevision === windowRevision;
   if (
     !forceRemotePull &&
+    checkpoint.payloadVersion === 2 &&
     checkpoint.localRevision === localRevision &&
     remoteIsUnchanged
   ) {
@@ -1325,6 +1333,7 @@ async function performHostedProgressSync(
       remote: remote.records.length,
       local: localBeforePull.length,
     });
+    checkpoint.payloadVersion = 2;
     checkpoint.cursor = Math.max(0, remote.serverTime - 1);
     checkpoint.remoteVersion = status.versions.progress;
     if (remote.records.length) checkpoint.remoteWindowRevision = windowRevision;
@@ -1500,6 +1509,7 @@ async function performHostedProgressSync(
     remote: remote.records.length,
     local: merged.length,
     pushing: recordsToPush.length,
+    unacknowledged: recordsToPush.filter((record) => !checkpoint.acknowledgements[identifiers.byRecord.get(record)!.primary]).length,
   });
   notify({
     phase: "uploading-progress",
@@ -1533,6 +1543,7 @@ async function performHostedProgressSync(
       total: recordsToPush.length,
     });
   });
+  checkpoint.payloadVersion = 2;
   checkpoint.cursor = Math.max(0, remote.serverTime - 1);
   checkpoint.remoteVersion = status.versions.progress;
   checkpoint.localRevision = await syncRecordsRevision(

@@ -72,3 +72,23 @@ export function mergeCollectionSyncRecords(
 
   return merged.sort((left, right) => left.identity.localeCompare(right.identity));
 }
+
+// File discovery is not a new membership event. Only explicit membership
+// changes may replace an existing logical book's ordering or tombstone.
+export function mergeCollectionSnapshots(
+  stored: CollectionSyncRecord[],
+  snapshots: CollectionSyncRecord[],
+): CollectionSyncRecord[] {
+  const known = new Set(stored);
+  return identityGroups([...stored, ...snapshots]).flatMap((group) => {
+    const existing = group.filter((record) => known.has(record));
+    if (!existing.length) return mergeCollectionSyncRecords(group);
+    const [membership] = mergeCollectionSyncRecords(existing);
+    if (!membership) return [];
+    return [{
+      ...membership,
+      ...group.reduce<CoverPreferenceRecord>((preference, record) => newerCoverPreference(preference, record), membership),
+      aliases: [...new Set(group.flatMap((record) => [record.identity, ...record.aliases]))].sort(),
+    }];
+  }).sort((left, right) => left.identity.localeCompare(right.identity));
+}

@@ -66,7 +66,7 @@
     "start:android": "expo start --dev-client --android",
     "reset-project": "node ./scripts/reset-project.js",
     "prebuild:android": "expo prebuild --platform android --no-install",
-    "prebuild:ios": "expo prebuild --platform ios --no-install",
+    "prebuild:ios": "node scripts/verify-readium-patch.mjs && expo prebuild --platform ios --no-install",
     "android": "bun run prebuild:android && expo run:android",
     "android:release": "bun run prebuild:android && expo run:android --variant release",
     "build:android:beta": "./scripts/build-eas-android.sh beta",

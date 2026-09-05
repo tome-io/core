@@ -40,6 +40,7 @@ import type { LibraryBook } from '@/lib/library';
 import {
   locatorAtProgress,
   restoredReaderLocator,
+  sameReaderLocator,
   sampleReadingSpeed,
   type ReadingSpeedSample,
   shouldApplyRemoteProgress,
@@ -232,6 +233,7 @@ export default function ReadScreen() {
   }, [book]);
 
   const observedLocatorRef = useRef<Locator | null>(null);
+  const initialObservedLocatorRef = useRef<ReaderLocator | null>(null);
   const locationHandlerRef = useRef<((locator: Locator) => void) | null>(null);
   const expectLocatorRestore = useCallback(
     (locator: ReaderLocator, source: string) => {
@@ -295,12 +297,13 @@ export default function ReadScreen() {
     setError(null);
     setFile(null);
     observedLocatorRef.current = null;
+    initialObservedLocatorRef.current = null;
     void (async () => {
       const stored = await loadReaderState(currentBook.key);
       if (!active) return;
       const storedProgress = readerProgress(stored.book.locator) ?? 0;
       const syncedProgress = currentBook.isRead ? 100 : (currentBook.progress ?? 0);
-      const useSyncedProgress = syncedProgress > storedProgress + 0.01;
+      const useSyncedProgress = !stored.book.locator && syncedProgress > storedProgress + 0.01;
       if (__DEV__) {
         console.info('[reader-locator] initialization resolved', {
           readerInstanceId,
@@ -423,6 +426,8 @@ export default function ReadScreen() {
       const nextProgress = readerProgress(locatorRef.current);
       const shouldUpload =
         nextProgress != null &&
+        (remoteProgressKnownRef.current || (initialObservedLocatorRef.current != null &&
+          !sameReaderLocator(initialObservedLocatorRef.current, locatorRef.current))) &&
         shouldUploadReaderProgress({
           remoteKnown: remoteProgressKnownRef.current,
           remoteProgress: remoteProgressRef.current,
@@ -529,6 +534,7 @@ export default function ReadScreen() {
       }
       setReaderPositionReady(true);
       locatorRef.current = asReaderLocator(locator);
+      initialObservedLocatorRef.current ??= locatorRef.current;
       const nextPosition = locator.locations?.position ?? null;
       speedSampleRef.current = sampleReadingSpeed(
         speedSampleRef.current,

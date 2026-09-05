@@ -39,7 +39,7 @@ export function sameCollectionSyncContent(
     left.author === right.author &&
     left.format === right.format &&
     left.sourceUrl === right.sourceUrl &&
-    left.coverPreference === right.coverPreference &&
+    (left.coverPreference ?? 'auto') === (right.coverPreference ?? 'auto') &&
     (left.coverPreferenceUpdatedAt ?? 0) === (right.coverPreferenceUpdatedAt ?? 0) &&
     left.addedAt === right.addedAt &&
     left.sortAt === right.sortAt &&
@@ -57,9 +57,9 @@ export function sameProgressSyncContent(
     left.title === right.title &&
     left.author === right.author &&
     left.format === right.format &&
-    sameOptionalNumber(left.readingTimeMs, right.readingTimeMs) &&
-    sameOptionalNumber(left.wordsRead, right.wordsRead) &&
-    sameOptionalNumber(left.lastReadAt, right.lastReadAt) &&
+    (left.readingTimeMs ?? 0) === (right.readingTimeMs ?? 0) &&
+    (left.wordsRead ?? 0) === (right.wordsRead ?? 0) &&
+    (left.lastReadAt ?? 0) === (right.lastReadAt ?? 0) &&
     sameOptionalNumber(left.removedAt, right.removedAt)
   );
 }
@@ -165,4 +165,32 @@ export function hostedAccountMetadata(record: ProgressSyncRecord): Record<string
       ...(record.lastReadAt == null ? {} : { lastReadAt: record.lastReadAt }),
     },
   };
+}
+
+// Canonicalize transport content. Event timestamps still travel on the wire,
+// but observing a remote timestamp does not make an unchanged payload dirty.
+export function syncPayloadContent(payload: Record<string, unknown>): string {
+  const { updatedAt: _updatedAt, ...content } = payload;
+  if (content.coverPreference === 'auto' && !content.coverPreferenceUpdatedAt) {
+    delete content.coverPreference;
+    delete content.coverPreferenceUpdatedAt;
+  }
+  if (content.metadata && typeof content.metadata === 'object') {
+    const metadata = content.metadata as Record<string, unknown>;
+    if (metadata.syncRecord && typeof metadata.syncRecord === 'object') {
+      const { identity: _identity, aliases: _aliases, ...stats } = metadata.syncRecord as Record<string, unknown>;
+      for (const key of ['readingTimeMs', 'wordsRead', 'lastReadAt']) {
+        if (stats[key] === 0) delete stats[key];
+      }
+      content.metadata = { ...metadata, syncRecord: stats };
+    }
+  }
+  if (Array.isArray(content.aliases)) content.aliases = [...new Set(content.aliases)].sort();
+  if (Array.isArray(content.readerAliases)) content.readerAliases = [...content.readerAliases].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  const canonical = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, canonical(item)]));
+    return value;
+  };
+  return JSON.stringify(canonical(content));
 }
