@@ -1,7 +1,11 @@
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { supportsExtensionProviderRole } from '@tomeio/extension-protocol';
-import { useCallback, useState } from 'react';
-import { ActivityIndicator, Platform, ScrollView, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, Animated, Platform, ScrollView, StyleSheet, Text, useAnimatedValue, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { OnboardingBrand, StepArtwork, WelcomeArtwork, useOnboardingMotion } from '@/components/onboarding-artwork';
+import { onboardingPreview } from '@/lib/onboarding-preview';
 import { AppDialog, colors, PillButton, SelectField } from '@/components/app-ui';
 import { HostedSyncDialog } from '@/components/hosted-sync-dialog';
 import { useExtensions } from '@/context/extensions-context';
@@ -12,15 +16,15 @@ import { beginFolderPicker, endFolderPicker } from '@/lib/folder-picker-lock';
 import { getHostedSyncAccount, type HostedSyncAccount } from '@/lib/hosted-sync';
 
 const STEPS = [
-  { title: 'Make room for a good book', detail: 'A few choices will make Tomeio yours. Read your own books, find something new, and pick up where you left off.' },
-  { title: 'Choose where books come from', detail: 'Providers help you browse, search, and find downloads. You can use different providers for each job and change them later.' },
-  { title: 'Give your books a home', detail: 'Choose the folder Tomeio scans for EPUBs and PDFs and uses for downloads. Your book files stay in your storage.' },
-  { title: 'Pick up on another device', detail: 'A free Tomeio Sync account keeps your library, reading progress, and reading sessions together. Your book files are not uploaded.' },
+  { title: 'A little more time for stories.', detail: 'Your books. Your pace. Your place to read.' },
+  { title: 'Find your next favourite.', detail: 'Choose where you browse and find books.' },
+  { title: 'Your books, at home.', detail: 'Keep them here, or connect a folder of your own.' },
+  { title: 'Same story. Any device.', detail: 'Keep your library and reading progress together.' },
 ];
 const ROLES = [
-  { id: 'discovery', title: 'Discover', detail: 'Browse recommendations and categories on your home screen.' },
-  { id: 'search', title: 'Search', detail: 'Look up a title or author when you know what you want.' },
-  { id: 'acquisition', title: 'Downloads', detail: 'Find available ways to obtain a book. Availability depends on the provider.' },
+  { id: 'discovery', title: 'Browse' },
+  { id: 'search', title: 'Search' },
+  { id: 'acquisition', title: 'Download' },
 ] as const;
 type Role = typeof ROLES[number]['id'];
 
@@ -34,7 +38,18 @@ export default function OnboardingScreen() {
   const [picker, setPicker] = useState<Role | null>(null);
   const [showAccount, setShowAccount] = useState(false);
   const [account, setAccount] = useState<HostedSyncAccount | null>(null);
-  const step = settings.onboardingStep;
+  const [previewStep, setPreviewStep] = useState(0);
+  const step = onboardingPreview ? previewStep : settings.onboardingStep;
+  const insets = useSafeAreaInsets();
+  const motion = useOnboardingMotion();
+  const entrance = useAnimatedValue(1);
+  useEffect(() => {
+    entrance.setValue(motion ? 0 : 1);
+    if (!motion) return;
+    const transition = Animated.timing(entrance, { toValue: 1, duration: 320, useNativeDriver: true });
+    transition.start();
+    return () => transition.stop();
+  }, [entrance, motion, step]);
   const manifests = [...extensions.bundled, ...extensions.thirdParty.filter((item) => item.enabled).map((item) => item.manifest)];
   const selected = { discovery: extensions.discoveryExtensionId, search: extensions.searchExtensionId, acquisition: extensions.acquisitionExtensionId };
   const reportError = (cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause));
@@ -52,8 +67,12 @@ export default function OnboardingScreen() {
     try { await action(); } catch (cause) { reportError(cause); } finally { setBusy(false); }
   };
   const finish = () => perform(async () => {
-    await update({ onboardingCompleted: true, onboardingStep: 0 });
+    if (!onboardingPreview) await update({ onboardingCompleted: true, onboardingStep: 0 });
     router.replace('/home');
+  });
+  const goToStep = (next: number) => perform(async () => {
+    if (onboardingPreview) setPreviewStep(next);
+    else await update({ onboardingStep: next });
   });
   const selectProvider = (role: Role, id: string) => perform(async () => {
     if (role === 'discovery') await extensions.setDiscoveryExtension(id);
@@ -74,56 +93,95 @@ export default function OnboardingScreen() {
     } finally { endFolderPicker(); }
   });
 
-  if (!ready || !extensions.ready) return <ActivityIndicator accessibilityLabel="Loading setup" />;
-  return <View className="flex-1" style={{ backgroundColor: colors.background }}>
+  if (!ready || !extensions.ready) return <View style={styles.loading}><ActivityIndicator accessibilityLabel="Loading onboarding" /></View>;
+  const advance = () => {
+    if (step < 3) void goToStep(step + 1);
+    else if (!account && Platform.OS !== 'web') setShowAccount(true);
+    else void finish();
+  };
+  return <View style={styles.screen}>
     <Stack.Screen options={{ headerShown: false, gestureEnabled: false }} />
-    <ScrollView contentContainerStyle={{ padding: 24, flexGrow: 1, width: '100%', maxWidth: 600, alignSelf: 'center' }}>
-      <Text className="mb-6 text-sm font-semibold" style={{ color: colors.accent }}>TOMEIO · {step + 1} OF {STEPS.length}</Text>
-      <View className="mb-8 flex-row gap-2" accessibilityLabel={`Setup step ${step + 1} of ${STEPS.length}`}>
-        {STEPS.map((_, index) => <View key={index} className="h-1 flex-1 rounded-full" style={{ backgroundColor: index <= step ? colors.accent : colors.border }} />)}
+    {step === 0 ? <>
+      <WelcomeArtwork />
+      <ScrollView bounces={false} contentContainerStyle={{ flexGrow: 1, paddingTop: insets.top + 24, paddingHorizontal: 28, paddingBottom: 24 }}>
+        <View style={{ flex: 1, minHeight: 240, justifyContent: 'center' }}><OnboardingBrand /></View>
+        <View style={{ alignItems: 'center', gap: 12, paddingTop: 32 }}>
+          <Text style={[styles.title, { maxWidth: 330, fontSize: 36 }]}>{STEPS[0].title}</Text>
+          <Text style={styles.subtitle}>{STEPS[0].detail}</Text>
+        </View>
+      </ScrollView>
+    </> : <>
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <Text style={styles.wordmark}>Tomeio</Text>
+        <View style={{ flexDirection: 'row', gap: 6 }} accessible accessibilityLabel={`Step ${step} of 3`}>
+          {[1, 2, 3].map((index) => <View key={index} style={{ width: index === step ? 22 : 6, height: 6, borderRadius: 3, backgroundColor: index <= step ? colors.accent : colors.border }} />)}
+        </View>
+        <PillButton label={step === 3 && !account ? 'Not now' : 'Skip'} compact disabled={busy} onPress={() => void finish()} />
       </View>
-      <Text className="text-3xl font-semibold" style={{ color: colors.text }}>{STEPS[step].title}</Text>
-      <Text className="mb-8 mt-4 text-base leading-6" style={{ color: colors.textMuted }}>{STEPS[step].detail}</Text>
-      {step === 0 ? <View className="gap-5">
-        <Text className="text-base leading-6" style={{ color: colors.text }}>Start with your own books or explore a catalog. No account is needed to read.</Text>
-        <Text className="text-sm leading-5" style={{ color: colors.textMuted }}>Setup is optional. You can return to this guide from Settings whenever you like.</Text>
-      </View> : null}
-      {step === 1 ? <View className="gap-6">
-        {ROLES.map((role) => {
-          const options = manifests.filter((manifest) => supportsExtensionProviderRole(manifest, role.id));
-          const provider = options.find((manifest) => manifest.id === selected[role.id]);
-          return <View key={role.id} className="gap-2">
-            <Text className="text-base font-semibold" style={{ color: colors.text }}>{role.title}</Text>
-            <Text className="text-sm leading-5" style={{ color: colors.textMuted }}>{role.detail}</Text>
-            <SelectField label={provider?.name ?? 'Choose a provider'} icon="book-open"
-              options={options.map((manifest) => ({ label: manifest.name, value: manifest.id }))}
-              selectedValue={selected[role.id] ?? ''} onSelect={(id) => { if (!busy) void selectProvider(role.id, id); }}
-              onPress={() => setPicker(role.id)} />
-            {provider ? <Text className="text-xs leading-5" style={{ color: colors.textMuted }}>{provider.description}</Text> : null}
-          </View>;
-        })}
-        <PillButton label="Explore and add extensions" icon="plus" onPress={() => router.push('/onboarding/extensions')} />
-        <Text className="text-xs leading-5" style={{ color: colors.textMuted }}>Add-ons can supply more providers and connect other readers. Install and configure only the ones you want.</Text>
-      </View> : null}
-      {step === 2 ? <View className="gap-4">
-        <Text className="text-base font-medium" style={{ color: colors.text }}>{settings.localLibraryLocation ? folderLocationLabel(settings.localLibraryLocation) : 'Tomeio app storage'}</Text>
-        <Text className="text-sm leading-5" style={{ color: colors.textMuted }}>App storage works immediately. A folder in Files or on your device lets you manage the same books outside Tomeio. Cloud folders may need a connection to download files.</Text>
-        <PillButton label="Choose book folder" icon="folder" onPress={() => void chooseFolder()} disabled={busy || Platform.OS === 'web'} />
-        <Text className="text-xs leading-5" style={{ color: colors.textMuted }}>Optional device mirroring and additional reader integrations are available in Settings after setup.</Text>
-      </View> : null}
-      {step === 3 ? <View className="gap-4">
-        {account ? <Text className="text-base" style={{ color: colors.text }}>Signed in as {account.email}</Text>
-          : <PillButton label="Sign in or create an account" icon="log-in" onPress={() => setShowAccount(true)} disabled={Platform.OS === 'web'} />}
-        <Text className="text-sm leading-5" style={{ color: colors.textMuted }}>Prefer to stay on this device? Continue without an account. Your reading sessions stay local; creating an account later does not silently upload your earlier history.</Text>
-      </View> : null}
-      {error || extensions.error ? <Text accessibilityRole="alert" className="mt-5 text-sm" style={{ color: colors.danger }}>{error ?? extensions.error}</Text> : null}
-      <View className="mt-10 gap-3">
-        <PillButton label={busy ? 'Saving…' : step === 3 ? (account ? 'Start reading' : 'Continue without an account') : 'Continue'}
-          variant="accent" fullWidth disabled={busy} onPress={() => void (step === 3 ? finish() : perform(() => update({ onboardingStep: step + 1 })))} />
-        {step > 0 ? <PillButton label="Back" fullWidth disabled={busy} onPress={() => void perform(() => update({ onboardingStep: step - 1 }))} /> : null}
-        {step < 3 ? <PillButton label="Skip setup" fullWidth disabled={busy} onPress={() => void finish()} /> : null}
+      <ScrollView key={step} bounces={false} contentContainerStyle={styles.body}>
+        <Animated.View style={{ opacity: entrance, transform: [{ translateY: entrance.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
+          <StepArtwork step={step} />
+          <Text accessibilityRole="header" style={styles.title}>{STEPS[step].title}</Text>
+          <Text style={[styles.subtitle, { marginTop: 10, marginBottom: 28 }]}>{STEPS[step].detail}</Text>
+          {step === 1 ? <View style={{ gap: 14 }}>
+            <View style={styles.card}>
+              {ROLES.map((role) => {
+                const options = manifests.filter((manifest) => supportsExtensionProviderRole(manifest, role.id));
+                const provider = options.find((manifest) => manifest.id === selected[role.id]);
+                return <View key={role.id} style={styles.providerRow}>
+                  <Text style={{ color: colors.textMuted, fontSize: 14, flex: 1 }}>{role.title}</Text>
+                  <View style={{ flex: 2 }} accessibilityLabel={`${role.title} provider`}>
+                    <SelectField label={provider?.name ?? 'Choose provider'} dense
+                      options={options.map((manifest) => ({ label: manifest.name, value: manifest.id }))}
+                      selectedValue={selected[role.id] ?? ''} onSelect={(id) => { if (!busy) void selectProvider(role.id, id); }}
+                      onPress={() => { if (!busy) setPicker(role.id); }} />
+                  </View>
+                </View>;
+              })}
+            </View>
+            <PillButton label="Explore extensions" icon="plus" fullWidth onPress={() => router.push('/onboarding/extensions')} />
+            <Text style={styles.caption}>More sources, more possibilities. Add them anytime.</Text>
+          </View> : null}
+          {step === 2 ? <View style={{ gap: 16 }}>
+            <View style={[styles.card, { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 20 }]}>
+              <Feather name="folder" size={24} color={colors.accent} />
+              <View style={{ flex: 1, gap: 4 }}>
+                <Text style={styles.label}>{settings.localLibraryLocation && isExternalFolderLocation(settings.localLibraryLocation)
+                  ? folderLocationLabel(settings.localLibraryLocation) : 'Tomeio storage'}</Text>
+                <Text style={{ color: colors.textMuted, fontSize: 13 }}>{isExternalFolderLocation(settings.localLibraryLocation) ? 'Connected · EPUBs & PDFs' : 'Ready to use · No setup needed'}</Text>
+              </View>
+              <Feather name="check-circle" size={20} color={colors.success} />
+            </View>
+            <PillButton label={isExternalFolderLocation(settings.localLibraryLocation) ? 'Change folder' : 'Choose my own folder'} icon="folder" fullWidth onPress={() => void chooseFolder()} disabled={busy || Platform.OS === 'web'} />
+            <Text style={styles.caption}>Your files stay in your storage.</Text>
+          </View> : null}
+          {step === 3 ? <View style={{ gap: 20 }}>
+            <View style={[styles.card, { padding: 20, gap: 18 }]}>
+              {account ? <View style={{ alignItems: 'center', gap: 10 }}>
+                <Feather name="check-circle" size={26} color={colors.success} />
+                <Text style={styles.label}>You’re connected</Text>
+                <Text selectable style={styles.caption}>{account.email}</Text>
+              </View> : <>
+                <View style={styles.benefit}><Feather name="bookmark" size={20} color={colors.accent} /><Text style={styles.label}>Pick up where you left off</Text></View>
+                <View style={styles.benefit}><Feather name="book-open" size={20} color={colors.accent} /><Text style={styles.label}>One library across your devices</Text></View>
+              </>}
+            </View>
+            <Text style={styles.caption}>{account ? 'All set for your next chapter.' : 'No account needed to read. Join whenever you’re ready.'}</Text>
+          </View> : null}
+        </Animated.View>
+      </ScrollView>
+    </>}
+    <View style={[styles.dock, { paddingBottom: Math.max(insets.bottom, 16), backgroundColor: step === 0 ? colors.background : colors.surface }]}>
+      <View style={{ width: '100%', maxWidth: 480, alignSelf: 'center', gap: 12 }}>
+        {error || extensions.error ? <Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 13 }}>{error ?? extensions.error}</Text> : null}
+        <View style={{ flexDirection: 'row', gap: 12 }}>
+          {step > 0 ? <View style={{ flex: 1 }}><PillButton label="Back" fullWidth disabled={busy} onPress={() => void goToStep(step - 1)} /></View> : null}
+          <View style={{ flex: step === 0 ? 1 : 2 }}><PillButton label={busy ? 'Saving…' : step === 0 ? 'Get started' : step === 3 ? (account || Platform.OS === 'web' ? 'Start reading' : 'Sign in') : 'Continue'}
+            variant="accent" fullWidth disabled={busy} onPress={advance} /></View>
+        </View>
+        {step === 0 ? <Text style={styles.caption}>Make yourself at home.</Text> : null}
       </View>
-    </ScrollView>
+    </View>
     {Platform.OS !== 'ios' ? <AppDialog visible={picker != null} title="Choose a provider" onClose={() => setPicker(null)}>
       <ScrollView contentContainerStyle={{ gap: 12 }}>
         {manifests.filter((manifest) => picker && supportsExtensionProviderRole(manifest, picker)).map((manifest) =>
@@ -139,3 +197,19 @@ export default function OnboardingScreen() {
     }} /> : null}
   </View>;
 }
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: colors.background },
+  loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24, paddingBottom: 8, width: '100%', maxWidth: 528, alignSelf: 'center' },
+  wordmark: { fontSize: 18, fontWeight: '700', letterSpacing: -0.5, color: colors.text },
+  body: { flexGrow: 1, justifyContent: 'center', padding: 24, paddingTop: 8, width: '100%', maxWidth: 528, alignSelf: 'center' },
+  title: { color: colors.text, fontSize: 30, lineHeight: 36, fontWeight: '600', letterSpacing: -1, textAlign: 'center' },
+  subtitle: { color: colors.textMuted, fontSize: 15, lineHeight: 22, textAlign: 'center' },
+  caption: { color: colors.textMuted, fontSize: 12, lineHeight: 18, textAlign: 'center' },
+  label: { color: colors.text, fontSize: 15, fontWeight: '500', flexShrink: 1 },
+  card: { backgroundColor: colors.surface, borderRadius: 24, borderWidth: 1, borderColor: colors.border, padding: 12, gap: 10 },
+  providerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 4 },
+  benefit: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  dock: { paddingTop: 20, paddingHorizontal: 24, borderTopLeftRadius: 28, borderTopRightRadius: 28 },
+});

@@ -30,7 +30,8 @@
     "desktop:package": "bun run --cwd \"$PWD/apps/desktop\" package",
     "test": "bun --workspaces --if-present test",
     "typecheck": "bun --workspaces --if-present typecheck",
-    "lint": "bun --workspaces --if-present lint"
+    "lint": "bun --workspaces --if-present lint",
+    "ios:onboarding": "bun run --cwd \"$PWD/apps/mobile\" ios:onboarding"
   },
   "dependencies": {
     "expo": "~57.0.17",
