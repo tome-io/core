@@ -1,6 +1,17 @@
 # Discord release announcements
 
-## Draft for the next release — not posted
+## Published update — 28 September 2026
+
+New messages posted through Omnicord and read back to verify their contents:
+
+- [Release notes](https://discord.com/channels/1542824348447014912/1542831111842041878/1554201621687439441)
+- [Announcements](https://discord.com/channels/1542824348447014912/1542831109232926824/1554201678654480445)
+- [General](https://discord.com/channels/1542824348447014912/1542824349395066962/1554201717346930769)
+
+Earlier messages were preserved. Mentions were suppressed. All three posts describe
+the release as upcoming, with store availability unconfirmed.
+
+### Source copy
 
 **Pagebound comes to Tomeio, with faster book browsing**
 
