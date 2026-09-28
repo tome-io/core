@@ -19,7 +19,7 @@ import {
   padding as swiftUIPadding,
 } from '@expo/ui/swift-ui/modifiers';
 import type { BookAcquisition, BookMetadata, BookReview } from '@tomeio/domain';
-import type { ExtensionBookReference } from '@tomeio/extension-protocol';
+import type { ExtensionBookReference, ExtensionReviewsQuery } from '@tomeio/extension-protocol';
 import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import type { SFSymbol } from 'expo-symbols';
@@ -86,6 +86,7 @@ import { bookIdentity } from '@/lib/book-metadata';
 import { bookFilename } from '@/lib/download';
 import { cachedExtensionResult } from '@/lib/extension-result-cache';
 import { hydrateExtensionBook } from '@/lib/extension-book-metadata';
+import { reviewQueryKey } from '@/lib/extension-reviews';
 import {
   fromDiscoveryBook,
   fromExtensionBook,
@@ -542,26 +543,26 @@ export default function BookDetailScreen() {
   const [reviews, setReviews] = useState<BookReview[]>([]);
   const [reviewsLoading, setReviewsLoading] = useState(false);
   const [reviewsError, setReviewsError] = useState<string | null>(null);
+  const reviewProviderId = reviewProvider?.id;
+  const fetchReviews = extensions.reviews;
+  const reviewQuery = reviewQueryKey({ book: reviewBookReference, page: 1, limit: 10 });
 
   const loadReviews = useCallback(async () => {
+    const query: ExtensionReviewsQuery = JSON.parse(reviewQuery);
     const generation = ++reviewsGeneration.current;
     setReviews([]);
     setReviewsError(null);
     if (
-      !reviewProvider ||
-      !reviewBookReference.title ||
-      (Platform.OS === 'web' && reviewProvider.id === 'community.tomeio.hardcover')
+      !reviewProviderId ||
+      !query.book.title ||
+      (Platform.OS === 'web' && reviewProviderId === 'community.tomeio.hardcover')
     ) {
       setReviewsLoading(false);
       return;
     }
     setReviewsLoading(true);
     try {
-      const result = await extensions.reviews(reviewProvider.id, {
-        book: reviewBookReference,
-        page: 1,
-        limit: 10,
-      });
+      const result = await fetchReviews(reviewProviderId, query);
       if (reviewsGeneration.current === generation) setReviews(result.items);
     } catch (cause) {
       if (reviewsGeneration.current === generation) {
@@ -570,7 +571,7 @@ export default function BookDetailScreen() {
     } finally {
       if (reviewsGeneration.current === generation) setReviewsLoading(false);
     }
-  }, [extensions, reviewBookReference, reviewProvider]);
+  }, [fetchReviews, reviewProviderId, reviewQuery]);
 
   useEffect(() => {
     void loadReviews();
