@@ -255,11 +255,66 @@ export default function BookDetailScreen() {
   } = useLibraryActions();
   const { jobs: downloadJobs, startBookDownload } = useDownloads();
 
-  const extensionBook = useMemo(
+  const suppliedExtensionBook = useMemo(
     () => parseParam<BookMetadata>(params.extensionBook),
     [params.extensionBook]
   );
   const extensionId = params.extensionId || null;
+  const [extensionDetails, setExtensionDetails] = useState<{
+    source: BookMetadata;
+    extensionId: string;
+    book?: BookMetadata;
+    error?: string;
+  } | null>(null);
+  const currentExtensionDetails =
+    extensionDetails?.source === suppliedExtensionBook &&
+    extensionDetails?.extensionId === extensionId
+      ? extensionDetails
+      : null;
+  const extensionBook = useMemo(
+    () => currentExtensionDetails?.book && suppliedExtensionBook
+      ? {
+          ...suppliedExtensionBook,
+          ...currentExtensionDetails.book,
+          identifiers: {
+            ...suppliedExtensionBook.identifiers,
+            ...currentExtensionDetails.book.identifiers,
+          },
+          acquisitions:
+            currentExtensionDetails.book.acquisitions ?? suppliedExtensionBook.acquisitions,
+        }
+      : suppliedExtensionBook,
+    [currentExtensionDetails, suppliedExtensionBook]
+  );
+  useEffect(() => {
+    if (!extensionId || !suppliedExtensionBook) return;
+    let active = true;
+    void (async () => {
+      const provider = await loadExtension(extensionId);
+      if (!provider.meta) return;
+      const details = await cachedExtensionResult(
+        `meta:${extensionId}@${provider.manifest.version}:${suppliedExtensionBook.id}`,
+        () => provider.meta!(suppliedExtensionBook.id)
+      );
+      if (details && details.id !== suppliedExtensionBook.id) {
+        throw new Error(`${provider.manifest.name} returned details for a different book.`);
+      }
+      if (active && details) {
+        setExtensionDetails({ source: suppliedExtensionBook, extensionId, book: details });
+      }
+    })().catch((cause) => {
+      if (active) {
+        setExtensionDetails({
+          source: suppliedExtensionBook,
+          extensionId,
+          error: `Book details unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
+        });
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [extensionId, loadExtension, suppliedExtensionBook]);
   const parsedMoonBook = useMemo(
     () => parseParam<LibraryBook>(params.moon),
     [params.moon]
@@ -475,13 +530,19 @@ export default function BookDetailScreen() {
           ? [relatedAuthor]
           : [],
       ...(year != null ? { publishedYear: year } : {}),
-      identifiers: extensionMetadata?.identifiers ?? {},
+      identifiers: {
+        ...localBook?.identifiers,
+        ...moonBook?.identifiers,
+        ...extensionMetadata?.identifiers,
+      },
     };
   }, [
     currentDiscovery?.year,
     extensionBook,
     localBook?.extension?.book,
+    localBook?.identifiers,
     localBook?.year,
+    moonBook?.identifiers,
     relatedAuthor,
     relatedBookId,
     relatedTitle,
@@ -490,7 +551,12 @@ export default function BookDetailScreen() {
     () => extensions.reviewProviders(),
     [extensions]
   );
-  const reviewProvider = reviewProviders[0] ?? null;
+  const reviewSourceId =
+    extensionId ?? localBook?.extension?.extensionId ?? moonBook?.extension?.extensionId;
+  const reviewProvider =
+    reviewProviders.find((provider) => provider.id === reviewSourceId) ??
+    reviewProviders.find((provider) => provider.id === extensions.discoveryExtensionId) ??
+    reviewProviders[0] ?? null;
   const reviewsGeneration = useRef(0);
   const [reviews, setReviews] = useState<BookReview[]>([]);
   const [reviewsLoading, setReviewsLoading] = useState(false);
@@ -1797,8 +1863,9 @@ export default function BookDetailScreen() {
           ) : null}
         </View>
 
-        {metadataError || libraryError || localCatalogError ? (
+        {currentExtensionDetails?.error || metadataError || libraryError || localCatalogError ? (
           <View className="px-6 mt-3 gap-1">
+            {currentExtensionDetails?.error ? <Text className="text-xs" style={{ color: colors.danger }}>{currentExtensionDetails.error}</Text> : null}
             {metadataError ? <Text className="text-xs" style={{ color: colors.danger }}>{metadataError}</Text> : null}
             {libraryError ? <Text className="text-xs" style={{ color: colors.danger }}>{libraryError}</Text> : null}
             {localCatalogError ? <Text className="text-xs" style={{ color: colors.danger }}>{localCatalogError}</Text> : null}
