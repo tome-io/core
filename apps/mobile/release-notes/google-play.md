@@ -10,7 +10,8 @@
 
 ## Current release
 
-- Read EPUB and PDF books inside Tomeio with themes, typography, contents, and progress details.
-- Resume from the furthest position across signed-in Tomeio devices.
-- Sync supported reading progress with KOReader, Moon+ Reader, and Kobo eReaders.
-- Choose Tomeio or Moon+ Reader on Android, with improved tablet layouts, search, downloads, and library reliability.
+- Guided setup for book sources, folders, and optional sync.
+- Matching editions share a library entry, progress, and cover choices across devices.
+- Clearer page counts, steadier reading estimates, and a screen that stays awake.
+- Browse genres and improved series details, plus Pagebound shelves, ratings, and reviews through its community extension.
+- Faster book lists and reviews, smoother library refreshes, and fewer repeated sign-ins. Empty download sections stay hidden.
