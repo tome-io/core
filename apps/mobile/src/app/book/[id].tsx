@@ -85,6 +85,7 @@ import type { BookCoverPreference, BookCoverSources } from '@/lib/book-cover';
 import { bookIdentity } from '@/lib/book-metadata';
 import { bookFilename } from '@/lib/download';
 import { cachedExtensionResult } from '@/lib/extension-result-cache';
+import { hydrateExtensionBook } from '@/lib/extension-book-metadata';
 import {
   fromDiscoveryBook,
   fromExtensionBook,
@@ -271,34 +272,14 @@ export default function BookDetailScreen() {
     extensionDetails?.extensionId === extensionId
       ? extensionDetails
       : null;
-  const extensionBook = useMemo(
-    () => currentExtensionDetails?.book && suppliedExtensionBook
-      ? {
-          ...suppliedExtensionBook,
-          ...currentExtensionDetails.book,
-          identifiers: {
-            ...suppliedExtensionBook.identifiers,
-            ...currentExtensionDetails.book.identifiers,
-          },
-          acquisitions:
-            currentExtensionDetails.book.acquisitions ?? suppliedExtensionBook.acquisitions,
-        }
-      : suppliedExtensionBook,
-    [currentExtensionDetails, suppliedExtensionBook]
-  );
+  const extensionBook = currentExtensionDetails?.book ?? suppliedExtensionBook;
   useEffect(() => {
     if (!extensionId || !suppliedExtensionBook) return;
     let active = true;
     void (async () => {
       const provider = await loadExtension(extensionId);
       if (!provider.meta) return;
-      const details = await cachedExtensionResult(
-        `meta:${extensionId}@${provider.manifest.version}:${suppliedExtensionBook.id}`,
-        () => provider.meta!(suppliedExtensionBook.id)
-      );
-      if (details && details.id !== suppliedExtensionBook.id) {
-        throw new Error(`${provider.manifest.name} returned details for a different book.`);
-      }
+      const details = await hydrateExtensionBook(provider, suppliedExtensionBook);
       if (active && details) {
         setExtensionDetails({ source: suppliedExtensionBook, extensionId, book: details });
       }
