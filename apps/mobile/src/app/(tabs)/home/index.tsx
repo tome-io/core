@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
   Keyboard,
+  Pressable,
+  Text,
   type ViewToken,
   View,
 } from 'react-native';
@@ -15,6 +17,7 @@ import { useLibraryCatalog } from '@/context/library-context';
 import { bookPriceLabel, bookSourceUrl } from '@/lib/book-offers';
 import { detailParams, type LibraryBook } from '@/lib/library';
 import type { FeedBook } from '@/lib/openlibrary';
+import { enrichCatalogRatings, hydrateExtensionBook } from '@/lib/extension-book-metadata';
 
 const MIN_CONTINUE_READING_PROGRESS = 1;
 const INITIAL_FEED_COUNT = 4;
@@ -52,6 +55,7 @@ interface FeedState {
   books: ProviderFeedBook[];
   status: 'loading' | 'ready' | 'error';
   error: string | null;
+  metadataError?: string;
 }
 
 const EMPTY_FEED: FeedState = { books: [], status: 'loading', error: null };
@@ -115,7 +119,16 @@ function HomeFeedRail({
     <Rail
       title={feed.title}
       subtitle={
-        attribution ? <ProviderAttribution attribution={attribution} align="start" /> : undefined
+        <>
+          {attribution ? <ProviderAttribution attribution={attribution} align="start" /> : null}
+          {state.metadataError ? (
+            <Pressable onPress={handleRetry}>
+              <Text className="text-xs" style={{ color: colors.danger }}>
+                Ratings unavailable: {state.metadataError} · Retry
+              </Text>
+            </Pressable>
+          ) : null}
+        </>
       }
       books={state.books}
       loading={state.status === 'loading'}
@@ -161,6 +174,7 @@ export default function HomeScreen() {
   const { downloaded } = useLibraryCatalog();
   const generation = useRef(0);
   const requestedFeeds = useRef(new Set<string>());
+  const feedRequests = useRef(new Map<string, symbol>());
   const scheduledFeedRequests = useRef<ReturnType<typeof setTimeout>[]>([]);
   const discoveryManifest = useMemo(() => {
     const manifests = [
@@ -200,6 +214,10 @@ export default function HomeScreen() {
   const requestFeed = useCallback((feed: FeedConfig, requestGeneration: number, force = false) => {
     if (!force && requestedFeeds.current.has(feed.key)) return;
     requestedFeeds.current.add(feed.key);
+    const requestToken = Symbol(feed.key);
+    feedRequests.current.set(feed.key, requestToken);
+    const isCurrent = () => generation.current === requestGeneration &&
+      feedRequests.current.get(feed.key) === requestToken;
     setFeeds((current) => ({
       ...current,
       [feed.key]: { books: current[feed.key]?.books ?? [], status: 'loading', error: null },
@@ -222,7 +240,7 @@ export default function HomeScreen() {
 
     request
       .then((page) => {
-        if (generation.current !== requestGeneration) return;
+        if (!isCurrent()) return;
         setFeeds((current) => ({
           ...current,
           [feed.key]: {
@@ -231,9 +249,37 @@ export default function HomeScreen() {
             error: null,
           },
         }));
+        const onMetadataError = (cause: unknown) => {
+          if (!isCurrent()) return;
+          setFeeds((current) => ({
+            ...current,
+            [feed.key]: {
+              ...current[feed.key],
+              metadataError: cause instanceof Error ? cause.message : String(cause),
+            },
+          }));
+        };
+        if (!page.items.some((book) => book.rating == null)) return;
+        void extensions.load(extensionId).then((provider) => {
+          if (!provider.meta || !isCurrent()) return;
+          return enrichCatalogRatings(page.items, {
+            hydrate: (book) => hydrateExtensionBook(provider, book),
+            isCurrent,
+            onError: onMetadataError,
+            onBook: (book) => setFeeds((current) => ({
+              ...current,
+              [feed.key]: {
+                ...current[feed.key],
+                books: current[feed.key].books.map((entry) =>
+                  entry.metadata.id === book.id ? providerFeedBook(book, extensionId) : entry
+                ),
+              },
+            })),
+          });
+        }).catch(onMetadataError);
       })
       .catch((err) => {
-        if (generation.current !== requestGeneration) return;
+        if (!isCurrent()) return;
         setFeeds((current) => ({
           ...current,
           [feed.key]: {

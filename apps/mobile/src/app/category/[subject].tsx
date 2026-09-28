@@ -11,6 +11,7 @@ import { colors } from '@/components/app-ui';
 import { IosNativeBackButton } from '@/components/ios-native-controls';
 import { useExtensions } from '@/context/extensions-context';
 import { bookPriceLabel, bookSourceUrl } from '@/lib/book-offers';
+import { enrichCatalogRatings, hydrateExtensionBook } from '@/lib/extension-book-metadata';
 
 const PAGE_SIZE = 40;
 const BG = colors.background;
@@ -51,6 +52,26 @@ export default function CategoryScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [metadataError, setMetadataError] = useState<string | null>(null);
+
+  const enrichPage = useCallback((items: BookMetadata[], generation: number) => {
+    if (!extensionId || !items.some((book) => book.rating == null)) return;
+    const isCurrent = () => requestGeneration.current === generation;
+    const onError = (cause: unknown) => {
+      if (isCurrent()) setMetadataError(cause instanceof Error ? cause.message : String(cause));
+    };
+    void extensions.load(extensionId).then((provider) => {
+      if (!provider.meta || !isCurrent()) return;
+      return enrichCatalogRatings(items, {
+        hydrate: (book) => hydrateExtensionBook(provider, book),
+        isCurrent,
+        onError,
+        onBook: (book) => setBooks((current) => current.map((entry) =>
+          entry.metadata.id === book.id ? catalogBook(book, extensionId) : entry
+        )),
+      });
+    }).catch(onError);
+  }, [extensionId, extensions]);
 
   const requestPage = useCallback(
     (nextPage: number) => {
@@ -70,6 +91,7 @@ export default function CategoryScreen() {
     setLoading(true);
     setLoadingMore(false);
     setError(null);
+    setMetadataError(null);
     setBooks([]);
     setPage(0);
     setHasMore(true);
@@ -79,6 +101,7 @@ export default function CategoryScreen() {
       setBooks(result.items.map((book) => catalogBook(book, extensionId!)));
       setPage(1);
       setHasMore(result.nextPage != null);
+      enrichPage(result.items, generation);
     } catch (err: any) {
       if (requestGeneration.current === generation) {
         setError(err.message || String(err));
@@ -86,7 +109,7 @@ export default function CategoryScreen() {
     } finally {
       if (requestGeneration.current === generation) setLoading(false);
     }
-  }, [extensionId, requestPage]);
+  }, [enrichPage, extensionId, requestPage]);
 
   useEffect(() => {
     const initialLoad = setTimeout(loadFirstPage, 0);
@@ -112,12 +135,13 @@ export default function CategoryScreen() {
       });
       setPage(nextPage);
       setHasMore(result.nextPage != null);
+      enrichPage(result.items, generation);
     } catch (err: any) {
       if (requestGeneration.current === generation) setError(err.message || String(err));
     } finally {
       if (requestGeneration.current === generation) setLoadingMore(false);
     }
-  }, [extensionId, hasMore, loading, loadingMore, page, requestPage]);
+  }, [enrichPage, extensionId, hasMore, loading, loadingMore, page, requestPage]);
 
   const openBook = useCallback(
     (book: CatalogBook) => {
@@ -203,6 +227,13 @@ export default function CategoryScreen() {
         </Pressable>
       ) : null}
 
+      {metadataError ? (
+        <Pressable onPress={loadFirstPage} className="px-5 pb-3">
+          <Text className="text-xs" style={{ color: colors.danger }}>
+            Ratings unavailable: {metadataError} · Retry
+          </Text>
+        </Pressable>
+      ) : null}
       {loading ? (
         <BookGridSkeleton />
       ) : error && books.length === 0 ? (

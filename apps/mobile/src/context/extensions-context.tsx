@@ -54,7 +54,6 @@ import {
   writeSearchExtensionId,
 } from '@/lib/extension-preferences';
 import { cachedExtensionResult } from '@/lib/extension-result-cache';
-import { hydrateExtensionBook } from '@/lib/extension-book-metadata';
 
 export interface AvailableLibraryAction extends ExtensionLibraryAction {
   extensionId: string;
@@ -468,19 +467,7 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       }
       const extension = await load(id);
       if (!extension.catalog) throw new Error(`Extension "${id}" does not provide catalogs.`);
-      const page = await extension.catalog(query);
-      if (!extension.meta) return page;
-      const items: BookMetadata[] = [];
-      // Keep detail requests sequential within each catalog instead of launching
-      // an unbounded request for every card. Shared metadata caching deduplicates
-      // books repeated across catalogs and subsequent detail-screen visits.
-      for (const book of page.items) {
-        if (id !== discoveryExtensionIdRef.current) {
-          throw new Error('Discovery provider changed while loading book details.');
-        }
-        items.push(book.rating == null ? await hydrateExtensionBook(extension, book) : book);
-      }
-      return { ...page, items };
+      return extension.catalog(query);
     },
     [load]
   );
