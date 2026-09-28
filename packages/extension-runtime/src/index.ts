@@ -22,6 +22,8 @@ import {
   createDeclarativeWorkflowExtension,
   fetchWorkflowDefinition,
 } from './declarative';
+import { ExtensionSessionManager, type ExtensionSessionStore } from './sessions';
+export { ExtensionSessionManager, type ExtensionSession, type ExtensionSessionStore } from './sessions';
 import {
   createDeviceWorkflowExtension,
   fetchDeviceWorkflowDefinition,
@@ -488,6 +490,7 @@ export interface ExtensionLoaderOptions {
   host?: ReadonlyMap<string, ExtensionHostAdapter>;
   device?: ExtensionDeviceHost;
   fetchFn?: typeof fetch;
+  sessionStore?: ExtensionSessionStore;
 }
 
 export interface ExtensionHostAdapter extends Omit<BookExtension, 'manifest'> {
@@ -700,6 +703,7 @@ function createRemoteExtension(
 }
 
 export class ExtensionLoader {
+  private readonly sessions: ExtensionSessionManager;
   private readonly fetchFn: typeof fetch;
   private readonly options: ExtensionLoaderOptions;
   private readonly workflowDefinitions = new Map<
@@ -714,6 +718,11 @@ export class ExtensionLoader {
   constructor(options: ExtensionLoaderOptions) {
     this.options = options;
     this.fetchFn = options.fetchFn ?? fetch;
+    this.sessions = new ExtensionSessionManager(options.sessionStore);
+  }
+
+  clearSessions(extensionId: string): Promise<void> {
+    return this.sessions.clear(extensionId);
   }
 
   private workflowDefinition(manifest: ExtensionManifest): Promise<ExtensionWorkflowDefinition> {
@@ -833,7 +842,8 @@ export class ExtensionLoader {
         manifest,
         await this.workflowDefinition(manifest),
         this.fetchFn,
-        configuration
+        configuration,
+        this.sessions,
       );
     }
     return createRemoteExtension(manifest, this.fetchFn, configuration);

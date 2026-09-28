@@ -14,6 +14,11 @@ import {
   type ExtensionWorkflowRequest,
   type ExtensionWorkflowResource,
 } from '@tomeio/extension-protocol';
+import { ExtensionSessionManager, type ExtensionSession, type ExtensionSessionAccess } from './sessions';
+
+class SessionRejectedError extends Error {
+  constructor() { super('Extension session was rejected (HTTP 401).'); }
+}
 
 const MAX_EXPRESSION_DEPTH = 24;
 const MAX_EXPRESSION_NODES = 2_000;
@@ -617,9 +622,16 @@ function validateResource(value: unknown, name: string): ExtensionWorkflowResour
     const request = validateRequest(step.request, `Declarative ${name} step "${step.id}"`);
     if (step.when !== undefined) validateExpression(step.when);
     if (step.accept !== undefined) validateExpression(step.accept);
+    if (step.authenticated != null && typeof step.authenticated !== 'boolean') {
+      throw new Error(`Declarative ${name} step authentication flag must be boolean.`);
+    }
+    if (step.authenticated && !['GET', 'HEAD'].includes(request.method ?? 'GET')) {
+      throw new Error('Session renewal can only replay GET and HEAD requests.');
+    }
     return {
       id: step.id,
       request,
+      ...(step.authenticated ? { authenticated: true } : {}),
       ...(step.when !== undefined
         ? { when: step.when as ExtensionWorkflowExpression }
         : {}),
@@ -632,7 +644,67 @@ function validateResource(value: unknown, name: string): ExtensionWorkflowResour
     throw new Error(`Declarative ${name} workflow must declare output.`);
   }
   validateExpression(resource.output);
-  return { steps, output: resource.output as ExtensionWorkflowExpression };
+  let session: ExtensionWorkflowResource['session'];
+  if (resource.session != null) {
+    const value = record(resource.session);
+    if (!value || !Array.isArray(value.steps) || !value.steps.length ||
+        value.steps.some((id) => typeof id !== 'string' || !ids.has(id)) ||
+        new Set(value.steps).size !== value.steps.length) {
+      throw new Error('Session must reference existing login steps.');
+    }
+    const loginIds = value.steps as string[];
+    const start = steps.findIndex((step) => step.id === loginIds[0]);
+    if (loginIds.some((id, index) => steps[start + index]?.id !== id) ||
+        steps.slice(start, start + loginIds.length).some((step) => step.authenticated)) {
+      throw new Error('Session login steps must be contiguous and cannot use an existing session.');
+    }
+    if (steps.slice(0, start + loginIds.length).some((step) => step.authenticated)) {
+      throw new Error('Authenticated reads must follow the session login steps.');
+    }
+    const validateSessionPaths = (expression: unknown): void => {
+      if (Array.isArray(expression)) { expression.forEach(validateSessionPaths); return; }
+      const node = record(expression);
+      if (!node) return;
+      if (node.$op === 'path' && typeof node.path === 'string') {
+        const [root, step] = node.path.split('.');
+        if (root !== 'config' && !(root === 'steps' && loginIds.includes(step))) {
+          throw new Error('Session login requests may only read configuration and login step results.');
+        }
+      }
+      Object.values(node).forEach(validateSessionPaths);
+    };
+    steps.slice(start, start + loginIds.length).forEach((step) => validateSessionPaths(step.request));
+    if (value.output === undefined) throw new Error('Session must declare saved step output.');
+    validateExpression(value.output);
+    validateSessionPaths(value.output);
+    if (value.expiresAt !== undefined) validateExpression(value.expiresAt);
+    if (value.expiresAt !== undefined) validateSessionPaths(value.expiresAt);
+    if (value.expiresIn !== undefined) {
+      if (value.expiresAt !== undefined) throw new Error('Session must use either expiresAt or expiresIn.');
+      validateExpression(value.expiresIn);
+      validateSessionPaths(value.expiresIn);
+    }
+    let validate: NonNullable<typeof session>['validate'];
+    if (value.validate != null) {
+      const check = record(value.validate);
+      if (!check || check.accept === undefined || check.invalidWhen === undefined) {
+        throw new Error('Session validation must declare accept and invalidWhen expressions.');
+      }
+      const request = validateRequest(check.request, 'Session validation');
+      if (!['GET', 'HEAD'].includes(request.method ?? 'GET')) throw new Error('Session validation must be read-only.');
+      validateExpression(check.accept);
+      validateExpression(check.invalidWhen);
+      validate = { request, accept: check.accept as ExtensionWorkflowExpression, invalidWhen: check.invalidWhen as ExtensionWorkflowExpression };
+    }
+    session = {
+      steps: value.steps as string[], output: value.output as ExtensionWorkflowExpression,
+      ...(value.expiresAt !== undefined ? { expiresAt: value.expiresAt as ExtensionWorkflowExpression } : {}),
+      ...(value.expiresIn !== undefined ? { expiresIn: value.expiresIn as ExtensionWorkflowExpression } : {}),
+      ...(validate ? { validate } : {}),
+    };
+  }
+  if (!session && steps.some((step) => step.authenticated)) throw new Error('Authenticated steps require a session declaration.');
+  return { steps, output: resource.output as ExtensionWorkflowExpression, ...(session ? { session } : {}) };
 }
 
 export function parseWorkflowDefinition(
@@ -759,7 +831,8 @@ async function executeRequest(
   context: WorkflowContext,
   manifest: ExtensionManifest,
   fetchFn: typeof fetch,
-  attempts: { count: number }
+  attempts: { count: number },
+  authenticated = false,
 ): Promise<Record<string, unknown>> {
   const failures: string[] = [];
   for (const candidate of requestUrls(request.urls, context)) {
@@ -822,6 +895,7 @@ async function executeRequest(
             });
             const responseHeaders = Object.fromEntries(response.headers.entries());
             updateOriginRequestPolicy(url.origin, response.status, responseHeaders);
+            if (authenticated && response.status === 401) throw new SessionRejectedError();
             return {
               status: response.status,
               ok: response.ok,
@@ -846,6 +920,7 @@ async function executeRequest(
         failures.push(`${url.origin}: ${rejectedResponseMessage(result)}`);
         break;
       } catch (cause) {
+        if (cause instanceof SessionRejectedError) throw cause;
         if (attempt + 1 < requestAttempts) {
           await wait(250 * (attempt + 1));
           continue;
@@ -862,11 +937,46 @@ async function executeResource(
   input: unknown,
   configuration: Record<string, ExtensionConfigValue>,
   manifest: ExtensionManifest,
-  fetchFn: typeof fetch
+  fetchFn: typeof fetch,
+  sessions: ExtensionSessionManager,
 ): Promise<unknown> {
   let context: WorkflowContext = { input, config: configuration, steps: {} };
   const attempts = { count: 0 };
-  for (const step of resource.steps) {
+  const sessionDefinition = resource.session;
+  let session: ExtensionSession | undefined;
+  let access: ExtensionSessionAccess | undefined;
+  const loginSteps = sessionDefinition
+    ? resource.steps.filter((step) => sessionDefinition.steps.includes(step.id)) : [];
+  const createSession = async (): Promise<ExtensionSession> => {
+    let loginContext = { ...context, steps: { ...(record(context.steps) ?? {}) } };
+    for (const step of loginSteps) delete loginContext.steps[step.id];
+    for (const step of loginSteps) {
+      if (step.when !== undefined && !evaluate(step.when, loginContext)) throw new Error('Required session login step was skipped.');
+      loginContext.steps[step.id] = await executeRequest(step.request, step.accept, loginContext, manifest, fetchFn, attempts);
+    }
+    const saved = record(evaluate(sessionDefinition!.output, loginContext));
+    if (!saved || !Object.keys(saved).length || Object.keys(saved).some((id) => !sessionDefinition!.steps.includes(id))) {
+      throw new Error('Session output must contain only declared login step results.');
+    }
+    const expiresAt = sessionDefinition!.expiresAt !== undefined
+      ? Number(evaluate(sessionDefinition!.expiresAt, loginContext))
+      : sessionDefinition!.expiresIn !== undefined
+        ? Date.now() + Number(evaluate(sessionDefinition!.expiresIn, loginContext)) * 1000
+        : undefined;
+    return { steps: saved, ...(expiresAt !== undefined ? { expiresAt } : {}) };
+  };
+  const validateSession = sessionDefinition?.validate ? async (saved: ExtensionSession): Promise<boolean> => {
+    const check = sessionDefinition.validate!;
+    const checkContext = { ...context, steps: { ...(record(context.steps) ?? {}), ...saved.steps } };
+    // The validation expression distinguishes expired sessions from service errors.
+    const response = await executeRequest(check.request, true, checkContext, manifest, fetchFn, attempts);
+    if (evaluate(check.accept, { ...checkContext, response })) return true;
+    if (evaluate(check.invalidWhen, { ...checkContext, response })) return false;
+    throw new Error(`Session validation failed (HTTP ${response.status}).`);
+  } : undefined;
+  let renewed = false;
+  for (let index = 0; index < resource.steps.length; index++) {
+    const step = resource.steps[index];
     if (step.when !== undefined && !Boolean(evaluate(step.when, context))) {
       context = {
         ...context,
@@ -877,14 +987,33 @@ async function executeResource(
       };
       continue;
     }
-    const result = await executeRequest(
-      step.request,
-      step.accept,
-      context,
-      manifest,
-      fetchFn,
-      attempts
-    );
+    if (sessionDefinition && step.id === sessionDefinition.steps[0]) {
+      // Do not include per-resource login guards in the shared account scope.
+      const scope = JSON.stringify([manifest, configuration, loginSteps.map(({ id, request, accept }) => ({ id, request, accept })), sessionDefinition]);
+      access = sessions.bind(manifest.id, scope);
+      session = await access.get(createSession, validateSession);
+      context = { ...context, steps: { ...(record(context.steps) ?? {}), ...session.steps } };
+      index += loginSteps.length - 1;
+      continue;
+    }
+    let result: Record<string, unknown>;
+    if (step.authenticated && (!session || !access)) throw new Error('Authenticated read requires an active session.');
+    try {
+      result = await executeRequest(step.request, step.accept, context, manifest, fetchFn, attempts, step.authenticated);
+    } catch (cause) {
+      if (!(cause instanceof SessionRejectedError) || !access || !session) throw cause;
+      await access.invalidate(session);
+      if (renewed) throw cause;
+      renewed = true;
+      session = await access.get(createSession, validateSession);
+      context = { ...context, steps: { ...(record(context.steps) ?? {}), ...session.steps } };
+      try {
+        result = await executeRequest(step.request, step.accept, context, manifest, fetchFn, attempts, true);
+      } catch (retryCause) {
+        if (retryCause instanceof SessionRejectedError) await access.invalidate(session);
+        throw retryCause;
+      }
+    }
     context = {
       ...context,
       steps: { ...(record(context.steps) ?? {}), [step.id]: result },
@@ -897,12 +1026,13 @@ export function createDeclarativeWorkflowExtension(
   manifest: ExtensionManifest,
   definition: ExtensionWorkflowDefinition,
   fetchFn: typeof fetch,
-  configuration: Record<string, ExtensionConfigValue>
+  configuration: Record<string, ExtensionConfigValue>,
+  sessions = new ExtensionSessionManager(),
 ): BookExtension {
   const run = (resource: ExtensionResourceName, input: unknown) => {
     const workflow = definition.resources[resource];
     if (!workflow) throw new Error(`Declarative workflow does not implement ${resource}.`);
-    return executeResource(workflow, input, configuration, manifest, fetchFn);
+    return executeResource(workflow, input, configuration, manifest, fetchFn, sessions);
   };
   const has = (resource: ExtensionResourceName) =>
     manifest.resources.some((candidate) => candidate.name === resource);

@@ -404,6 +404,7 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
   const remove = useCallback(
     async (id: string) => {
       const extension = snapshot.thirdParty.find((candidate) => candidate.manifest.id === id);
+      await extensionLoader.clearSessions(id);
       await extensionRegistry.remove(id);
       if (extension) await removeExtensionConfiguration(extension.manifest);
       await refresh();
@@ -420,6 +421,7 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       manifest: ExtensionManifest,
       values: Record<string, ExtensionConfigValue>
     ) => {
+      await extensionLoader.clearSessions(manifest.id);
       await writeExtensionConfiguration(manifest, values);
       if (!missingRequiredConfiguration(manifest, values).length) {
         const installed = snapshot.thirdParty.find(
@@ -725,6 +727,7 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
   );
   const setEnabled = useCallback(
     async (id: string, enabled: boolean) => {
+      if (!enabled) await extensionLoader.clearSessions(id);
       if (enabled) {
         const installed = snapshot.thirdParty.find(
           (candidate) => candidate.manifest.id === id
