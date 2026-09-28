@@ -54,6 +54,7 @@ import {
   writeSearchExtensionId,
 } from '@/lib/extension-preferences';
 import { cachedExtensionResult } from '@/lib/extension-result-cache';
+import { createExtensionReviewLoader } from '@/lib/extension-reviews';
 
 export interface AvailableLibraryAction extends ExtensionLibraryAction {
   extensionId: string;
@@ -537,19 +538,16 @@ export function ExtensionsProvider({ children }: { children: ReactNode }) {
       }))
       .sort((left, right) => left.name.localeCompare(right.name));
   }, [snapshot.bundled, snapshot.thirdParty]);
+  const loadReviews = useMemo(() => createExtensionReviewLoader(load), [load]);
   const reviews = useCallback(
     async (extensionId: string, query: ExtensionReviewsQuery) => {
       const provider = reviewProviders().find((candidate) => candidate.id === extensionId);
       if (!provider) {
         throw new Error(`Extension "${extensionId}" is not an enabled review provider.`);
       }
-      const extension = await load(extensionId);
-      if (!extension.reviews) {
-        throw new Error(`Extension "${provider.name}" does not provide reviews.`);
-      }
-      return extension.reviews(query);
+      return loadReviews(extensionId, query);
     },
-    [load, reviewProviders]
+    [loadReviews, reviewProviders]
   );
   const libraryActions = useCallback(
     (
