@@ -10,6 +10,7 @@ import { officialExtensionManifests, officialExtensions } from '@tomeio/official
 import { fetchCommunityExtensions } from './community-extensions';
 import { createMobileDeviceExtensionHost } from './device-extension-host';
 import { koboExtensionHost } from './kobo-extension-host';
+import { extensionSessionStore } from './extension-sessions';
 
 const EXTENSION_REGISTRY_KEY = 'third_party_extensions_v1';
 
@@ -39,6 +40,7 @@ export async function refreshCommunityExtensionRegistry(): Promise<void> {
 }
 
 export const extensionLoader = new ExtensionLoader({
+  sessionStore: extensionSessionStore,
   bundled: new Map(officialExtensions.map((extension) => [extension.manifest.id, extension])),
   host: new Map([['tomeio-sync-kobo', koboExtensionHost]]),
   device: createMobileDeviceExtensionHost(),

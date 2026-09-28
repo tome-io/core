@@ -464,11 +464,30 @@ export interface ExtensionWorkflowStep {
   when?: ExtensionWorkflowExpression;
   request: ExtensionWorkflowRequest;
   accept?: ExtensionWorkflowExpression;
+  /** Retry this read once with a renewed session after HTTP 401. */
+  authenticated?: boolean;
+}
+
+export interface ExtensionWorkflowSession {
+  /** Contiguous login steps, retained as a fallback for older clients. */
+  steps: string[];
+  /** Minimal saved step results, keyed by a declared login step ID. */
+  output: ExtensionWorkflowExpression;
+  /** Optional absolute Unix timestamp in milliseconds. */
+  expiresAt?: ExtensionWorkflowExpression;
+  /** Alternatively, the session lifetime in seconds from successful login. */
+  expiresIn?: ExtensionWorkflowExpression;
+  validate?: {
+    request: ExtensionWorkflowRequest;
+    accept: ExtensionWorkflowExpression;
+    invalidWhen: ExtensionWorkflowExpression;
+  };
 }
 
 export interface ExtensionWorkflowResource {
   steps: ExtensionWorkflowStep[];
   output: ExtensionWorkflowExpression;
+  session?: ExtensionWorkflowSession;
 }
 
 export interface ExtensionWorkflowDefinition {

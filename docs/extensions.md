@@ -81,6 +81,41 @@ the add-on; password values remain in secure storage and are sent only to the ad
 protocol endpoint. The host never silently replaces a failed response with fabricated
 metadata or acquisitions.
 
+## Declarative authentication sessions
+
+`ExtensionWorkflowResource.session` identifies contiguous login steps and a minimal
+`output` mapping of saved step results. Resources with the same login requests,
+session declaration, manifest, and configuration share one session. Login requests
+may read configuration and login-step results, but cannot depend on invocation
+input or unrelated request results. Per-resource `when` guards still decide
+whether authentication is needed.
+
+`ExtensionLoader` owns the session manager across fresh resource wrappers. It
+coalesces concurrent logins and optionally uses an `ExtensionSessionStore`. The
+mobile store uses native secure storage and a SHA-256 scope fingerprint; it never
+persists raw configuration with the token. Web sessions are memory-only. Changing
+credentials, disabling, or removing an extension clears sessions and prevents
+in-flight login results from restoring them. Manifest/configuration changes
+produce separate scopes, including across app restarts.
+
+An optional `expiresAt` output expression returns Unix milliseconds; alternatively,
+`expiresIn` returns the session lifetime in seconds after login. An optional
+`validate` request checks a reused token before data reads: `accept` means valid,
+`invalidWhen` means renew, and other failures remain visible errors. Subsequent
+GET/HEAD steps marked `authenticated: true` renew and retry once on HTTP 401;
+POST requests and permission failures are not automatically replayed.
+
+Pagebound uses validation because its JWT has no expiry claim and invalid tokens
+can return empty library data. Its session-check endpoint returns an empty HTTP
+500 for an invalid token; the workflow explicitly recognizes that response. A
+service outage with the same response may cause one unsuccessful login attempt,
+whose failure is surfaced. Only the Pagebound token is saved, not the Firebase
+login response or user profile.
+
+These are optional workflow-v1 annotations. Older hosts retain the original login
+steps and continue signing in per operation. New hosts reuse sessions; providers
+such as Hardcover that already use a configured API token are unchanged.
+
 ## Official, community, and third-party
 
 Official add-ons are bundled sources such as Open Library and Project Gutenberg. They
