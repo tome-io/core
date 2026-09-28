@@ -719,6 +719,7 @@ export default function BookDetailScreen() {
     missingReadingListBook?.author ??
     '';
   const hasAcquisitionLookup =
+    !!acquisitionExtensionId &&
     !removalRequested &&
     (!!acquisitionExtensionBook || !!currentDiscovery || !!missingReadingListBook);
   const acquisitionProviderVersion = acquisitionExtensionId
@@ -871,7 +872,10 @@ export default function BookDetailScreen() {
     if (!acquisitionOptionsRequestKey) {
       optionsGeneration.current += 1;
       setOptions([]);
+      setOptionsError(null);
+      setOptionsErrorVisible(false);
       setNextOptionsPage(null);
+      setLoadingMoreOptions(false);
       return;
     }
     let cancelled = false;
@@ -1872,7 +1876,8 @@ export default function BookDetailScreen() {
           </View>
         ) : null}
 
-        {hasAcquisitionLookup ? (
+        {hasAcquisitionLookup &&
+        (options === null || !!optionsError || options.length > 0) ? (
           <View className="mt-8">
             <SectionHeader
               title={externalAcquisitionsOnly ? 'Open in browser' : 'Download options'}
@@ -1894,11 +1899,6 @@ export default function BookDetailScreen() {
                     Provider unavailable · Show details
                   </Text>
                 </Pressable>
-              ) : null}
-              {options?.length === 0 && !optionsError ? (
-                <Text className="px-5 text-sm" style={{ color: colors.textMuted }}>
-                  No acquisitions were returned by the selected provider.
-                </Text>
               ) : null}
               {options?.length || nextOptionsPage != null ? (
                 <ScrollView
