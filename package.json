@@ -34,7 +34,7 @@
     "ios:onboarding": "bun run --cwd \"$PWD/apps/mobile\" ios:onboarding"
   },
   "dependencies": {
-    "expo": "~57.0.17",
+    "expo": "~57.0.23",
     "react": "19.2.3",
     "react-native": "0.86.3"
   },
