@@ -69,6 +69,9 @@
       [
         "expo-build-properties",
         {
+          "ios": {
+            "enableSceneSupport": true
+          },
           "android": {
             "kotlinVersion": "2.3.20"
           }
